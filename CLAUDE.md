@@ -23,5 +23,5 @@ _Avoid_: {rejected synonyms}
 - One decision per file: a title, then 1–3 sentences on context, decision and why.
 - Name files `descriptive-slug.md`, unnumbered. An agent must be able to find the decision from the name alone.
 - Each file stands alone; never build on another decision.
-- When a decision changes, rewrite its file. Never add a superseding one.
+- When a decision changes, rewrite its file; when it no longer applies, delete it. Never add a superseding one.
 - Record only decisions that are hard to reverse, surprising without context and a real trade-off.
