@@ -1,5 +1,4 @@
 import { expect, mock, test } from 'claude-code/testing'
-import type { ElementQuery, FoundElement } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 const PANE = {
@@ -39,16 +38,6 @@ const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) 
   return { clock, reads }
 }
 
-// A Progress is drawn as a Text and a bar on some surfaces, natively on others.
-type Drawing = { find: (query: ElementQuery) => Promise<FoundElement | undefined> }
-
-const bar = async (ui: Drawing, word: RegExp): Promise<string | undefined> => {
-  const drawn = await ui.find({ type: 'Text', text: word })
-  const native = await ui.find({ type: 'Progress', text: word })
-
-  return drawn?.text ?? (native && `${String(native.props.label)} ${String(native.props.valueText)}`)
-}
-
 const START = { cwd: '/', surface: 'desktop', isInteractive: true } as const
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
@@ -75,9 +64,19 @@ test('a build shows its checks, stage and fuel on every surface', async ($, on) 
     expect((await ui.find({ type: 'Text', text: /Burn/ }))?.text).toBe('◎ Burn  ⟵ you are here')
     expect((await ui.find({ type: 'Text', text: /Chart/ }))?.text).toBe('◉ Chart')
     expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('○ Dock')
-    expect(await bar(ui, /Fuel/)).toBe('Fuel 23h 0m until check-in')
-    expect(await bar(ui, /Constellation/)).toBe('Constellation 1 of 3 stars lit')
-    expect(await bar(ui, /Shields/)).toBe('Shields 3 of 30 bumps taken')
+    // Each bar is the row under its label: 20 cells, round(20 × value / max) filled.
+    const rows = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+    const under = (label: string): string | undefined => rows[rows.indexOf(label) + 1]
+
+    expect(rows).toContain('Fuel 23h 0m until check-in')
+    expect(rows).toContain('Constellation 1 of 3 stars lit')
+    expect(rows).toContain('Shields 3 of 30 bumps taken')
+    // 1380 of 1440 minutes: 19.17.
+    expect(under('Fuel 23h 0m until check-in')).toBe('█'.repeat(19) + '░'.repeat(1))
+    // 1 of 3: 6.67.
+    expect(under('Constellation 1 of 3 stars lit')).toBe('█'.repeat(7) + '░'.repeat(13))
+    // 27 of 30 left: 18.
+    expect(under('Shields 3 of 30 bumps taken')).toBe('█'.repeat(18) + '░'.repeat(2))
     await ui.unmount()
   }
 })
@@ -112,7 +111,7 @@ test('an idle session does not poll; a tool call notices a build', async ($, on)
 
   expect(await ui.find({ type: 'Text', text: /Holding orbit/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /uncharted/ })).toBeDefined()
-  expect(await bar(ui, /Fuel/)).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Fuel/ })).toBeUndefined()
   await ui.unmount()
 })
 

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { Color, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
-import type { Check, Voyage } from '../types'
+import type { Check, Launch, Voyage } from '../types'
 
 // Reads what the build skill's hook keeps in .claude/build/ and draws it.
 const PANE = 'build-voyage'
@@ -9,6 +9,7 @@ const TITLE = 'Starlight voyage'
 const DIR = '.claude/build'
 const LIMIT_MINUTES = 24 * 60
 const CAP = 30
+const WIDTH = 20
 
 const STAGES = [
   { phase: 'explore', name: 'Scan', log: 'Probes are sweeping the nebula.' },
@@ -20,6 +21,16 @@ const STAGES = [
 
 const voyage = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Voyage | null, {
   shape: 'voyage-2',
+})
+
+// A /build that has not yet written its state: its issue and the state file it found.
+const launch = atom({ plugin: 'build-voyage', key: 'launch' } as const, null as Launch | null, {
+  shape: 'launch-2',
+})
+
+// The state file this session found, false once it changed: a build left there counts then.
+const found = atom({ plugin: 'build-voyage', key: 'found' } as const, null as string | false | null, {
+  shape: 'found-2',
 })
 
 const field = (text: string, name: string): string =>
@@ -85,11 +96,23 @@ const describe = (one: Voyage | null): string => {
 // Polls only while a build runs; a tool call notices one that starts.
 let timer: ReturnType<EngineInterface['clock']['every']> | undefined
 
-const refresh = async ($: EngineInterface): Promise<void> => {
+// Reads .claude/build/ into the voyage; true while a build this session watches runs.
+const look = async ($: EngineInterface): Promise<boolean> => {
   const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
   const state = await file('state')
-  const next =
-    state === ''
+  const launched = await read($, launch)
+  const isLaunched = launched !== null && launched.state === state
+  const first = await read($, found)
+
+  if (launched !== null && !isLaunched) {
+    await update($, launch, () => null)
+  }
+  if (typeof first === 'string' && first !== state) {
+    await update($, found, () => false)
+  }
+  const next: Voyage | null = isLaunched
+    ? { issue: launched.issue, phase: 'explore', isBlocked: false, isDone: false, checks: [], fuelMinutes: null, refusals: 0, pr: '' }
+    : state === ''
       ? null
       : parse(
           state,
@@ -99,10 +122,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
           await file('done'),
           await $.clock.now(),
         )
-  const isRunning = next !== null && !next.isDone
+  const isRunning = isLaunched ? launched.isLive : next !== null && !next.isDone
 
   if (isRunning && timer === undefined) {
-    timer = $.clock.every(5000, () => void refresh($))
+    timer = $.clock.every(5000, () => void refresh($).catch(() => false))
   }
   if (!isRunning && timer !== undefined) {
     timer.cancel()
@@ -110,50 +133,90 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   }
   const before = await read($, voyage)
 
-  if (JSON.stringify(before) === JSON.stringify(next)) {
-    return
-  }
-  await update($, voyage, () => next)
+  if (JSON.stringify(before) !== JSON.stringify(next)) {
+    await update($, voyage, () => next)
 
-  if (before === null && next !== null) {
-    void $.ui.open({ id: PANE, title: TITLE })
+    if (before === null && next !== null && !next.isDone) {
+      void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
+    }
+    if (!lit(before) && lit(next)) {
+      $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
+    }
   }
-  if (!lit(before) && lit(next)) {
-    $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
-  }
+
+  return isRunning && (isLaunched || first !== state)
 }
+
+// One look at a time, `step` first, so an older read never overwrites a newer one.
+let queue: Promise<boolean> = Promise.resolve(false)
+
+const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => undefined): Promise<boolean> => {
+  queue = queue.catch(() => false).then(async () => {
+    await step()
+
+    return look($)
+  })
+
+  return queue
+}
+
+// What /voyage answers.
+const answer = async ($: EngineInterface, opened: UiOpenResult): Promise<string> =>
+  opened.isPlaced ? 'Voyage pane opened.' : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'voyage', description: 'Show the progress of the current /build' })
-    void refresh($)
+    void refresh($, async () => {
+      const state = await $.fs.read(`${DIR}/state`).catch(() => '')
+      await update($, found, one => one ?? state)
+    }).catch(() => false)
 
     return next(e)
   })
 
+  // While a build runs, a closed pane opens again.
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
-
-    if (timer === undefined) {
-      void refresh($)
+    if ((await refresh($)) && !(await $.ui.panes()).some(pane => pane.id === PANE)) {
+      await $.ui.open({ id: PANE, title: TITLE })
     }
 
-    return ran
+    return next(e)
+  }).catch((_, e, next) => next(e))
+
+  // A main turn that ends before the build writes its state ends the launch's run.
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      return next(e)
+    }
+    await refresh($, () => update($, launch, one => (one === null ? null : { ...one, isLive: false })))
+
+    return next(e)
   })
+
+  on('command.run', { command: 'build' }, async ($, e, next) => {
+    const args = e.args.trim()
+    await refresh($, async () => {
+      const state = await $.fs.read(`${DIR}/state`).catch(() => '')
+      await update($, launch, () => ({ issue: /^\d+$/.test(args) ? args.replace(/^0+/, '') : '', state, isLive: true }))
+    })
+    const opened = await $.ui.open({ id: PANE, title: TITLE })
+
+    if (!opened.isPlaced) {
+      $.ui.log(await answer($, opened))
+    }
+
+    return next(e)
+  }).catch((_, e, next) => next(e))
 
   on('command.run', { command: 'voyage' }, async $ => {
     await refresh($)
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
 
-    return {
-      text: opened.isPlaced
-        ? 'Voyage pane opened.'
-        : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`,
-    }
+    return { text: await answer($, await $.ui.open({ id: PANE, title: TITLE })) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Progress } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
     const one = await read($, voyage)
 
     if (one === null) {
@@ -170,6 +233,22 @@ export const register: Register = on => {
     const at = one.isDone ? STAGES.length : STAGES.findIndex(stage => stage.phase === one.phase)
     const passed = one.checks.filter(check => check.result === 'pass').length
     const fuel = one.fuelMinutes
+    // Progress is gone: a line of text, then a bar.
+    const meter = (label: string, value: number, max: number, text: string, color: Color) => {
+      const filled = Math.round((WIDTH * Math.max(0, Math.min(value, max))) / max)
+
+      return (
+        <Box flexDirection="column">
+          <Text>
+            {label} {text}
+          </Text>
+          <Text color={color}>
+            {'█'.repeat(filled)}
+            <Text dimColor>{'░'.repeat(WIDTH - filled)}</Text>
+          </Text>
+        </Box>
+      )
+    }
     const log = one.isDone
       ? 'Docked. Welcome home, crew.'
       : one.isBlocked
@@ -199,13 +278,7 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          <Progress
-            label="Constellation"
-            value={passed}
-            max={Math.max(1, one.checks.length)}
-            valueText={`${passed} of ${one.checks.length} stars lit`}
-            color="success"
-          />
+          {meter('Constellation', passed, Math.max(1, one.checks.length), `${passed} of ${one.checks.length} stars lit`, 'success')}
           {one.checks.map(check => (
             <Text color={check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive'} wrap="truncate-end">
               {star(check)} {check.command}
@@ -214,22 +287,9 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          {fuel !== null && (
-            <Progress
-              label="Fuel"
-              value={fuel}
-              max={LIMIT_MINUTES}
-              valueText={`${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`}
-              color={fuel < 120 ? 'warning' : 'suggestion'}
-            />
-          )}
-          <Progress
-            label="Shields"
-            value={CAP - one.refusals}
-            max={CAP}
-            valueText={`${one.refusals} of ${CAP} bumps taken`}
-            color={one.refusals > 20 ? 'error' : 'permission'}
-          />
+          {fuel !== null &&
+            meter('Fuel', fuel, LIMIT_MINUTES, `${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`, fuel < 120 ? 'warning' : 'suggestion')}
+          {meter('Shields', CAP - one.refusals, CAP, `${one.refusals} of ${CAP} bumps taken`, one.refusals > 20 ? 'error' : 'permission')}
         </Box>
 
         <Box flexDirection="column">

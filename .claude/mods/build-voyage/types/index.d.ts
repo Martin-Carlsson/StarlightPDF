@@ -13,8 +13,18 @@ export type Voyage = {
   pr: string
 }
 
+/** A /build that has not yet written its state. */
+export type Launch = {
+  /** The issue number from the arguments, or '' for none. */
+  issue: string
+  /** The state file's text when it ran. */
+  state: string
+  /** False once a turn ended with the state unchanged. */
+  isLive: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'build-voyage': { voyage: Shaped<Voyage | null> }
+    'build-voyage': { voyage: Shaped<Voyage | null>; launch: Shaped<Launch | null>; found: Shaped<string | false | null> }
   }
 }
