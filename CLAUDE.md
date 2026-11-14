@@ -18,6 +18,12 @@
 - **Never weaken a test.** Don't skip, loosen or delete a test to make it pass; fix the code.
 - **Rules 1 and 2 apply.** Test code uses only standard tooling and passes the same checks.
 
+# Releases
+
+- **Trunk-based.** `main` is the only long-lived branch.
+- **Nightly.** Automation tags `main` as `nightly-YYYY-MM-DD` at 22:00 UTC.
+- **Release.** Only a human promotes a nightly to `vX.Y.Z`.
+
 # Documentation
 
 ## GLOSSARY.md
