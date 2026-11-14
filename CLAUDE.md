@@ -28,7 +28,7 @@ _Avoid_: {rejected synonyms}
 
 # Testing
 
-- **Test first.** Every change ships with tests. A bug fix starts with a test that fails without the fix.
+- **Test first.** Every code change ships with tests. A bug fix starts with a test that fails without the fix.
 - **Public API first.** Test behaviour through the public API; test internals directly only where a standard publishes test vectors.
 - **Cite the spec.** Where a test verifies a standard, name the standard and clause.
 - **Round-trip.** Whatever the library writes, it must read back with the same content.
