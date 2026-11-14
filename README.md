@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="StarlightPDF logo" width="128">
+
 # StarlightPDF
 
 An open-source PDF library with zero dependencies that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
@@ -195,3 +197,5 @@ StarlightPDF is just getting started, and contributions are welcome. Open an iss
 ## License
 
 StarlightPDF is released under the [Apache License 2.0](LICENSE). You can use it in open-source and closed-source projects, including commercial products.
+
+The logo is [Noto Emoji](https://github.com/googlefonts/noto-emoji)'s 🌟, Copyright 2013 Google, Inc., under the Apache License 2.0.
