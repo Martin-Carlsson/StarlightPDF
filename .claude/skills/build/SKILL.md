@@ -19,7 +19,7 @@ Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the 
 A Stop hook sends you back unless every check has passed on the files as they are now. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`.
-2. **Define checks.** For each Definition of done item, write at least one shell command that exits 0 only when the item holds; normally a test, written first. Run each: it should fail now. Write `.claude/build/state`:
+2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds: a test only where `CLAUDE.md` calls for one, otherwise a direct command. Run each: it should fail now. Write `.claude/build/state`:
 
    ```
    status: working
@@ -33,8 +33,8 @@ A Stop hook sends you back unless every check has passed on the files as they ar
    Show the checks. Do not wait for approval.
 3. **Orchestrate.** You plan, delegate and verify; subagents do the work. Brief each with the issue, its items, the files and the checks it must pass.
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
-   - **Test:** one subagent per item writes the failing test from the issue and the spec, never from the implementation.
-   - **Implement:** a different subagent per item makes it pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
+   - **Test:** where `CLAUDE.md` calls for a test, a subagent writes it, failing, from the issue and the spec, never from the implementation.
+   - **Implement:** a different subagent per item makes its check pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
    - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It asks for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report.
