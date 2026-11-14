@@ -12,7 +12,7 @@ Write a GitHub issue for: $ARGUMENTS
 3. **Ask.** Ask what you could not find out, a few questions at a time, until you can write every section without guessing.
    - Bug: steps to reproduce, input, expected, actual.
    - Feature: who needs it, what is in and out of scope, which standard and clause applies.
-   - Decisions: any choice the work forces that is hard to reverse, surprising without context and a real trade-off. Lay out the options and recommend one.
+   - Decisions: any choice the work forces that is hard to reverse, surprising without context and a real trade-off. A breaking API change is always one. Lay out the options and recommend one.
 4. **Draft.** Fill in `.github/ISSUE_TEMPLATE/bug.md` or `feature.md`, without its front matter, and show it.
 5. **Post.** Only after the user approves. Label `bug` or `feature`, plus `build-ready`. Reply with the link.
 

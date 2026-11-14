@@ -27,14 +27,15 @@ A Stop hook reruns your checks whenever you try to stop and sends you back if on
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
    - **Test:** one subagent per item writes the failing test from the issue and the spec, never from the implementation.
    - **Implement:** a different subagent per item makes it pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
-   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`. Delegate the fixes and review again until clean.
+   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. Delegate the fixes and review again until clean.
 
    Run the checks yourself after every hand-back; never trust a report.
-4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Then add `pr: <url>` to the state file.
+4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Then add `pr: <url>` to the state file.
 
 ## Rules
 
 - **Decisions in the issue are constraints.** Record each in `.architecture-decisions/`. If one does not work, ask; never deviate.
 - **Never make a hard-to-reverse decision yourself.** If the work forces one the issue does not cover, ask.
+- **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
 - **Ask, don't loop.** If you need something only the user has (a decision, a credential, access), or a check has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.

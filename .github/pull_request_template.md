@@ -10,6 +10,13 @@ Closes #
 
 - [x] 
 
+## Merge impact
+
+<!-- API: none, additive or breaking, then the public names changed. Breaking: existing callers must change or get a different result. -->
+
+- **API:** 
+- **Affects:** 
+
 ## Not done
 
 <!-- Follow-ups, or "Nothing." -->
