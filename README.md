@@ -21,7 +21,7 @@ StarlightPDF will be available as a dependency in:
 
 | Status | Language | Package source |
 | --- | --- | --- |
-| 💤 | Rust | crates.io |
+| 🔜 | Rust | crates.io |
 | 💤 | C and C++ | C API, vcpkg, Conan |
 | 💤 | Python | PyPI |
 | 💤 | .NET (C#, F#, VB.NET) | NuGet |
