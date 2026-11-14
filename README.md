@@ -23,7 +23,7 @@ StarlightPDF will be available as a dependency in:
 | --- | --- | --- |
 | 🔜 | Rust | crates.io |
 | 💤 | C and C++ | C API, vcpkg, Conan |
-| 💤 | Python | PyPI |
+| 🔜 | Python | PyPI |
 | 💤 | .NET (C#, F#, VB.NET) | NuGet |
 | 💤 | Go | Go modules |
 | 💤 | Java, Kotlin, Scala | Maven Central |
@@ -45,8 +45,8 @@ StarlightPDF will be available as a dependency in:
 
 ### Reading and inspecting
 
-- 💤 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
-- 💤 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
+- 🔜 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
+- 🔜 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
 - 💤 **Metadata:** read title, author, subject, keywords, dates; XMP metadata
 - 💤 **Structure access:** raw objects, streams, cross-reference table, document catalog
 - 💤 **Validation:** check a file against the PDF specification and report errors
@@ -65,7 +65,7 @@ StarlightPDF will be available as a dependency in:
 
 ### Page operations
 
-- 💤 **Combine and divide:** merge files, split by page, range, size or bookmark, extract pages
+- 🔜 **Combine and divide:** merge files, split by page, range, size or bookmark, extract pages
 - 💤 **Arrange:** reorder, delete, duplicate, insert blank pages, insert pages from other files
 - 💤 **Transform:** rotate, crop, resize, scale, change page boxes (media, crop, bleed, trim, art)
 - 💤 **Imposition:** N-up (several pages per sheet), booklets, posters, tiling
