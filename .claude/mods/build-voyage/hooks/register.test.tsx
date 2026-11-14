@@ -20,6 +20,13 @@ const PANE = {
 const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) => {
   const clock = mock.clock(on, { now: 100_000_000 })
   const reads = { count: 0 }
+  const logs: string[] = []
+  on('session.surfaces', () => ({ value: isPlaced ? ['desktop'] : [] }))
+  on('ui.log', (_, e) => {
+    logs.push(e.text)
+
+    return { value: undefined }
+  })
   on('command.register', () => ({ value: { command: 'voyage' } }))
   on('ui.open', () => ({ value: isPlaced ? { isPlaced } : { isPlaced, reason: 'no surface places panes' } }))
   on('ui.toast', () => ({ value: undefined }))
@@ -36,7 +43,7 @@ const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) 
     return { value: files[name] ?? '' }
   })
 
-  return { clock, reads }
+  return { clock, reads, logs }
 }
 
 // A Progress is drawn as a Text and a bar on some surfaces, natively on others.
@@ -169,4 +176,47 @@ test('a running build is polled; a finished one is docked and no longer polled',
   expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('◉ Dock')
   expect((await ui.find({ type: 'Text', text: /example\.test/ }))?.text).toBe('⚓ https://example.test/1')
   await ui.unmount()
+})
+
+test('where nothing draws, the transcript gets each stage and star once', async ($, on) => {
+  const files: Record<string, string> = {
+    '.claude/build/state': 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\n',
+    '.claude/build/refusals': '1\n',
+  }
+  const { clock, logs } = world(on, files, false)
+  await $.session.start(START)
+  await clock.settle()
+
+  expect(logs.length).toBe(1)
+  expect(logs[0]).toContain('issue #12 Reject empty files')
+  expect(logs[0]).toContain('Stage: Chart')
+  expect(logs[0]).toContain('0 of 1 stars lit')
+
+  // A bump is not a milestone.
+  files['.claude/build/refusals'] = '2\n'
+  await clock.advance(5000)
+
+  expect(logs.length).toBe(1)
+
+  files['.claude/build/results'] = 'pass true\n'
+  await clock.advance(5000)
+
+  expect(logs.length).toBe(2)
+  expect(logs[1]).toContain('1 of 1 stars lit')
+
+  files['.claude/build/state'] = 'status: working\nissue: 12 Reject empty files\nphase: implement\ncheck: true\n'
+  await clock.advance(5000)
+
+  expect(logs.length).toBe(3)
+  expect(logs[2]).toContain('Stage: Burn')
+})
+
+test('where a pane draws, the transcript gets nothing', async ($, on) => {
+  const { clock, logs } = world(on, {
+    '.claude/build/state': 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\n',
+  })
+  await $.session.start(START)
+  await clock.settle()
+
+  expect(logs.length).toBe(0)
 })

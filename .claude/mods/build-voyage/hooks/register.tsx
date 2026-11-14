@@ -82,6 +82,12 @@ const describe = (one: Voyage | null): string => {
   ].join('\n')
 }
 
+// What the transcript is told of where nothing draws: the stage and the stars, not every tick.
+const milestone = (one: Voyage | null): string =>
+  one === null
+    ? ''
+    : JSON.stringify([one.issue, one.phase, one.isBlocked, one.isDone, one.pr, one.checks.map(check => check.result)])
+
 // Polls only while a build runs; a tool call notices one that starts.
 let timer: ReturnType<EngineInterface['clock']['every']> | undefined
 
@@ -117,6 +123,9 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 
   if (before === null && next !== null) {
     void $.ui.open({ id: PANE, title: TITLE })
+  }
+  if (next !== null && milestone(before) !== milestone(next) && (await $.session.surfaces()).length === 0) {
+    $.ui.log(describe(next))
   }
   if (!lit(before) && lit(next)) {
     $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
