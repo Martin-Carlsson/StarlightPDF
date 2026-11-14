@@ -182,16 +182,12 @@ The repository ships two [Claude Code](https://claude.com/claude-code) skills an
 | `/build <issue number>` | Works on the issue until its definition of done is met, then opens a pull request. Stops to ask after 24 hours, or when it needs a decision. |
 | `/voyage` | Shows the progress of the current build. |
 
-### One-time setup
+The skills need no setup. To install the pane, run this in a shell, answer `y`, then press Enter:
 
-1. Create these labels in the GitHub repository: `feature`, `build-ready`, `api-additive`, `api-breaking`. `bug` exists by default.
-2. Install the progress pane from a shell on your computer. Answer `y`, then press Enter:
-
-   ```
-   claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
-   ```
-
-The skills need no installation. The pane is drawn in the terminal and in local desktop sessions; a cloud session answers `/voyage` in text.
+```
+claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
+```
+ The pane is drawn in the terminal and in local desktop sessions; a cloud session answers `/voyage` in text.
 
 ## Contributing
 
