@@ -1,12 +1,14 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool
+# Hooks for the build skill. Usage: hook.sh stop|tool|check
 # stop: refuse to stop until every check passes and a PR is recorded.
 # tool: refuse tool calls after 24 hours without the user.
+# check: run every check and print the results.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-.}"
 state=.claude/build/state
 count=.claude/build/refusals
+results=.claude/build/results
 cap=30
 limit=86400
 
@@ -41,6 +43,36 @@ refuse() {
   exit 2
 }
 
+# Runs every check, records pass or fail per check, collects the failures.
+run_checks() {
+  failures=
+  : >"$results.tmp"
+  while IFS= read -r cmd; do
+    if out=$(sh -c "$cmd" </dev/null 2>&1); then
+      echo "pass $cmd" >>"$results.tmp"
+    else
+      echo "fail $cmd" >>"$results.tmp"
+      failures="${failures}check failed: $cmd
+$out
+"
+    fi
+  done <<END
+$(sed -n 's/^check: //p' "$state")
+END
+  mv "$results.tmp" "$results"
+}
+
+if [ "$1" = check ]; then
+  if ! grep -q '^check: .' "$state" 2>/dev/null; then
+    echo 'build: no build in progress, or no check: lines' >&2
+    exit 1
+  fi
+  run_checks
+  cat "$results"
+  [ -z "$failures" ]
+  exit
+fi
+
 [ -f "$state" ] || exit 0
 
 if grep -q '^status: blocked$' "$state"; then
@@ -60,18 +92,12 @@ fi
 
 [ "$1" = stop ] || exit 0
 
-checks=$(sed -n 's/^check: //p' "$state")
-[ -n "$checks" ] || refuse "no check: lines in $state"
-
-while IFS= read -r cmd; do
-  out=$(sh -c "$cmd" </dev/null 2>&1) || refuse "check failed: $cmd
-$out"
-done <<END
-$checks
-END
+grep -q '^check: .' "$state" || refuse "no check: lines in $state"
+run_checks
+[ -z "$failures" ] || refuse "$failures"
 
 if ! grep -q '^pr: .' "$state"; then
   refuse "checks pass; open the pull request and add 'pr: <url>' to $state"
 fi
 
-rm -f "$state" "$count"
+rm -f "$state" "$count" "$results"

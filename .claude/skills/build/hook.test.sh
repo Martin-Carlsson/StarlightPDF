@@ -125,5 +125,36 @@ reset
 printf 'status: blocked\ncheck: false\nstarted: 0\n' >"$state"
 run "tool: blocked allows" 0 ''
 
+# Results: every check runs and is recorded, in order.
+results="$tmp/.claude/build/results"
+mode=stop
+reset
+printf 'status: working\ncheck: true\ncheck: false\ncheck: test -f marker\n' >"$state"
+: >"$tmp/marker"
+run "stop records every result" 2 'check failed: false'
+printf 'pass true\nfail false\npass test -f marker\n' >"$tmp/want"
+expect cmp -s "$tmp/want" "$results"
+
+mode=check
+reset
+printf 'status: working\ncheck: true\ncheck: false\n' >"$state"
+run "check: fails when a check fails" 1 'fail false'
+expect grep -q '^pass true$' "$results"
+expect test ! -e "$tmp/.claude/build/refusals"
+
+reset
+printf 'status: working\ncheck: true\n' >"$state"
+run "check: passes without a pr" 0 'pass true'
+expect test -f "$state"
+
+reset
+run "check: no state fails" 1 'no build'
+
+mode=stop
+reset
+printf 'status: working\ncheck: true\npr: https://example.test/1\n' >"$state"
+run "success removes results" 0 ''
+expect test ! -e "$results"
+
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"
