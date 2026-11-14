@@ -24,8 +24,26 @@ export type Launch = {
 /** State text found at session start; no reopen until it changes or /build runs. */
 export type Stale = string
 
+export type Agent = {
+  id: string
+  parentId?: string
+  description: string
+  model: string
+  isRunning: boolean
+  tokens: number
+}
+
+/** One /build's clock and tallies; figures freeze once isOpen is false. */
+export type Run = {
+  startedMs: number
+  elapsedMs: number
+  isOpen: boolean
+  mainTokens: number
+  agents: Agent[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'build-voyage': { voyage: Shaped<Build | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null> }
+    'build-voyage': { voyage: Shaped<Build | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null>; run: Shaped<Run | null> }
   }
 }
