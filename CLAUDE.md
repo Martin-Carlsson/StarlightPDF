@@ -18,12 +18,11 @@
 - **Never weaken a test.** Don't skip, loosen or delete a test to make it pass; fix the code.
 - **Rules 1 and 2 apply.** Test code uses only standard tooling and passes the same checks.
 
-# Branching and releases
+# Releases
 
-- **Trunk-based.** `main` is the only long-lived branch and is always releasable. Work lands through short-lived branches; there are no release branches.
-- **Nightly.** Every night at 22:00 UTC, automation tags the head of `main` as `nightly-YYYY-MM-DD` and builds it. No new commits, no nightly.
-- **Release.** Only a human releases, by promoting an existing nightly to a semantic version `vX.Y.Z` on the same commit. Never release from anything but a nightly; never rebuild.
-- **Agents never release.** Don't create, move or delete version tags.
+- **Trunk-based.** `main` is the only long-lived branch.
+- **Nightly.** Automation tags `main` as `nightly-YYYY-MM-DD` at 22:00 UTC.
+- **Release.** Only a human promotes a nightly to `vX.Y.Z`.
 
 # Documentation
 
