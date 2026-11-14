@@ -179,11 +179,10 @@ StarlightPDF will be available as a dependency in:
 | `/issue <description>` | Drafts a bug or feature issue. |
 | `/build <issue number>` | Builds the issue and opens a pull request. |
 
-`/build` shows a progress pane, enabled by `.claude/settings.json`. Install it if missing; update it if outdated:
+`/build` shows a progress pane, enabled and kept up to date by `.claude/settings.json`. Install it if missing:
 
 ```
 claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
-claude plugin marketplace update starlightpdf && claude plugin update build-voyage@starlightpdf
 ```
 
 `main` accepts only signed commits. To sign locally, add your SSH key on GitHub as a *Signing Key*.
