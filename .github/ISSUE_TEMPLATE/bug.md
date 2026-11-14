@@ -17,3 +17,7 @@ labels: bug
 ## Reproduce
 
 <!-- Steps, input, expected, actual. -->
+
+## Decisions
+
+<!-- Hard-to-reverse choices already made, each with its reason. Delete if none. -->

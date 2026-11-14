@@ -17,3 +17,7 @@ labels: feature
 ## Scope
 
 <!-- In and out. -->
+
+## Decisions
+
+<!-- Hard-to-reverse choices already made, each with its reason. Delete if none. -->
