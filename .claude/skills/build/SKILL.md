@@ -30,7 +30,7 @@ A Stop hook sends you back unless every check has passed on the files as they ar
 
    Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`.
 
-   Then create branch `<number>-<slug>`, at most 60 characters, from `origin/main`. If it already exists, someone else may be working on it: ask the user what to do.
+   Then create branch `<number>-<slug>`, at most 60 characters, from `origin/main`. If it already exists, check its pull request and commits; ask only if someone else may be working on it.
 
    Show the checks. Do not wait for approval.
 3. **Orchestrate.** You plan, delegate and verify; subagents do the work. Brief each with the issue, its items, the files and the checks it must pass.
@@ -45,8 +45,8 @@ A Stop hook sends you back unless every check has passed on the files as they ar
 ## Rules
 
 - **Decisions in the issue are constraints.** Record one in `.architecture-decisions/` only if it is hard to reverse, surprising without context and a real trade-off; follow the rest without recording them. If one does not work, ask; never deviate.
-- **Never make a hard-to-reverse decision yourself.** If the work forces one the issue does not cover, ask.
+- **Questions.** Ask only for a fact you cannot find in the repository, its issues or its pull requests, or a choice that is hard to reverse, surprising without context and a real trade-off. Make every other choice yourself. Recommend an answer to every question, multi-select included.
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
-- **Ask, don't loop.** If you need something only the user has (a decision, a credential, access), or a check has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
+- **Ask, don't loop.** If you must ask, or a check has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
 - **Cancelled.** If the user cancels the build, delete `.claude/build/state`.
