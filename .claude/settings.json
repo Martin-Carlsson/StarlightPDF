@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "starlightpdf": {
+      "source": {
+        "source": "github",
+        "repo": "Martin-Carlsson/StarlightPDF"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "build-voyage@starlightpdf": true
+  }
+}
