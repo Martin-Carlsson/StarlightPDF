@@ -17,10 +17,10 @@ const PANE = {
 } as const
 
 // Stands for the engine: the files of .claude/build/, the clock at 100 000 s.
-const world = (on: On, files: Record<string, string>) => {
+const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) => {
   const clock = mock.clock(on, { now: 100_000_000 })
   on('command.register', () => ({ value: { command: 'voyage' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', () => ({ value: isPlaced ? { isPlaced } : { isPlaced, reason: 'no surface places panes' } }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('fs.read', (_, e) => {
@@ -102,4 +102,31 @@ test('a blocked build holds orbit, and a new file is picked up by the timer', as
   expect(await ui.find({ type: 'Text', text: /uncharted/ })).toBeDefined()
   expect(await bar(ui, /Fuel/)).toBeUndefined()
   await ui.unmount()
+})
+
+test('where no pane can be shown, the command answers in text', async ($, on) => {
+  world(
+    on,
+    {
+      '.claude/build/state': 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n',
+      '.claude/build/results': 'pass true\nfail false\n',
+    },
+    false,
+  )
+  await $.session.start(START)
+
+  const { text } = await $.command.run({
+    command: 'voyage',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+
+  expect(text).toContain('issue #12 Reject empty files')
+  expect(text).toContain('Chart')
+  expect(text).toContain('1 of 2 stars lit')
+  expect(text).toContain('★ true')
+  expect(text).toContain('☆ false')
+  expect(text).toContain('no surface places panes')
+  expect(text).not.toContain('pane opened')
 })

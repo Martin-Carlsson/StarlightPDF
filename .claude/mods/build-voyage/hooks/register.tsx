@@ -52,6 +52,28 @@ export const parse = (state: string, results: string, refusals: string, nowMs: n
 const lit = (one: Voyage | null): boolean =>
   one !== null && one.checks.length > 0 && one.checks.every(check => check.result === 'pass')
 
+const star = (check: Check): string => (check.result === 'pass' ? '★' : check.result === 'fail' ? '☆' : '·')
+
+// The pane in words, for a surface that shows no pane.
+const describe = (one: Voyage | null): string => {
+  if (one === null) {
+    return 'The ship is in dry dock. Launch with /build and an issue number.'
+  }
+  const passed = one.checks.filter(check => check.result === 'pass').length
+  const stage = STAGES.find(each => each.phase === one.phase)?.name ?? 'Pre-flight'
+  const fuel = one.fuelMinutes
+
+  return [
+    `✦ Destination: ${one.issue === '' ? 'uncharted' : `issue #${one.issue}`}`,
+    `Stage: ${one.isBlocked ? 'Holding orbit, waiting for you' : stage}`,
+    `Constellation: ${passed} of ${one.checks.length} stars lit`,
+    ...one.checks.map(check => `  ${star(check)} ${check.command}`),
+    ...(fuel === null ? [] : [`Fuel: ${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`]),
+    `Shields: ${one.refusals} of ${CAP} bumps taken`,
+    ...(one.pr === '' ? [] : [`Docked: ${one.pr}`]),
+  ].join('\n')
+}
+
 const refresh = async ($: EngineInterface): Promise<void> => {
   const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
   const state = await file('state')
@@ -82,9 +104,13 @@ export const register: Register = on => {
 
   on('command.run', { command: 'voyage' }, async $ => {
     await refresh($)
-    await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE })
 
-    return { text: 'Voyage pane opened.' }
+    return {
+      text: opened.isPlaced
+        ? 'Voyage pane opened.'
+        : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`,
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -143,7 +169,7 @@ export const register: Register = on => {
           />
           {one.checks.map(check => (
             <Text color={check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive'} wrap="truncate-end">
-              {check.result === 'pass' ? '★' : check.result === 'fail' ? '☆' : '·'} {check.command}
+              {star(check)} {check.command}
             </Text>
           ))}
         </Box>
