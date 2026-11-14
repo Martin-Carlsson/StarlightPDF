@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
+import type { Color, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
 import type { Check, Launch, Stale, Voyage } from '../types'
 
@@ -90,8 +90,15 @@ const describe = (one: Voyage | null): string => {
 let timer: ReturnType<EngineInterface['clock']['every']> | undefined
 let isFollowing = false
 
+// Under the session's root, which follows a worktree the session enters.
+const reader = async ($: EngineInterface) => {
+  const dir = `${await $.session.root()}/${DIR}`
+
+  return (name: string): Promise<string> => $.fs.read(`${dir}/${name}`).catch(() => '')
+}
+
 const look = async ($: EngineInterface): Promise<boolean> => {
-  const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
+  const file = await reader($)
   const state = await file('state')
   const launched = await read($, launch)
   const isLaunched = launched?.state === state
@@ -160,7 +167,7 @@ const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => 
 const answer = async ($: EngineInterface, opened: UiOpenResult): Promise<string> =>
   opened.isPlaced ? 'Voyage pane opened.' : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`
 
-const stateNow = ($: EngineInterface): Promise<string> => $.fs.read(`${DIR}/state`).catch(() => '')
+const stateNow = async ($: EngineInterface): Promise<string> => (await reader($))('state')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -184,16 +191,28 @@ export const register: Register = on => {
     } else if ((await refresh($)) && !(await $.ui.panes()).some(pane => pane.id === PANE)) {
       await $.ui.open({ id: PANE, title: TITLE })
     }
+    const isMove = e.tool === 'EnterWorktree' || e.tool === 'ExitWorktree'
+    // Read first: a poll during the move may clear it.
+    const pending = isMove ? await read($, launch) : null
+    const result = await next(e)
 
-    return next(e)
+    // The root moved: a pending launch belongs to the new root.
+    if (isMove) {
+      await refresh($, async () => {
+        const state = await stateNow($)
+        await update($, launch, () => (pending === null ? null : { ...pending, state }))
+      }).catch(() => false)
+    }
+
+    return result
   }).catch((_, e, next) => next(e))
 
   on('command.run', { command: 'build' }, async ($, e, next) => {
-    const args = e.args.trim()
+    const number = /^\d+/.exec(e.args.trim())?.[0]
     await refresh($, async () => {
       const state = await stateNow($)
       await update($, stale, () => null)
-      await update($, launch, () => ({ issue: /^\d+$/.test(args) ? String(Number(args)) : '', state }))
+      await update($, launch, () => ({ issue: number === undefined ? '' : String(Number(number)), state }))
     })
     const opened = await $.ui.open({ id: PANE, title: TITLE })
 
@@ -211,8 +230,19 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Progress } = $.ui.resolve(e)
+    const { Box, Text } = $.ui.resolve(e)
     const one = await read($, voyage)
+    const width = Math.max(1, e.props.bodyColumns)
+    const gauge = (label: string, value: number, max: number, valueText: string, color: Color) => {
+      const filled = Math.round((Math.min(max, Math.max(0, value)) / max) * width)
+
+      return (
+        <Box flexDirection="column">
+          <Text color={color}>{`${label} ${valueText}`}</Text>
+          <Text color={color} wrap="truncate-end">{'█'.repeat(filled) + '░'.repeat(width - filled)}</Text>
+        </Box>
+      )
+    }
 
     if (one === null) {
       return (
@@ -257,13 +287,7 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          <Progress
-            label="Constellation"
-            value={passed}
-            max={Math.max(1, one.checks.length)}
-            valueText={`${passed} of ${one.checks.length} stars lit`}
-            color="success"
-          />
+          {gauge('Constellation', passed, Math.max(1, one.checks.length), `${passed} of ${one.checks.length} stars lit`, 'success')}
           {one.checks.map(check => (
             <Text color={check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive'} wrap="truncate-end">
               {star(check)} {check.command}
@@ -272,22 +296,9 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          {fuel !== null && (
-            <Progress
-              label="Fuel"
-              value={fuel}
-              max={LIMIT_MINUTES}
-              valueText={`${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`}
-              color={fuel < 120 ? 'warning' : 'suggestion'}
-            />
-          )}
-          <Progress
-            label="Shields"
-            value={CAP - one.refusals}
-            max={CAP}
-            valueText={`${one.refusals} of ${CAP} bumps taken`}
-            color={one.refusals > 20 ? 'error' : 'permission'}
-          />
+          {fuel !== null &&
+            gauge('Fuel', fuel, LIMIT_MINUTES, `${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`, fuel < 120 ? 'warning' : 'suggestion')}
+          {gauge('Shields', CAP - one.refusals, CAP, `${one.refusals} of ${CAP} bumps taken`, one.refusals > 20 ? 'error' : 'permission')}
         </Box>
 
         <Box flexDirection="column">

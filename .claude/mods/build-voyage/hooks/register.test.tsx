@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import type { ElementQuery, Engine, FoundElement } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 const ID = 'build-voyage'
@@ -20,14 +20,20 @@ const START = { cwd: '/', surface: 'desktop', isInteractive: true } as const
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const REASON = 'no surface places panes'
 
-// Stands for the engine: the files of .claude/build/, the clock at 100 000 s, its
-// open panes, and the order of what reached it: `build` (the skill), `tool:open` or
+// Stands for the engine: the session's root, files (a name under the root's .claude/build/, or an
+// absolute path), the clock at 100 000 s, its open panes, and the order of what reached it: `build` (the skill), `tool:open` or
 // `tool:closed` (a tool call, and whether the pane was open), `log:<text>` (a transcript line).
-const world = (on: On, files: Map<string, string> = new Map(), isPlaced: boolean = true) => {
+const world = (
+  on: On,
+  files: Map<string, string> = new Map(),
+  isPlaced: boolean = true,
+  root: () => string = () => '/repo',
+) => {
   const clock = mock.clock(on, { now: 100_000_000 })
   const reads = { count: 0 }
   const panes = new Set<string>()
   const events: string[] = []
+  on('session.root', () => ({ value: root() }))
   on('command.register', () => ({ value: { command: 'voyage' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('ui.toast', () => ({ value: undefined }))
@@ -60,13 +66,13 @@ const world = (on: On, files: Map<string, string> = new Map(), isPlaced: boolean
   })
   on('fs.read', (_, e) => {
     reads.count += 1
-    const name = [...files.keys()].find(one => e.path.endsWith(`.claude/build/${one}`))
+    const value = [...files].find(([one]) => e.path === (one.startsWith('/') ? one : `${root()}/.claude/build/${one}`))?.[1]
 
-    if (name === undefined) {
+    if (value === undefined) {
       throw new Error('ENOENT')
     }
 
-    return { value: files.get(name) ?? '' }
+    return { value }
   })
 
   const act = ($: Engine) => ({
@@ -100,16 +106,6 @@ const world = (on: On, files: Map<string, string> = new Map(), isPlaced: boolean
   })
 
   return { clock, reads, events, act, isOpen: () => panes.has(ID) }
-}
-
-// A Progress is drawn as a Text and a bar on some surfaces, natively on others.
-type Drawing = { find: (query: ElementQuery) => Promise<FoundElement | undefined> }
-
-const bar = async (ui: Drawing, word: RegExp): Promise<string | undefined> => {
-  const drawn = await ui.find({ type: 'Text', text: word })
-  const native = await ui.find({ type: 'Progress', text: word })
-
-  return drawn?.text ?? (native && `${String(native.props['label'])} ${String(native.props['valueText'])}`)
 }
 
 // What the pane's Text matching `text` reads on each surface, cut to `part`.
@@ -154,9 +150,9 @@ test('a build shows its checks, stage and fuel on every surface', async ($, on) 
     expect((await ui.find({ type: 'Text', text: /Burn/ }))?.text).toMatch(/^◎ Burn/)
     expect((await ui.find({ type: 'Text', text: /Chart/ }))?.text).toBe('◉ Chart')
     expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('○ Dock')
-    expect(await bar(ui, /Fuel/)).toBe('Fuel 23h 0m until check-in')
-    expect(await bar(ui, /Constellation/)).toBe('Constellation 1 of 3 stars lit')
-    expect(await bar(ui, /Shields/)).toBe('Shields 3 of 30 bumps taken')
+    expect((await ui.find({ type: 'Text', text: /Fuel/ }))?.text).toBe('Fuel 23h 0m until check-in')
+    expect((await ui.find({ type: 'Text', text: /Constellation/ }))?.text).toBe('Constellation 1 of 3 stars lit')
+    expect((await ui.find({ type: 'Text', text: /Shields/ }))?.text).toBe('Shields 3 of 30 bumps taken')
     await ui.unmount()
   }
 })
@@ -191,7 +187,7 @@ test('an idle session does not poll; a tool call notices a build', async ($, on)
 
   expect(await ui.find({ type: 'Text', text: /Holding orbit/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /uncharted/ })).toBeDefined()
-  expect(await bar(ui, /Fuel/)).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Fuel/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -286,13 +282,39 @@ test('until the build writes its state, the pane shows issue #10 at the first st
   expect(await stage($)).toEqual(every('◎ Chart'))
 })
 
-test('/build with no number or a non-number is bound for uncharted', async ($, on) => {
+test('/build 18 then entering a worktree still shows issue #18', async ($, on) => {
+  const finished = 'status: working\nissue: 13 Some title\nphase: pr\ncheck: true\npr: https://example.test/13\n'
+  const files = new Map([
+    ['state', finished],
+    ['done', finished],
+    ['results', 'pass true\n'],
+  ])
+  let dir = '/main'
+  on('tool.call', { tool: 'EnterWorktree' }, (_, e, next) => {
+    dir = '/wt'
+    files.clear()
+
+    return next(e)
+  })
+  const { clock, act } = world(on, files, true, () => dir)
+  const { run, call } = act($)
+  await $.session.start(START)
+  await clock.settle()
+  await run('build', '18 but build it in a worktree')
+  await $.tool.call({ tool: 'EnterWorktree', path: '/wt' })
+  await call()
+
+  expect(await shown($, /Destination/)).toEqual(every('Destination issue #18'))
+  expect(await stage($)).toEqual(every('◎ Scan'))
+})
+
+test('/build whose arguments do not start with a number is bound for uncharted', async ($, on) => {
   const { clock, act, isOpen } = world(on)
   const { run, close } = act($)
   await $.session.start(START)
   await clock.settle()
 
-  for (const args of ['', 'abc']) {
+  for (const args of ['', 'abc', 'abc 18', '#18']) {
     await run('build', args)
 
     expect(isOpen()).toBe(true)
@@ -480,4 +502,35 @@ test('a stale unfinished state from an earlier session does not reopen a closed 
   await clock.advance(60_000)
 
   expect(isOpen()).toBe(false)
+})
+
+test('a build in a worktree the session entered shows its own issue, stage and checks', async ($, on) => {
+  const files = new Map<string, string>()
+  let dir = '/main'
+  // The engine moves the root during the tool; registered first, so above world's hook, which ends the chain.
+  on('tool.call', { tool: 'EnterWorktree' }, (_, e, next) => {
+    dir = '/wt'
+
+    return next(e)
+  })
+  const { clock } = world(on, files, true, () => dir)
+  files.set('/main/.claude/build/state', 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n')
+  files.set('/main/.claude/build/results', 'pass true\nfail false\n')
+  files.set('/wt/.claude/build/state', 'status: working\nissue: 19 Show every build\nphase: implement\ncheck: sh a\ncheck: sh b\n')
+  files.set('/wt/.claude/build/results', 'pass sh a\n')
+  await $.session.start(START)
+  await clock.settle()
+
+  expect(await shown($, /Destination/)).toEqual(every('Destination issue #12 Reject empty files'))
+  expect(await stage($)).toEqual(every('◎ Chart'))
+  expect(await shown($, /^☆/)).toEqual(every('☆ false'))
+
+  await $.tool.call({ tool: 'EnterWorktree', path: '/wt' })
+  await clock.settle()
+
+  expect(await shown($, /Destination/)).toEqual(every('Destination issue #19 Show every build'))
+  expect(await stage($)).toEqual(every('◎ Burn'))
+  expect(await shown($, /^★/)).toEqual(every('★ sh a'))
+  expect(await shown($, /^·/)).toEqual(every('· sh b'))
+  expect(await shown($, /^☆/)).toEqual(every(''))
 })
