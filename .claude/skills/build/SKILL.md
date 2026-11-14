@@ -30,6 +30,8 @@ A Stop hook sends you back unless every check has passed on the files as they ar
 
    Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`.
 
+   Then create branch `<number>-<slug>`, at most 60 characters, from `origin/main`. If it already exists, someone else may be working on it: ask the user what to do.
+
    Show the checks. Do not wait for approval.
 3. **Orchestrate.** You plan, delegate and verify; subagents do the work. Brief each with the issue, its items, the files and the checks it must pass.
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
