@@ -1,7 +1,7 @@
 {
   "name": "build-voyage",
-  "version": "0.2.0",
-  "description": "A mission-control pane that shows the progress of a /build run.",
+  "version": "0.3.0",
+  "description": "A pane that shows the progress of a /build run.",
   "types": "./types/index.d.ts",
   "license": "Apache-2.0",
   "author": {

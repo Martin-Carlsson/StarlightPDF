@@ -1,25 +1,24 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
-import type { Check, Launch, Stale, Voyage } from '../types'
+import type { Build, Check, Launch, Stale } from '../types'
 
 // Reads what the build skill's hook keeps in .claude/build/ and draws it.
 const PANE = 'build-voyage'
-const TITLE = 'Starlight voyage'
 const DIR = '.claude/build'
 const LIMIT_MINUTES = 24 * 60
 const CAP = 30
 
-const STAGES = [
-  { phase: 'explore', name: 'Scan', log: 'Probes are sweeping the nebula.' },
-  { phase: 'test', name: 'Chart', log: 'Charting the stars we must light.' },
-  { phase: 'implement', name: 'Burn', log: 'Main engines burning. Hold on to your teacup.' },
-  { phase: 'review', name: 'Inspect', log: 'Inspection drones are circling the hull.' },
-  { phase: 'pr', name: 'Dock', log: 'On final approach to the docking ring.' },
+const PHASES = [
+  { phase: 'explore', name: 'Explore', status: 'Mapping the code and the spec.' },
+  { phase: 'test', name: 'Test', status: 'Writing tests that fail until the issue is done.' },
+  { phase: 'implement', name: 'Implement', status: 'Changing the code until every check passes.' },
+  { phase: 'review', name: 'Review', status: 'Reviewing the diff against the issue.' },
+  { phase: 'pr', name: 'Pull request', status: 'Opening the pull request.' },
 ]
 
-const voyage = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Voyage | null, {
-  shape: 'voyage-2',
+const build = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Build | null, {
+  shape: 'voyage-3',
 })
 
 const launch = atom({ plugin: 'build-voyage', key: 'launch' } as const, null as Launch | null, { shape: 'launch-1' })
@@ -36,7 +35,7 @@ export const parse = (
   clock: string,
   finished: string,
   nowMs: number,
-): Voyage => {
+): Build => {
   const done = results.split('\n').filter(line => line !== '')
   const checks: Check[] = state
     .split('\n')
@@ -55,35 +54,95 @@ export const parse = (
     isBlocked: field(state, 'status') === 'blocked',
     isDone: finished === state,
     checks,
-    fuelMinutes: started > 0 ? Math.max(0, Math.min(LIMIT_MINUTES, LIMIT_MINUTES - used)) : null,
+    minutesLeft: started > 0 ? Math.max(0, Math.min(LIMIT_MINUTES, LIMIT_MINUTES - used)) : null,
     refusals: Number(refusals.trim()) || 0,
     pr: field(state, 'pr'),
   }
 }
 
-const lit = (one: Voyage | null): boolean =>
+const allPass = (one: Build | null): boolean =>
   one !== null && one.checks.length > 0 && one.checks.every(check => check.result === 'pass')
 
-const star = (check: Check): string => (check.result === 'pass' ? '★' : check.result === 'fail' ? '☆' : '·')
+const mark = (check: Check): string => (check.result === 'pass' ? '✓' : check.result === 'fail' ? '✗' : '·')
 
-// The pane in words, for a surface that shows no pane.
-const describe = (one: Voyage | null): string => {
+type Row = {
+  text: string
+  color: Color
+  isBold?: boolean
+  isItalic?: boolean
+  isDim?: boolean
+  isCheck?: boolean
+  bar?: { value: number; max: number }
+}
+
+// Pane lines in groups; the text answer is the same lines.
+const rows = (one: Build | null): Row[][] => {
   if (one === null) {
-    return 'The ship is in dry dock. Launch with /build and an issue number.'
+    return [
+      [
+        { text: 'Build', color: 'suggestion', isBold: true },
+        { text: 'No build is running. Start one with /build and an issue number.', color: 'text', isDim: true },
+      ],
+    ]
   }
+  const at = one.isDone ? PHASES.length : PHASES.findIndex(each => each.phase === one.phase)
   const passed = one.checks.filter(check => check.result === 'pass').length
-  const stage = STAGES.find(each => each.phase === one.phase)?.name ?? 'Pre-flight'
-  const fuel = one.fuelMinutes
+  const left = one.minutesLeft
+  const status = one.isDone
+    ? 'Pull request open.'
+    : one.isBlocked
+      ? 'Waiting for your answer.'
+      : (PHASES[at]?.status ?? 'Starting the build.')
 
   return [
-    `✦ Destination: ${one.issue === '' ? 'uncharted' : `issue #${one.issue}`}`,
-    `Stage: ${one.isDone ? 'Docked' : one.isBlocked ? 'Holding orbit, waiting for you' : stage}`,
-    `Constellation: ${passed} of ${one.checks.length} stars lit`,
-    ...one.checks.map(check => `  ${star(check)} ${check.command}`),
-    ...(fuel === null ? [] : [`Fuel: ${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`]),
-    `Shields: ${one.refusals} of ${CAP} bumps taken`,
-    ...(one.pr === '' ? [] : [`Docked: ${one.pr}`]),
-  ].join('\n')
+    [{ text: one.issue === '' ? 'Build' : `Build #${one.issue}`, color: 'suggestion', isBold: true }],
+    PHASES.map((each, index) => ({
+      text: `${index < at ? '◉' : index === at ? '◎' : '○'} ${each.name}`,
+      color: index < at ? 'success' : index === at ? 'claude' : 'inactive',
+    })),
+    [{ text: status, color: one.isBlocked ? 'warning' : 'text', isItalic: true }],
+    [
+      {
+        text: `${passed} of ${one.checks.length} checks pass`,
+        color: 'success',
+        bar: { value: passed, max: Math.max(1, one.checks.length) },
+      },
+      ...one.checks.map(check => ({
+        text: `${mark(check)} ${check.command}`,
+        isCheck: true,
+        color: check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive',
+      })),
+    ],
+    [
+      ...(left === null
+        ? []
+        : [
+            {
+              text: `${Math.floor(left / 60)}h ${left % 60}m left before the build pauses`,
+              color: left < 120 ? 'warning' : 'suggestion',
+              bar: { value: left, max: LIMIT_MINUTES },
+            },
+          ]),
+      {
+        text: `${one.refusals} of ${CAP} stops refused`,
+        color: one.refusals > 20 ? 'error' : 'permission',
+        bar: { value: one.refusals, max: CAP },
+      },
+    ],
+    ...(one.pr === '' ? [] : [[{ text: one.pr, color: 'success' as const }]]),
+  ]
+}
+
+const describe = (one: Build | null): string =>
+  rows(one)
+    .flat()
+    .map(row => row.text)
+    .join('\n')
+
+const open = async ($: EngineInterface): Promise<UiOpenResult> => {
+  const number = /^\d+/.exec((await read($, build))?.issue ?? '')?.[0]
+
+  return $.ui.open({ id: PANE, title: number === undefined ? 'Build' : `Build #${number}` })
 }
 
 // Polls only while a build runs; a tool call notices one that starts.
@@ -112,8 +171,8 @@ const look = async ($: EngineInterface): Promise<boolean> => {
   if (quiet !== null && !isQuiet) {
     await update($, stale, () => null)
   }
-  const next: Voyage | null = isLaunched
-    ? { issue: launched.issue, phase: 'explore', isBlocked: false, isDone: false, checks: [], fuelMinutes: null, refusals: 0, pr: '' }
+  const next: Build | null = isLaunched
+    ? { issue: launched.issue, phase: 'explore', isBlocked: false, isDone: false, checks: [], minutesLeft: null, refusals: 0, pr: '' }
     : state === ''
       ? null
       : parse(
@@ -133,16 +192,16 @@ const look = async ($: EngineInterface): Promise<boolean> => {
     timer.cancel()
     timer = undefined
   }
-  const before = await read($, voyage)
+  const before = await read($, build)
 
   if (JSON.stringify(before) !== JSON.stringify(next)) {
-    await update($, voyage, () => next)
+    await update($, build, () => next)
 
     if (before === null && next !== null && !next.isDone) {
-      void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
+      void open($).catch(() => undefined)
     }
-    if (!lit(before) && lit(next)) {
-      $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
+    if (!allPass(before) && allPass(next)) {
+      $.ui.toast('Every check passes.')
     }
   }
 
@@ -165,7 +224,7 @@ const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => 
 }
 
 const answer = async ($: EngineInterface, opened: UiOpenResult): Promise<string> =>
-  opened.isPlaced ? 'Voyage pane opened.' : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`
+  opened.isPlaced ? 'Build pane opened.' : `${describe(await read($, build))}\n\nNo pane here: ${opened.reason}`
 
 const stateNow = async ($: EngineInterface): Promise<string> => (await reader($))('state')
 
@@ -175,7 +234,7 @@ export const register: Register = on => {
     void refresh($, async () => {
       const state = await stateNow($)
 
-      if (state !== '' && (await read($, voyage)) === null) {
+      if (state !== '' && (await read($, build)) === null) {
         await update($, stale, () => state)
       }
     }).catch(() => false)
@@ -189,7 +248,7 @@ export const register: Register = on => {
         void refresh($).catch(() => false)
       }
     } else if ((await refresh($)) && !(await $.ui.panes()).some(pane => pane.id === PANE)) {
-      await $.ui.open({ id: PANE, title: TITLE })
+      await open($)
     }
     const isMove = e.tool === 'EnterWorktree' || e.tool === 'ExitWorktree'
     // Read first: a poll during the move may clear it.
@@ -214,7 +273,7 @@ export const register: Register = on => {
       await update($, stale, () => null)
       await update($, launch, () => ({ issue: number === undefined ? '' : String(Number(number)), state }))
     })
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await open($)
 
     if (!opened.isPlaced) {
       $.ui.log(await answer($, opened))
@@ -226,88 +285,41 @@ export const register: Register = on => {
   on('command.run', { command: 'voyage' }, async $ => {
     await refresh($)
 
-    return { text: await answer($, await $.ui.open({ id: PANE, title: TITLE })) }
+    return { text: await answer($, await open($)) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const one = await read($, voyage)
     const width = Math.max(1, e.props.bodyColumns)
-    const gauge = (label: string, value: number, max: number, valueText: string, color: Color) => {
-      const filled = Math.round((Math.min(max, Math.max(0, value)) / max) * width)
-
-      return (
-        <Box flexDirection="column">
-          <Text color={color}>{`${label} ${valueText}`}</Text>
-          <Text color={color} wrap="truncate-end">{'█'.repeat(filled) + '░'.repeat(width - filled)}</Text>
-        </Box>
-      )
-    }
-
-    if (one === null) {
-      return (
-        <Box flexDirection="column" gap={1}>
-          <Text color="suggestion" weight="bold">
-            ✦ · ˚ STARLIGHT VOYAGE ˚ · ✦
-          </Text>
-          <Text dimColor>The ship is in dry dock. Launch with /build and an issue number.</Text>
-        </Box>
-      )
-    }
-
-    const at = one.isDone ? STAGES.length : STAGES.findIndex(stage => stage.phase === one.phase)
-    const passed = one.checks.filter(check => check.result === 'pass').length
-    const fuel = one.fuelMinutes
-    const log = one.isDone
-      ? 'Docked. Welcome home, crew.'
-      : one.isBlocked
-        ? 'Holding orbit. Awaiting word from mission control. That is you.'
-        : (STAGES[at]?.log ?? 'Pre-flight checks. Counting snacks.')
 
     return (
       <Box flexDirection="column" gap={1}>
-        <Box flexDirection="column">
-          <Text color="suggestion" weight="bold">
-            ✦ · ˚ STARLIGHT VOYAGE ˚ · ✦
-          </Text>
-          <Text>
-            <Text dimColor>Destination </Text>
-            {one.issue === '' ? 'uncharted' : `issue #${one.issue}`}
-          </Text>
-        </Box>
+        {rows(await read($, build)).map(group => (
+          <Box flexDirection="column">
+            {group.flatMap(row => {
+              const filled = row.bar === undefined ? 0 : Math.round((Math.min(row.bar.max, Math.max(0, row.bar.value)) / row.bar.max) * width)
 
-        <Box flexDirection="column">
-          <Text dimColor>FLIGHT PLAN</Text>
-          {STAGES.map((stage, index) => (
-            <Text color={index < at ? 'success' : index === at ? 'claude' : 'inactive'}>
-              {index < at ? '◉' : index === at ? '◎' : '○'} {stage.name}
-              {index === at && !one.isBlocked ? '  ⟵ you are here' : ''}
-            </Text>
-          ))}
-        </Box>
-
-        <Box flexDirection="column">
-          {gauge('Constellation', passed, Math.max(1, one.checks.length), `${passed} of ${one.checks.length} stars lit`, 'success')}
-          {one.checks.map(check => (
-            <Text color={check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive'} wrap="truncate-end">
-              {star(check)} {check.command}
-            </Text>
-          ))}
-        </Box>
-
-        <Box flexDirection="column">
-          {fuel !== null &&
-            gauge('Fuel', fuel, LIMIT_MINUTES, `${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`, fuel < 120 ? 'warning' : 'suggestion')}
-          {gauge('Shields', CAP - one.refusals, CAP, `${one.refusals} of ${CAP} bumps taken`, one.refusals > 20 ? 'error' : 'permission')}
-        </Box>
-
-        <Box flexDirection="column">
-          <Text dimColor>SHIP'S LOG</Text>
-          <Text color={one.isBlocked ? 'warning' : 'text'} italic>
-            {log}
-          </Text>
-          {one.pr !== '' && <Text color="success">⚓ {one.pr}</Text>}
-        </Box>
+              return [
+                <Text
+                  color={row.color}
+                  weight={row.isBold === true ? 'bold' : undefined}
+                  italic={row.isItalic}
+                  dimColor={row.isDim}
+                  wrap={row.isCheck === true ? 'truncate-end' : undefined}
+                >
+                  {row.text}
+                </Text>,
+                ...(row.bar === undefined
+                  ? []
+                  : [
+                      <Text color={row.color} wrap="truncate-end">
+                        {'█'.repeat(filled) + '░'.repeat(width - filled)}
+                      </Text>,
+                    ]),
+              ]
+            })}
+          </Box>
+        ))}
       </Box>
     )
   })

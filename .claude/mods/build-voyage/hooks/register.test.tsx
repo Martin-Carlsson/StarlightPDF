@@ -8,7 +8,7 @@ const PANE = {
   component: 'Pane',
   requestId: ID,
   props: {
-    title: 'Starlight voyage',
+    title: 'Build',
     isFocused: false,
     bodyColumns: 40,
     placement: 'dock',
@@ -21,8 +21,8 @@ const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 const REASON = 'no surface places panes'
 
 // Stands for the engine: the session's root, files (a name under the root's .claude/build/, or an
-// absolute path), the clock at 100 000 s, its open panes, and the order of what reached it: `build` (the skill), `tool:open` or
-// `tool:closed` (a tool call, and whether the pane was open), `log:<text>` (a transcript line).
+// absolute path), the clock at 100 000 s, its open panes, and `events` in the order they came:
+// `build` (the skill), `tool:open` or `tool:closed` (a tool call, by pane), `log:<text>`.
 const world = (
   on: On,
   files: Map<string, string> = new Map(),
@@ -36,14 +36,21 @@ const world = (
   on('session.root', () => ({ value: root() }))
   on('command.register', () => ({ value: { command: 'voyage' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('ui.toast', () => ({ value: undefined }))
+  // Toasts and pane titles received, and whether panes are placed.
+  const seen = { toasts: [] as string[], titles: [] as string[], isPlaced }
+  on('ui.toast', (_, e) => {
+    seen.toasts.push(e.text)
+
+    return { value: undefined }
+  })
   on('ui.open', (_, e) => {
+    seen.titles.push(e.title)
     panes.add(e.id)
 
-    return { value: isPlaced ? { isPlaced } : { isPlaced, reason: REASON } }
+    return { value: seen.isPlaced ? { isPlaced: true } : { isPlaced: false, reason: REASON } }
   })
   on('ui.panes', () => ({
-    value: [...panes].map(id => ({ id, title: id, isShown: isPlaced, isFocused: false, isPlaced })),
+    value: [...panes].map(id => ({ id, title: id, isShown: seen.isPlaced, isFocused: false, isPlaced: seen.isPlaced })),
   }))
   on('ui.log', (_, e) => {
     if (e.to === 'transcript') {
@@ -105,7 +112,7 @@ const world = (
     },
   })
 
-  return { clock, reads, events, act, isOpen: () => panes.has(ID) }
+  return { clock, reads, events, seen, act, isOpen: () => panes.has(ID) }
 }
 
 // What the pane's Text matching `text` reads on each surface, cut to `part`.
@@ -121,20 +128,17 @@ const shown = async ($: Engine, text: RegExp, part: RegExp = /.*/): Promise<stri
   return all
 }
 
-// The current stage's mark and name on each surface.
-const stage = ($: Engine): Promise<string[]> => shown($, /^◎/, /^◎ \S+/)
+// The current phase's mark and name on each surface.
+const currentPhase = ($: Engine): Promise<string[]> => shown($, /^◎/, /^◎ .+/)
 
 const every = (text: string): string[] => SURFACES.map(() => text)
 
-test('a build shows its checks, stage and fuel on every surface', async ($, on) => {
+test('a build shows its issue and checks on every surface', async ($, on) => {
   const { clock } = world(
     on,
     new Map([
-      // Started one hour before now: 23 of the 24 hours are left.
       ['state', 'status: working\nissue: 12 Reject empty files\nphase: implement\ncheck: true\ncheck: false\ncheck: sh x\n'],
-      ['started', '96400\n'],
       ['results', 'pass true\nfail false\ntree 4b825dc\n'],
-      ['refusals', '3\n'],
     ]),
   )
   await $.session.start(START)
@@ -143,28 +147,24 @@ test('a build shows its checks, stage and fuel on every surface', async ($, on) 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect((await ui.find({ type: 'Text', text: /issue #/ }))?.text).toBe('Destination issue #12 Reject empty files')
-    expect((await ui.find({ type: 'Text', text: /^★/ }))?.text).toBe('★ true')
-    expect((await ui.find({ type: 'Text', text: /^☆/ }))?.text).toBe('☆ false')
+    expect((await ui.find({ type: 'Text', text: /#12/ }))?.text).toBe('Build #12 Reject empty files')
+    expect((await ui.find({ type: 'Text', text: /^✓/ }))?.text).toBe('✓ true')
+    expect((await ui.find({ type: 'Text', text: /^✗/ }))?.text).toBe('✗ false')
     expect((await ui.find({ type: 'Text', text: /^·/ }))?.text).toBe('· sh x')
-    expect((await ui.find({ type: 'Text', text: /Burn/ }))?.text).toMatch(/^◎ Burn/)
-    expect((await ui.find({ type: 'Text', text: /Chart/ }))?.text).toBe('◉ Chart')
-    expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('○ Dock')
-    expect((await ui.find({ type: 'Text', text: /Fuel/ }))?.text).toBe('Fuel 23h 0m until check-in')
-    expect((await ui.find({ type: 'Text', text: /Constellation/ }))?.text).toBe('Constellation 1 of 3 stars lit')
-    expect((await ui.find({ type: 'Text', text: /Shields/ }))?.text).toBe('Shields 3 of 30 bumps taken')
     await ui.unmount()
   }
 })
 
-test('no build shows the dry dock', async ($, on) => {
+test('no build shows how to start one', async ($, on) => {
   world(on)
   await $.session.start(START)
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...PANE, surface })
 
-    expect(await ui.find({ type: 'Text', text: /dry dock/ })).toBeDefined()
+    expect((await ui.find({ type: 'Text', text: /No build/ }))?.text).toBe(
+      'No build is running. Start one with /build and an issue number.',
+    )
     await ui.unmount()
   }
 })
@@ -185,9 +185,8 @@ test('an idle session does not poll; a tool call notices a build', async ($, on)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await ui.find({ type: 'Text', text: /Holding orbit/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /uncharted/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Fuel/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^Build/ }))?.text).toBe('Build')
+  expect(await ui.find({ type: 'Text', text: /left before/ })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -205,16 +204,16 @@ test('where no pane can be shown, the command answers in text', async ($, on) =>
 
   const { text } = await act($).run('voyage', '')
 
-  expect(text).toContain('issue #12 Reject empty files')
-  expect(text).toContain('Chart')
-  expect(text).toContain('1 of 2 stars lit')
-  expect(text).toContain('★ true')
-  expect(text).toContain('☆ false')
+  expect(text).toContain('Build #12 Reject empty files')
+  expect(text).toContain('◎ Test')
+  expect(text).toContain('1 of 2 checks pass')
+  expect(text).toContain('✓ true')
+  expect(text).toContain('✗ false')
   expect(text).toContain(REASON)
   expect(text).not.toContain('pane opened')
 })
 
-test('a running build is polled; a finished one is docked and no longer polled', async ($, on) => {
+test('a running build is polled; a finished one is marked done and no longer polled', async ($, on) => {
   const state = 'status: working\nissue: 12 Reject empty files\nphase: pr\ncheck: true\npr: https://example.test/1\n'
   const files = new Map([
     ['state', state],
@@ -238,9 +237,8 @@ test('a running build is polled; a finished one is docked and no longer polled',
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await ui.find({ type: 'Text', text: /Docked\. Welcome home/ })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('◉ Dock')
-  expect((await ui.find({ type: 'Text', text: /example\.test/ }))?.text).toBe('⚓ https://example.test/1')
+  expect((await ui.find({ type: 'Text', text: /Pull request$/ }))?.text).toBe('◉ Pull request')
+  expect((await ui.find({ type: 'Text', text: /example\.test/ }))?.text).toBe('https://example.test/1')
   await ui.unmount()
 })
 
@@ -262,7 +260,7 @@ test('/build 10 opens the pane before its first tool call', async ($, on) => {
   expect(events.find(one => one.startsWith('tool:'))).toBe('tool:open')
 })
 
-test('until the build writes its state, the pane shows issue #10 at the first stage', async ($, on) => {
+test('until the build writes its state, the pane shows issue #10 at the first phase', async ($, on) => {
   const files = new Map<string, string>()
   const { clock, act } = world(on, files)
   const { run, call } = act($)
@@ -272,14 +270,14 @@ test('until the build writes its state, the pane shows issue #10 at the first st
   await call()
   await clock.advance(60_000)
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #10'))
-  expect(await stage($)).toEqual(every('◎ Scan'))
+  expect(await shown($, /^Build/)).toEqual(every('Build #10'))
+  expect(await currentPhase($)).toEqual(every('◎ Explore'))
 
   files.set('state', 'status: working\nissue: 10 Some title\nphase: test\n')
   await call()
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #10 Some title'))
-  expect(await stage($)).toEqual(every('◎ Chart'))
+  expect(await shown($, /^Build/)).toEqual(every('Build #10 Some title'))
+  expect(await currentPhase($)).toEqual(every('◎ Test'))
 })
 
 test('/build 18 then entering a worktree still shows issue #18', async ($, on) => {
@@ -304,11 +302,11 @@ test('/build 18 then entering a worktree still shows issue #18', async ($, on) =
   await $.tool.call({ tool: 'EnterWorktree', path: '/wt' })
   await call()
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #18'))
-  expect(await stage($)).toEqual(every('◎ Scan'))
+  expect(await shown($, /^Build/)).toEqual(every('Build #18'))
+  expect(await currentPhase($)).toEqual(every('◎ Explore'))
 })
 
-test('/build whose arguments do not start with a number is bound for uncharted', async ($, on) => {
+test('/build whose arguments do not start with a number shows a heading without a number', async ($, on) => {
   const { clock, act, isOpen } = world(on)
   const { run, close } = act($)
   await $.session.start(START)
@@ -318,7 +316,7 @@ test('/build whose arguments do not start with a number is bound for uncharted',
     await run('build', args)
 
     expect(isOpen()).toBe(true)
-    expect(await shown($, /Destination/)).toEqual(every('Destination uncharted'))
+    expect(await shown($, /^Build/)).toEqual(every('Build'))
     await close()
   }
 })
@@ -337,9 +335,9 @@ test('/build 10 shows issue #10, not a finished build still on disk', async ($, 
   await run('build', '10')
   await call()
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #10'))
-  expect(await stage($)).toEqual(every('◎ Scan'))
-  expect(await shown($, /Docked/)).toEqual(every(''))
+  expect(await shown($, /^Build/)).toEqual(every('Build #10'))
+  expect(await currentPhase($)).toEqual(every('◎ Explore'))
+  expect(await shown($, /Pull request open/)).toEqual(every(''))
 })
 
 test('/build opens a pane the user closed before it ran', async ($, on) => {
@@ -441,7 +439,7 @@ test('a pane closed after a build finished or was cancelled stays closed', async
   }
 })
 
-test('where no pane can be drawn, /build prints the voyage before its first tool call', async ($, on) => {
+test("where no pane can be drawn, /build prints the pane's words before its first tool call", async ($, on) => {
   const { clock, events, act } = world(on, new Map(), false)
   const { run, call } = act($)
   await $.session.start(START)
@@ -456,7 +454,7 @@ test('where no pane can be drawn, /build prints the voyage before its first tool
     ?.slice(4)
 
   expect(first).toBeGreaterThan(-1)
-  expect(logged).toContain('✦ Destination: issue #10')
+  expect(logged).toContain('Build #10')
   expect(logged).toBe((await run('voyage', '')).text)
 })
 
@@ -504,7 +502,7 @@ test('a stale unfinished state from an earlier session does not reopen a closed 
   expect(isOpen()).toBe(false)
 })
 
-test('a build in a worktree the session entered shows its own issue, stage and checks', async ($, on) => {
+test('a build in a worktree the session entered shows its own issue, phase and checks', async ($, on) => {
   const files = new Map<string, string>()
   let dir = '/main'
   // The engine moves the root during the tool; registered first, so above world's hook, which ends the chain.
@@ -521,16 +519,200 @@ test('a build in a worktree the session entered shows its own issue, stage and c
   await $.session.start(START)
   await clock.settle()
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #12 Reject empty files'))
-  expect(await stage($)).toEqual(every('◎ Chart'))
-  expect(await shown($, /^☆/)).toEqual(every('☆ false'))
+  expect(await shown($, /^Build/)).toEqual(every('Build #12 Reject empty files'))
+  expect(await currentPhase($)).toEqual(every('◎ Test'))
+  expect(await shown($, /^✗/)).toEqual(every('✗ false'))
 
   await $.tool.call({ tool: 'EnterWorktree', path: '/wt' })
   await clock.settle()
 
-  expect(await shown($, /Destination/)).toEqual(every('Destination issue #19 Show every build'))
-  expect(await stage($)).toEqual(every('◎ Burn'))
-  expect(await shown($, /^★/)).toEqual(every('★ sh a'))
+  expect(await shown($, /^Build/)).toEqual(every('Build #19 Show every build'))
+  expect(await currentPhase($)).toEqual(every('◎ Implement'))
+  expect(await shown($, /^✓/)).toEqual(every('✓ sh a'))
   expect(await shown($, /^·/)).toEqual(every('· sh b'))
-  expect(await shown($, /^☆/)).toEqual(every(''))
+  expect(await shown($, /^✗/)).toEqual(every(''))
+})
+
+const phases = ['explore', 'test', 'implement', 'review', 'pr'] as const
+const NAMES = ['Explore', 'Test', 'Implement', 'Review', 'Pull request']
+const STATE = (phase: string, status = 'working') =>
+  `status: ${status}\nissue: 12 Reject empty files\nphase: ${phase}\ncheck: a\ncheck: b\n`
+
+// Every Text of the pane, on one surface.
+const lines = async ($: Engine, surface: (typeof SURFACES)[number]): Promise<string[]> => {
+  const ui = await $.ui.mount({ ...PANE, surface })
+  const all = (await ui.findAll({ type: 'Text' })).map(one => one.text)
+  await ui.unmount()
+
+  return all
+}
+
+test("the pane lists the build skill's phases and marks the current one", async ($, on) => {
+  const files = new Map<string, string>()
+  const { clock, act } = world(on, files)
+  const { call } = act($)
+  await $.session.start(START)
+  await clock.settle()
+
+  for (const [index, phase] of phases.entries()) {
+    files.set('state', STATE(phase))
+    await call()
+
+    for (const surface of SURFACES) {
+      expect((await lines($, surface)).filter(one => /^[◉◎○] /.test(one))).toEqual(
+        NAMES.map((name, at) => `${at < index ? '◉' : at === index ? '◎' : '○'} ${name}`),
+      )
+    }
+  }
+
+  files.set('state', STATE('pr', 'blocked'))
+  await call()
+
+  expect((await lines($, 'terminal')).filter(one => one.startsWith('◎ '))).toEqual(['◎ Pull request'])
+
+  files.set('state', STATE('pr'))
+  files.set('done', STATE('pr'))
+  await call()
+
+  expect((await lines($, 'terminal')).filter(one => /^[◉◎○] /.test(one))).toEqual(NAMES.map(name => `◉ ${name}`))
+})
+
+test('each gauge says what it measures', async ($, on) => {
+  const { clock } = world(
+    on,
+    new Map([
+      // Started one hour before now: 23 of the 24 hours are left.
+      ['state', 'status: working\nissue: 12 Reject empty files\nphase: implement\ncheck: a\ncheck: b\ncheck: c\n'],
+      ['started', '96400\n'],
+      ['results', 'pass a\n'],
+      ['refusals', '3\n'],
+    ]),
+  )
+  await $.session.start(START)
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect((await lines($, surface)).filter(one => /checks pass|left before|refused/.test(one))).toEqual([
+      '1 of 3 checks pass',
+      '23h 0m left before the build pauses',
+      '3 of 30 stops refused',
+    ])
+  }
+})
+
+test('the status line says what the build is doing in one sentence', async ($, on) => {
+  const files = new Map<string, string>()
+  const { clock, act } = world(on, files)
+  const { call } = act($)
+  const cases = [
+    [STATE('explore'), 'Mapping the code and the spec.'],
+    [STATE('test'), 'Writing tests that fail until the issue is done.'],
+    [STATE('implement'), 'Changing the code until every check passes.'],
+    [STATE('review'), 'Reviewing the diff against the issue.'],
+    [STATE('pr'), 'Opening the pull request.'],
+    [STATE('other'), 'Starting the build.'],
+    [STATE('implement', 'blocked'), 'Waiting for your answer.'],
+    [STATE('pr'), 'Pull request open.'],
+  ] as const
+  await $.session.start(START)
+  await clock.settle()
+
+  for (const [state, sentence] of cases) {
+    files.set('state', state)
+
+    if (sentence === 'Pull request open.') {
+      files.set('done', state)
+    }
+    await call()
+
+    expect(await shown($, new RegExp(`^${sentence.replace('.', '\\.')}$`))).toEqual(every(sentence))
+  }
+})
+
+test('the pane is titled Build #<issue> and /voyage answers in the same words', async ($, on) => {
+  const files = new Map([
+    ['state', 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n'],
+    ['results', 'pass true\nfail false\n'],
+  ])
+  const { clock, seen, act } = world(on, files)
+  const { run } = act($)
+  await $.session.start(START)
+  await clock.settle()
+
+  expect((await run('voyage', '')).text).toBe('Build pane opened.')
+  expect(seen.titles.at(-1)).toBe('Build #12')
+
+  seen.isPlaced = false
+  const { text } = await run('voyage', '')
+  const answer = text.split('\n')
+
+  expect(answer.slice(0, 8)).toEqual([
+    'Build #12 Reject empty files',
+    '◉ Explore',
+    '◎ Test',
+    '○ Implement',
+    '○ Review',
+    '○ Pull request',
+    'Writing tests that fail until the issue is done.',
+    expect.stringMatching(/checks pass/),
+  ])
+  expect(answer.slice(-2)).toEqual(['', `No pane here: ${REASON}`])
+
+  for (const one of (await lines($, 'terminal')).filter(each => !/^[█░]+$/.test(each))) {
+    expect(answer).toContain(one)
+  }
+
+  seen.isPlaced = true
+  await run('build', '7')
+
+  expect(seen.titles.at(-1)).toBe('Build #7')
+
+  files.delete('state')
+  await run('build', 'abc')
+
+  expect(seen.titles.at(-1)).toBe('Build')
+})
+
+test('no starship word appears in the pane, the toast or the text answer', async ($, on) => {
+  const files = new Map<string, string>()
+  const { clock, seen, act } = world(on, files)
+  const { run, call } = act($)
+  const words =
+    /\b(voyages?|stars?|constellations?|fuel|shields?|dock(ed|ing)?|drones?|orbits?|nebulae?|hulls?|crew|mission control)\b/i
+  const texts: string[] = []
+  const collect = async () => {
+    for (const surface of SURFACES) {
+      texts.push(...(await lines($, surface)))
+    }
+
+    for (const isPlaced of [true, false]) {
+      seen.isPlaced = isPlaced
+      texts.push((await run('voyage', '')).text)
+    }
+  }
+  await $.session.start(START)
+  await clock.settle()
+  await collect()
+
+  for (const phase of [...phases, 'other']) {
+    files.set('state', `${STATE(phase)}pr: https://example.test/1\n`)
+    files.set('results', phase === 'review' ? 'pass a\npass b\n' : phase === 'implement' ? 'pass a\nfail b\n' : '')
+    files.set('started', '96400\n')
+    files.set('refusals', '2\n')
+    await call()
+    await collect()
+  }
+
+  files.set('state', STATE('implement', 'blocked'))
+  await call()
+  await collect()
+  files.set('state', `${STATE('pr')}pr: https://example.test/1\n`)
+  files.set('done', files.get('state') ?? '')
+  await call()
+  await collect()
+
+  const all = [...texts, ...seen.toasts, ...seen.titles]
+
+  expect(seen.toasts).not.toEqual([])
+  expect(all.filter(one => words.test(one))).toEqual([])
 })

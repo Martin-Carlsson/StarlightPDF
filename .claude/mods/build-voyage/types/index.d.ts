@@ -1,6 +1,6 @@
 export type Check = { command: string; result: 'pass' | 'fail' | 'unknown' }
 
-export type Voyage = {
+export type Build = {
   issue: string
   phase: string
   isBlocked: boolean
@@ -8,7 +8,7 @@ export type Voyage = {
   isDone: boolean
   checks: Check[]
   /** Minutes left of the 24 hours, or null while the clock is stopped. */
-  fuelMinutes: number | null
+  minutesLeft: number | null
   refusals: number
   pr: string
 }
@@ -26,6 +26,6 @@ export type Stale = string
 
 declare module 'claude-code' {
   interface PluginState {
-    'build-voyage': { voyage: Shaped<Voyage | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null> }
+    'build-voyage': { voyage: Shaped<Build | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null> }
   }
 }
