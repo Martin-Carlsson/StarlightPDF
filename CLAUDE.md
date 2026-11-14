@@ -8,7 +8,7 @@
 
 ## GLOSSARY.md
 
-One root `GLOSSARY.md`. Create it when the first term is settled.
+One root `GLOSSARY.md`.
 
 ```md
 # StarlightPDF
