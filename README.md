@@ -179,7 +179,7 @@ StarlightPDF will be available as a dependency in:
 | `/issue <description>` | Drafts a bug or feature issue. |
 | `/build <issue number>` | Builds the issue and opens a pull request. |
 
-Optional progress pane for `/build`:
+`/build` shows a progress pane, enabled by `.claude/settings.json`. If it is missing:
 
 ```
 claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
