@@ -764,7 +764,66 @@ const complete = ($: Engine, cost: TurnUsage, agentId?: string) =>
   })
 
 const agentLines = async ($: Engine, surface: (typeof SURFACES)[number]) =>
-  (await lines($, surface)).filter(one => one.includes(' · '))
+  (await lines($, surface)).filter(one => /^(⏳|✅) /.test(one))
+
+const tableLines = (all: string[]) => all.filter(one => /^(⏳|✅| {3}Total )/.test(one))
+
+test('the pane shows each agent as one aligned row of status, title, model and tokens', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  await spawn($, 'Read the lexer', parser)
+  const tests = await spawn($, 'Write the tests', undefined, 'claude-sonnet-5-5')
+  await complete($, usage(10_000, 20_000, 30_000, 43_102), parser)
+  await complete($, usage(1, 2, 3, 4), tests)
+  await $.turn.start({ text: '', turnId: tests, agentId: tests })
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect(await agentLines($, surface)).toEqual([
+      '✅ Map the parser    haiku-5-5   103,102',
+      '⏳   Read the lexer  haiku-5-5         0',
+      '⏳ Write the tests   sonnet-5-5       10',
+    ])
+  }
+})
+
+test('a title too long for the pane is cut with an ellipsis, never its model or tokens', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const review = await spawn($, 'Review the whole renderer carefully')
+  await complete($, usage(100, 200, 300, 634), review)
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect(await agentLines($, surface)).toEqual(['✅ Review the whole r…  haiku-5-5  1,234'])
+  }
+})
+
+test('a Total row under the agents sums every token, the main session included', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  const lexer = await spawn($, 'Read the lexer', parser)
+  await complete($, usage(1, 2, 4, 8))
+  await complete($, usage(10, 20, 30, 40), parser)
+  await complete($, usage(1, 1, 1, 0), lexer)
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect(tableLines(await lines($, surface))).toEqual([
+      '✅ Map the parser    haiku-5-5  100',
+      '✅   Read the lexer  haiku-5-5    3',
+      '   Total                        118',
+    ])
+  }
+})
 
 test('the pane lists every agent the build spawned as a tree', async ($, on) => {
   const { clock, act } = world(on)
@@ -779,47 +838,12 @@ test('the pane lists every agent the build spawned as a tree', async ($, on) => 
 
   for (const surface of SURFACES) {
     expect(await agentLines($, surface)).toEqual([
-      'Map the parser · claude-haiku-5-5 · running · 0 tokens',
-      '  Read the lexer · claude-haiku-5-5 · running · 0 tokens',
-      '    Check tokens · claude-haiku-5-5 · running · 0 tokens',
-      'Write the docs · claude-haiku-5-5 · running · 0 tokens',
+      '⏳ Map the parser    haiku-5-5  0',
+      '⏳   Read the lexer  haiku-5-5  0',
+      '⏳     Check tokens  haiku-5-5  0',
+      '⏳ Write the docs    haiku-5-5  0',
     ])
   }
-})
-
-test('each agent shows its task, model, status and tokens', async ($, on) => {
-  const { clock, act } = world(on)
-  await $.session.start(START)
-  await clock.settle()
-  await act($).run('build', '10')
-  const parser = await spawn($, 'Map the parser')
-  const tests = await spawn($, 'Write the tests', undefined, 'claude-sonnet-5-5')
-  await complete($, usage(10, 20, 30, 40), parser)
-  await complete($, usage(1, 2, 3, 4), tests)
-  await $.turn.start({ text: '', turnId: tests, agentId: tests })
-  await clock.settle()
-
-  for (const surface of SURFACES) {
-    expect(await agentLines($, surface)).toEqual([
-      'Map the parser · claude-haiku-5-5 · finished · 100 tokens',
-      'Write the tests · claude-sonnet-5-5 · running · 10 tokens',
-    ])
-  }
-})
-
-test('the pane shows one token total for the main loop and every agent', async ($, on) => {
-  const { clock, act } = world(on)
-  await $.session.start(START)
-  await clock.settle()
-  await act($).run('build', '10')
-  const parser = await spawn($, 'Map the parser')
-  const lexer = await spawn($, 'Read the lexer', parser)
-  await complete($, usage(1, 2, 4, 8))
-  await complete($, usage(10, 20, 30, 40), parser)
-  await complete($, usage(1, 1, 1, 0), lexer)
-  await clock.settle()
-
-  expect(await shown($, /tokens in all/)).toEqual(every('118 tokens in all'))
 })
 
 test('the elapsed time ticks while the build runs and freezes when it is done', async ($, on) => {
@@ -844,26 +868,14 @@ test('the elapsed time ticks while the build runs and freezes when it is done', 
   expect(await shown($, /elapsed/)).toEqual(every('0h 2m elapsed'))
 })
 
-test('an agent that finished before the pane opened shows its final figures', async ($, on) => {
-  const { clock, act } = world(on)
-  await $.session.start(START)
-  await clock.settle()
-  await act($).run('build', '10')
-  const parser = await spawn($, 'Map the parser')
-  await complete($, usage(10, 20, 30, 40), parser)
-  await clock.settle()
-
-  expect(await shown($, /Map the parser/)).toEqual(every('Map the parser · claude-haiku-5-5 · finished · 100 tokens'))
-})
-
-test('/voyage without a pane gives the same tree, totals and elapsed time', async ($, on) => {
+test('/voyage without a pane gives the same table, uncut, and elapsed time', async ($, on) => {
   const { clock, seen, act } = world(on)
   const { run } = act($)
   seen.isPlaced = false
   await $.session.start(START)
   await clock.settle()
   await run('build', '10')
-  const parser = await spawn($, 'Map the parser')
+  const parser = await spawn($, 'Map the parser and every file it reads')
   const lexer = await spawn($, 'Read the lexer', parser)
   await complete($, usage(1, 2, 4, 8))
   await complete($, usage(10, 20, 30, 40), parser)
@@ -872,9 +884,9 @@ test('/voyage without a pane gives the same tree, totals and elapsed time', asyn
   const answer = (await run('voyage', '')).text.split('\n')
 
   expect(answer).toContain('0h 2m elapsed')
-  expect(answer).toContain('118 tokens in all')
-  expect(answer.filter(one => one.includes(' · '))).toEqual([
-    'Map the parser · claude-haiku-5-5 · finished · 100 tokens',
-    '  Read the lexer · claude-haiku-5-5 · finished · 3 tokens',
+  expect(tableLines(answer)).toEqual([
+    '✅ Map the parser and every file it reads  haiku-5-5  100',
+    '✅   Read the lexer                        haiku-5-5    3',
+    '   Total                                              118',
   ])
 })
