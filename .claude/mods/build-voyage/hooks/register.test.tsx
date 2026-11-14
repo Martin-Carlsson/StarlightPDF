@@ -54,8 +54,9 @@ test('a build shows its checks, stage and fuel on every surface', async ($, on) 
     // Started one hour before now: 23 of the 24 hours are left.
     '.claude/build/state':
       'status: working\nissue: 12 Reject empty files\nphase: implement\n' +
-      'check: true\ncheck: false\ncheck: sh x\nstarted: 96400\n',
-    '.claude/build/results': 'pass true\nfail false\n',
+      'check: true\ncheck: false\ncheck: sh x\n',
+    '.claude/build/started': '96400\n',
+    '.claude/build/results': 'pass true\nfail false\ntree 4b825dc\n',
     '.claude/build/refusals': '3\n',
   })
   await $.session.start(START)

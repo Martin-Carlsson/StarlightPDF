@@ -16,7 +16,7 @@ hooks:
 
 Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the pull request is open.
 
-A Stop hook reruns your checks whenever you try to stop and sends you back if one fails. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
+A Stop hook sends you back unless every check has passed on the files as they are now. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`.
 2. **Define checks.** For each Definition of done item, write at least one shell command that exits 0 only when the item holds; normally a test, written first. Run each: it should fail now. Write `.claude/build/state`:
@@ -37,7 +37,7 @@ A Stop hook reruns your checks whenever you try to stop and sends you back if on
    - **Implement:** a different subagent per item makes it pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
    - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. Delegate the fixes and review again until clean.
 
-   After every hand-back, run `sh .claude/skills/build/hook.sh check` yourself; never trust a report.
+   After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report.
 4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Then add `pr: <url>` to the state file.
 
 ## Rules
@@ -47,3 +47,4 @@ A Stop hook reruns your checks whenever you try to stop and sends you back if on
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
 - **Ask, don't loop.** If you need something only the user has (a decision, a credential, access), or a check has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
+- **Cancelled.** If the user cancels the build, delete `.claude/build/state`.

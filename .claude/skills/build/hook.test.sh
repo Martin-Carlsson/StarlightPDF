@@ -5,12 +5,16 @@ set -eu
 hook="$(cd "$(dirname "$0")" && pwd)/hook.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-export CLAUDE_PROJECT_DIR="$tmp"
-state="$tmp/.claude/build/state"
+proj="$tmp/proj"
+export CLAUDE_PROJECT_DIR="$proj"
+dir="$proj/.claude/build"
+state="$dir/state"
+results="$dir/results"
+clock="$dir/started"
 failed=0
 mode=stop
 
-# run NAME WANT_EXIT WANT_STDERR_PATTERN
+# run NAME WANT_EXIT WANT_OUTPUT_PATTERN
 run() {
   code=0
   echo >"$tmp/out"
@@ -28,133 +32,139 @@ expect() {
   fi
 }
 
+# reset STATE_TEXT: a fresh repository, with that state file if given.
 reset() {
-  rm -rf "$tmp/.claude"
-  mkdir -p "$tmp/.claude/build"
+  rm -rf "$proj"
+  mkdir -p "$dir"
+  git init -q "$proj"
+  echo '.claude/build/' >"$proj/.gitignore"
+  if [ $# -gt 0 ]; then printf "$1" >"$state"; fi
 }
 
+check() {
+  mode=check
+  run "$@"
+  mode=stop
+}
+
+# Stop: inactive and blocked.
 reset
 run "no state allows stop" 0 ''
 
-reset
-printf 'status: blocked\ncheck: false\n' >"$state"
+reset 'status: blocked\ncheck: false\n'
+echo 0 >"$clock"
 run "blocked allows stop" 0 ''
 expect test -f "$state"
+expect test ! -e "$clock"
 
-reset
-printf 'status: working\ncheck: true\ncheck: echo boom; false\npr: https://example.test/1\n' >"$state"
-run "failing check refuses" 2 'check failed: echo boom; false'
-expect grep -q boom "$tmp/err"
-expect test -f "$state"
-
-reset
-printf 'status: working\npr: https://example.test/1\n' >"$state"
+# Stop: checks must have passed on the files as they are now.
+reset 'status: working\npr: https://example.test/1\n'
 run "no checks refuses" 2 'no check'
 
-reset
-printf 'status: working\ncheck: true\n' >"$state"
+reset 'status: working\ncheck: true\npr: https://example.test/1\n'
+run "checks never run refuses" 2 'hook.sh check'
+
+reset 'status: working\ncheck: true\ncheck: echo boom; false\npr: https://example.test/1\n'
+check "check: fails when a check fails" 1 'fail echo boom; false'
+expect grep -q boom "$tmp/err"
+run "failing check refuses" 2 'not passing: echo boom; false'
+expect test -f "$state"
+
+reset 'status: working\ncheck: true\n'
+check "check: passes without a pr" 0 'pass true'
 run "missing pr refuses" 2 'pr:'
 
-reset
-printf 'status: working\ncheck: test -f marker\npr: https://example.test/1\n' >"$state"
-: >"$tmp/marker"
-run "all pass allows stop, checks run from root" 0 ''
+reset 'status: working\ncheck: test -f marker\npr: https://example.test/1\n'
+: >"$proj/marker"
+check "check: runs from the root" 0 'pass test -f marker'
+echo 0 >"$dir/refusals"
+run "all pass allows stop" 0 ''
 expect test ! -e "$state"
+expect test ! -e "$results"
+expect test ! -e "$clock"
+expect test ! -e "$dir/refusals"
+
+reset 'status: working\ncheck: true\npr: https://example.test/1\n'
+check "check: passes" 0 'pass true'
+echo change >"$proj/file"
+run "files changed since the checks refuses" 2 'changed'
+
+reset 'status: working\ncheck: true\npr: https://example.test/1\n'
+check "check: passes" 0 'pass true'
+echo 'check: false' >>"$state"
+run "check added since the run refuses" 2 'not passing: false'
+
+# Check mode.
+reset 'status: working\ncheck: true\ncheck: false\ncheck: test -f marker\n'
+: >"$proj/marker"
+check "check: records every result" 1 'fail false'
+printf 'pass true\nfail false\npass test -f marker\n' >"$tmp/want"
+grep -v '^tree ' "$results" >"$tmp/got"
+expect cmp -s "$tmp/want" "$tmp/got"
+expect test ! -e "$dir/refusals"
+
+reset 'status: working\ncheck: read x\n'
+check "check: commands get no stdin" 1 'fail read x'
 
 reset
-printf 'status: working\ncheck: read x\npr: https://example.test/1\n' >"$state"
-run "checks get no stdin" 2 'check failed'
+check "check: no state fails" 1 'no build'
 
-reset
-printf 'status: working\ncheck: false\n' >"$state"
+# The hooks themselves never run a command from the state file.
+reset 'status: working\ncheck: touch pwned\npr: https://example.test/1\n'
+run "stop does not run checks" 2 'hook.sh check'
+mode=tool
+run "tool does not run checks" 0 ''
+mode=stop
+expect test ! -e "$proj/pwned"
+
+# Cap: the 31st refusal in a row lets one stop through, then enforcement resumes.
+reset 'status: working\ncheck: false\n'
 i=0
 while [ "$i" -lt 30 ]; do
-  run "refusal $i" 2 'check failed'
+  run "refusal $i" 2 'hook.sh check'
   i=$((i + 1))
 done
-run "cap allows stop" 0 ''
-expect grep -q 'gave up' "$tmp/out"
-expect grep -q '^status: blocked$' "$state"
-run "stays blocked after cap" 0 ''
+run "cap allows stop" 0 'gave up'
+expect grep -q '^status: working$' "$state"
+run "refuses again after the cap" 2 'hook.sh check'
 
-reset
-printf 'status: working\ncheck: test -f marker\npr: https://example.test/1\n' >"$state"
-rm -f "$tmp/marker"
-run "refusal before success" 2 'check failed'
-: >"$tmp/marker"
-run "success" 0 ''
-expect test ! -e "$tmp/.claude/build/refusals"
-
-# 24-hour limit. `started: 0` is always over it; a far-future stamp never is.
-reset
-printf 'status: working\ncheck: false\nstarted: 0\n' >"$state"
+# 24-hour limit. A clock of 0 is always over it; a far-future one never is.
+reset 'status: working\ncheck: false\n'
+echo 0 >"$clock"
 run "stop allowed after limit" 0 'without the user'
 expect test -f "$state"
-expect grep -q '^check: false$' "$state"
-if grep -q '^started: ' "$state"; then echo "FAIL: clock not reset after limit"; failed=1; fi
-
-reset
-printf 'status: blocked\ncheck: false\nstarted: 0\n' >"$state"
-run "blocked resets clock" 0 ''
-if grep -q '^started: ' "$state"; then echo "FAIL: clock not reset when blocked"; failed=1; fi
-
-reset
-printf 'status: working\ncheck: false\n' >"$state"
-run "stop stamps start" 2 'check failed'
-expect grep -q '^started: [0-9][0-9]*$' "$state"
+expect test ! -e "$clock"
 
 mode=tool
 reset
 run "tool: no state allows" 0 ''
 
-reset
-printf 'status: working\ncheck: false\nstarted: 0\n' >"$state"
+reset 'status: working\ncheck: false\n'
+echo 0 >"$clock"
 run "tool: refused after limit" 2 'ask'
-expect grep -q '^started: 0$' "$state"
 
-reset
-printf 'status: working\ncheck: false\nstarted: 9999999999\n' >"$state"
+reset 'status: working\ncheck: false\n'
+echo 9999999999 >"$clock"
 run "tool: allowed within limit" 0 ''
 
-reset
-printf 'status: working\ncheck: false\n' >"$state"
-run "tool: stamps start" 0 ''
-expect grep -q '^started: [0-9][0-9]*$' "$state"
-
-reset
-printf 'status: blocked\ncheck: false\nstarted: 0\n' >"$state"
+reset 'status: blocked\ncheck: false\n'
+echo 0 >"$clock"
 run "tool: blocked allows" 0 ''
 
-# Results: every check runs and is recorded, in order.
-results="$tmp/.claude/build/results"
+# The clock is the hook's own file: the state file is never written.
+reset 'status: working\ncheck: sh tests/run.sh'
+cp "$state" "$tmp/before"
+run "tool: stamps the clock" 0 ''
+expect grep -qx '[0-9][0-9]*' "$clock"
+expect cmp -s "$tmp/before" "$state"
+
+# A clock two racing hooks or anything else left unreadable is restarted.
+reset 'status: working\ncheck: false\n'
+printf '1\n2\n' >"$clock"
+run "tool: bad clock restarts" 0 ''
+expect grep -qx '[0-9][0-9]*' "$clock"
+expect test "$(wc -l <"$clock")" -eq 1
 mode=stop
-reset
-printf 'status: working\ncheck: true\ncheck: false\ncheck: test -f marker\n' >"$state"
-: >"$tmp/marker"
-run "stop records every result" 2 'check failed: false'
-printf 'pass true\nfail false\npass test -f marker\n' >"$tmp/want"
-expect cmp -s "$tmp/want" "$results"
-
-mode=check
-reset
-printf 'status: working\ncheck: true\ncheck: false\n' >"$state"
-run "check: fails when a check fails" 1 'fail false'
-expect grep -q '^pass true$' "$results"
-expect test ! -e "$tmp/.claude/build/refusals"
-
-reset
-printf 'status: working\ncheck: true\n' >"$state"
-run "check: passes without a pr" 0 'pass true'
-expect test -f "$state"
-
-reset
-run "check: no state fails" 1 'no build'
-
-mode=stop
-reset
-printf 'status: working\ncheck: true\npr: https://example.test/1\n' >"$state"
-run "success removes results" 0 ''
-expect test ! -e "$results"
 
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"

@@ -25,7 +25,7 @@ const voyage = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as 
 const field = (text: string, name: string): string =>
   text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
 
-export const parse = (state: string, results: string, refusals: string, nowMs: number): Voyage => {
+export const parse = (state: string, results: string, refusals: string, clock: string, nowMs: number): Voyage => {
   const done = results.split('\n').filter(line => line !== '')
   const checks: Check[] = state
     .split('\n')
@@ -35,7 +35,7 @@ export const parse = (state: string, results: string, refusals: string, nowMs: n
       command,
       result: done.includes(`pass ${command}`) ? 'pass' : done.includes(`fail ${command}`) ? 'fail' : 'unknown',
     }))
-  const started = Number(field(state, 'started'))
+  const started = Number(clock.trim()) || 0
   const used = Math.floor((nowMs / 1000 - started) / 60)
 
   return {
@@ -77,7 +77,7 @@ const describe = (one: Voyage | null): string => {
 const refresh = async ($: EngineInterface): Promise<void> => {
   const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
   const state = await file('state')
-  const next = state === '' ? null : parse(state, await file('results'), await file('refusals'), await $.clock.now())
+  const next = state === '' ? null : parse(state, await file('results'), await file('refusals'), await file('started'), await $.clock.now())
   const before = await read($, voyage)
 
   if (JSON.stringify(before) === JSON.stringify(next)) {
