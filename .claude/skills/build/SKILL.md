@@ -23,8 +23,14 @@ A Stop hook reruns your checks whenever you try to stop and sends you back if on
    ```
 
    Show the checks. Do not wait for approval.
-3. **Work.** Bug: reproduce it with a failing test, then fix. Feature: tests first.
-4. **Open the pull request** once every check passes: commit, push, fill in `.github/pull_request_template.md`, ready for review. Then add `pr: <url>` to the state file.
+3. **Orchestrate.** You plan, delegate and verify; subagents do the work. Brief each with the issue, its items, the files and the checks it must pass.
+   - **Explore:** subagents map the relevant code and spec clauses, in parallel.
+   - **Test:** one subagent per item writes the failing test from the issue and the spec, never from the implementation.
+   - **Implement:** a different subagent per item makes it pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
+   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`. Delegate the fixes and review again until clean.
+
+   Run the checks yourself after every hand-back; never trust a report.
+4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Then add `pr: <url>` to the state file.
 
 ## Rules
 
