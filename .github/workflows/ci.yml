@@ -1,0 +1,100 @@
+name: ci
+on:
+  pull_request:
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  URL: ${{ github.server_url }}/${{ github.repository }}
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      areas: ${{ steps.areas.outputs.areas }}
+      date: ${{ steps.date.outputs.date }}
+    steps:
+      - id: date
+        run: echo "date=$(date -u -d '22 hours ago' +%F)" >>"$GITHUB_OUTPUT"
+      - name: Check out
+        run: |
+          git init -q .
+          git config core.autocrlf false
+          git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - id: areas
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            areas=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^ HEAD | sh ci/areas.sh)
+          else
+            areas=$(git ls-files | sh ci/areas.sh)
+          fi
+          json=$(printf '%s' "$areas" | awk 'NR > 1 { printf "," } { printf "\"%s\"", $0 }')
+          echo "areas=[$json]" >>"$GITHUB_OUTPUT"
+  check:
+    needs: changes
+    if: needs.changes.outputs.areas != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        area: ${{ fromJSON(needs.changes.outputs.areas) }}
+    runs-on: ${{ matrix.os }}
+    env:
+      AREA: ${{ matrix.area }}
+    steps:
+      - name: Check out
+        run: |
+          git init -q .
+          git config core.autocrlf false
+          git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+      - run: rustup toolchain install --no-self-update
+      - run: sh ci/check.sh "$AREA"
+  ci:
+    needs: [changes, check]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      CHANGES: ${{ needs.changes.result }}
+      CHECK: ${{ needs.check.result }}
+    steps:
+      - run: |
+          case "$CHANGES $CHECK" in
+            'success success' | 'success skipped') ;;
+            *) exit 1 ;;
+          esac
+  tag:
+    needs: [changes, check]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DATE: ${{ needs.changes.outputs.date }}
+    steps:
+      - run: |
+          tags=$(git ls-remote --tags "$URL" 'refs/tags/nightly-*')
+          case $tags in *"$GITHUB_SHA"* | *"refs/tags/nightly-$DATE"*) exit 0 ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/nightly-$DATE" -f sha="$GITHUB_SHA"
+  issue:
+    needs: [changes, check]
+    if: failure() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DATE: ${{ needs.changes.outputs.date }}
+    steps:
+      - run: |
+          open=$(gh issue list --label bug --limit 1000 --json title --jq '.[] | select(.title | startswith("Nightly ")) | .title')
+          if [ -z "$open" ]; then
+            gh issue create --label bug --title "Nightly $DATE failed" --body "$URL/actions/runs/$GITHUB_RUN_ID"
+          fi

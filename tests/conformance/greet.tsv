@@ -1,0 +1,3 @@
+# operation	arguments	expected
+greet	world	Hello, world!
+greet	Zoë 🌟	Hello, Zoë 🌟!
