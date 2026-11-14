@@ -43,9 +43,7 @@ StarlightPDF will be available as a dependency in:
 
 ## Architecture
 
-Planned, not built.
-
-All logic is written once, in a Rust core crate. Four interfaces expose it:
+Planned: all logic is written once, in a Rust core crate. Four interfaces expose it:
 
 | Interface | Tool | For |
 | --- | --- | --- |
