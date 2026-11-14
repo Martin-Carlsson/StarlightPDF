@@ -4,6 +4,20 @@
 2. **Strictest settings, always.** Enable every compiler and linter check at its strictest level. Warnings are errors. Never disable, suppress or weaken a check to make code pass.
 3. **Shortest text, always.** Answer the user with as little text as possible. The same goes for code comments and documentation.
 
+# Testing
+
+- **Test first.** Every change ships with tests. A bug fix starts with a test that fails without the fix.
+- **Public API first.** Test behaviour through the public API; test internals directly only where a standard publishes test vectors.
+- **Cite the spec.** Where a test verifies a standard, name the standard and clause.
+- **Round-trip.** Whatever the library writes, it must read back with the same content.
+- **Corpus.** Valid and malformed test files live in `tests/corpus/`. Every file is made by this project; never add a file created by someone else.
+- **Independent expectations.** Expected values come from a standard or from reasoning that shares no code with the library; never copy them from its output.
+- **Fuzz every parser.** Untrusted input must never crash, hang or exhaust memory. Every finding becomes a corpus file.
+- **Deterministic.** No network, clock, randomness or dependence on test order.
+- **One conformance suite.** Shared cases are data files that every language binding runs.
+- **Never weaken a test.** Don't skip, loosen or delete a test to make it pass; fix the code.
+- **Rules 1 and 2 apply.** Test code uses only standard tooling and passes the same checks.
+
 # Documentation
 
 ## GLOSSARY.md
