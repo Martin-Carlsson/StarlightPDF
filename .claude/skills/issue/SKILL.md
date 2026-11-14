@@ -20,9 +20,7 @@ Write a GitHub issue for: $ARGUMENTS
 
 - **Title:** the outcome, imperative, under 70 characters.
 - **Goal:** the outcome and who benefits. Never the implementation.
-- **Definition of done:** each item is one observable result that a test or command can check. "Opening an empty file returns error X", not "the parser is robust".
-- **Cover what is easy to forget:** malformed input, edge cases, round-trip. Cite the standard and clause an item verifies.
-- **Say what must be proven, not how.** No test files, modules, function names or algorithms.
+- **Definition of done:** an item only for a result the goal needs, never for how to reach it. Cover the edge cases that can occur in this task, and no others. Each item is one observable result that a test or command can check, citing the standard and clause it verifies, if any. "Opening an empty file returns error X", not "the parser is robust". No test files, modules, function names or algorithms.
 - **Decisions:** only choices the user made that are hard to reverse, surprising without context and a real trade-off, each with its reason in one sentence. Omit the section if there are none.
 - **One issue, one goal.** Split anything larger.
 - Use `GLOSSARY.md` terms.
