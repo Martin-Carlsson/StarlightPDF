@@ -187,7 +187,8 @@ The skills need no setup. To install the pane, run this in a shell, answer `y`, 
 ```
 claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
 ```
- The pane is drawn in the terminal and in local desktop sessions; a cloud session answers `/voyage` in text.
+
+The pane is drawn in the terminal and in local desktop sessions; a cloud session answers `/voyage` in text.
 
 ## Contributing
 
