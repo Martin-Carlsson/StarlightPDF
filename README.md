@@ -1,6 +1,4 @@
-<img src="assets/logo.svg" alt="StarlightPDF logo" width="128">
-
-# StarlightPDF
+# StarlightPDF 🌟
 
 An open-source PDF library with zero dependencies that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
 
