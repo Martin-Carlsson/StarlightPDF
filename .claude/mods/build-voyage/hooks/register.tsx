@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
 
-import type { Check, Voyage } from '../types'
+import type { Check, Launch, Stale, Voyage } from '../types'
 
 // Reads what the build skill's hook keeps in .claude/build/ and draws it.
 const PANE = 'build-voyage'
@@ -21,6 +21,10 @@ const STAGES = [
 const voyage = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Voyage | null, {
   shape: 'voyage-2',
 })
+
+const launch = atom({ plugin: 'build-voyage', key: 'launch' } as const, null as Launch | null, { shape: 'launch-1' })
+
+const stale = atom({ plugin: 'build-voyage', key: 'stale' } as const, null as Stale | null, { shape: 'stale-1' })
 
 const field = (text: string, name: string): string =>
   text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
@@ -84,12 +88,26 @@ const describe = (one: Voyage | null): string => {
 
 // Polls only while a build runs; a tool call notices one that starts.
 let timer: ReturnType<EngineInterface['clock']['every']> | undefined
+let isFollowing = false
 
-const refresh = async ($: EngineInterface): Promise<void> => {
+const look = async ($: EngineInterface): Promise<boolean> => {
   const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
   const state = await file('state')
-  const next =
-    state === ''
+  const launched = await read($, launch)
+  const isLaunched = launched?.state === state
+
+  if (launched !== null && !isLaunched) {
+    await update($, launch, () => null)
+  }
+  const quiet = await read($, stale)
+  const isQuiet = quiet === state
+
+  if (quiet !== null && !isQuiet) {
+    await update($, stale, () => null)
+  }
+  const next: Voyage | null = isLaunched
+    ? { issue: launched.issue, phase: 'explore', isBlocked: false, isDone: false, checks: [], fuelMinutes: null, refusals: 0, pr: '' }
+    : state === ''
       ? null
       : parse(
           state,
@@ -99,10 +117,10 @@ const refresh = async ($: EngineInterface): Promise<void> => {
           await file('done'),
           await $.clock.now(),
         )
-  const isRunning = next !== null && !next.isDone
+  const isRunning = isLaunched || (next !== null && !next.isDone)
 
   if (isRunning && timer === undefined) {
-    timer = $.clock.every(5000, () => void refresh($))
+    timer = $.clock.every(5000, () => void refresh($).catch(() => false))
   }
   if (!isRunning && timer !== undefined) {
     timer.cancel()
@@ -110,46 +128,86 @@ const refresh = async ($: EngineInterface): Promise<void> => {
   }
   const before = await read($, voyage)
 
-  if (JSON.stringify(before) === JSON.stringify(next)) {
-    return
-  }
-  await update($, voyage, () => next)
+  if (JSON.stringify(before) !== JSON.stringify(next)) {
+    await update($, voyage, () => next)
 
-  if (before === null && next !== null) {
-    void $.ui.open({ id: PANE, title: TITLE })
+    if (before === null && next !== null && !next.isDone) {
+      void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
+    }
+    if (!lit(before) && lit(next)) {
+      $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
+    }
   }
-  if (!lit(before) && lit(next)) {
-    $.ui.toast('✦ Every star is lit. Prepare for docking. ✦')
-  }
+
+  isFollowing = isRunning && !isQuiet
+
+  return isFollowing
 }
+
+let queue: Promise<boolean> = Promise.resolve(false)
+
+// One look at a time, after `step`; true while a closed pane should reopen.
+const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => undefined): Promise<boolean> => {
+  queue = queue.catch(() => false).then(async () => {
+    await step()
+
+    return look($)
+  })
+
+  return queue
+}
+
+const answer = async ($: EngineInterface, opened: UiOpenResult): Promise<string> =>
+  opened.isPlaced ? 'Voyage pane opened.' : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`
+
+const stateNow = ($: EngineInterface): Promise<string> => $.fs.read(`${DIR}/state`).catch(() => '')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'voyage', description: 'Show the progress of the current /build' })
-    void refresh($)
+    void refresh($, async () => {
+      const state = await stateNow($)
+
+      if (state !== '' && (await read($, voyage)) === null) {
+        await update($, stale, () => state)
+      }
+    }).catch(() => false)
 
     return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
-
-    if (timer === undefined) {
-      void refresh($)
+    if (!isFollowing) {
+      if (timer === undefined) {
+        void refresh($).catch(() => false)
+      }
+    } else if ((await refresh($)) && !(await $.ui.panes()).some(pane => pane.id === PANE)) {
+      await $.ui.open({ id: PANE, title: TITLE })
     }
 
-    return ran
-  })
+    return next(e)
+  }).catch((_, e, next) => next(e))
+
+  on('command.run', { command: 'build' }, async ($, e, next) => {
+    const args = e.args.trim()
+    await refresh($, async () => {
+      const state = await stateNow($)
+      await update($, stale, () => null)
+      await update($, launch, () => ({ issue: /^\d+$/.test(args) ? String(Number(args)) : '', state }))
+    })
+    const opened = await $.ui.open({ id: PANE, title: TITLE })
+
+    if (!opened.isPlaced) {
+      $.ui.log(await answer($, opened))
+    }
+
+    return next(e)
+  }).catch((_, e, next) => next(e))
 
   on('command.run', { command: 'voyage' }, async $ => {
     await refresh($)
-    const opened = await $.ui.open({ id: PANE, title: TITLE })
 
-    return {
-      text: opened.isPlaced
-        ? 'Voyage pane opened.'
-        : `${describe(await read($, voyage))}\n\nNo pane here: ${opened.reason}`,
-    }
+    return { text: await answer($, await $.ui.open({ id: PANE, title: TITLE })) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
