@@ -38,6 +38,7 @@ _Avoid_: {rejected synonyms}
 - **Deterministic.** No network, clock, randomness or dependence on test order.
 - **One conformance suite.** Shared cases are data files that every language binding runs.
 - **Never weaken a test.** Don't skip, loosen or delete a test to make it pass; fix the code.
+- **Changed code only.** CI runs a test or check only when the pull request changes code it covers or depends on.
 - **Rules 1 and 2 apply.** Test code uses only standard tooling and passes the same checks.
 
 # Releases
