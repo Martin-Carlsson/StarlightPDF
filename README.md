@@ -1,6 +1,6 @@
 # StarlightPDF 🌟
 
-An open-source PDF library with zero dependencies that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
+An open-source PDF library with a zero-dependency core crate that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
 
 Website: [starlightpdf.com](https://starlightpdf.com)
 
@@ -40,6 +40,21 @@ StarlightPDF will be available as a dependency in:
 | 💤 | Haskell | Hackage |
 | 💤 | Zig | Zig package manager |
 | 💤 | Any other language | Command-line tool |
+
+## Architecture
+
+Planned, not built.
+
+All logic is written once, in a Rust core crate. Four interfaces expose it:
+
+| Interface | Tool | For |
+| --- | --- | --- |
+| C API | `extern "C"`, cbindgen header | Most listed languages |
+| Native bindings | PyO3, napi-rs, UniFFI | Python (PyO3), Node.js (napi-rs), Swift and Kotlin (UniFFI) |
+| WebAssembly | wasm-bindgen | JavaScript in the browser |
+| Command line | Standalone command-line tool | Everything else |
+
+CI builds prebuilt binaries per platform and publishes them to each package registry.
 
 ## Features
 
@@ -169,7 +184,7 @@ StarlightPDF will be available as a dependency in:
 ### Engineering properties
 
 - 💤 **Performance:** streaming, low memory use, incremental updates, thread safety, async, batch processing
-- 💤 **Deployment:** zero dependencies, cross-platform, WebAssembly, command-line tool
+- 💤 **Deployment:** zero dependencies in the core crate, cross-platform, WebAssembly, command-line tool
 - 💤 **Robustness:** tolerance of malformed files, safe handling of untrusted input
 
 ## Working with Claude Code
