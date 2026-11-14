@@ -19,12 +19,13 @@ export type Launch = {
   issue: string
   /** The state file's text when it ran. */
   state: string
-  /** False once a main turn ended without the state changing. */
-  isLive: boolean
 }
+
+/** State text found at session start; no reopen until it changes or /build runs. */
+export type Stale = string
 
 declare module 'claude-code' {
   interface PluginState {
-    'build-voyage': { voyage: Shaped<Voyage | null>; launch: Shaped<Launch | null>; stale: Shaped<string | null> }
+    'build-voyage': { voyage: Shaped<Voyage | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null> }
   }
 }
