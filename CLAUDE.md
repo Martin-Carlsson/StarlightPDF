@@ -4,7 +4,9 @@
 2. **Strictest settings, always.** Enable every compiler and linter check at its strictest level. Warnings are errors. Never disable, suppress or weaken a check to make code pass.
 3. **Shortest text, always.** Answer the user with as little text as possible. The same goes for code comments and documentation.
 
-# GLOSSARY.md
+# Documentation
+
+## GLOSSARY.md
 
 One root `GLOSSARY.md`. Create it when the first term is settled.
 
