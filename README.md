@@ -186,6 +186,14 @@ claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
 claude plugin marketplace update starlightpdf && claude plugin update build-voyage@starlightpdf
 ```
 
+`main` accepts only signed commits. To sign locally, add your SSH key on GitHub as a *Signing Key*, then:
+
+```
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+```
+
 ## Contributing
 
 StarlightPDF is just getting started, and contributions are welcome. Open an issue to discuss a feature from the list above before starting work on it, so effort isn't duplicated.
