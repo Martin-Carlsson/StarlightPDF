@@ -11,7 +11,7 @@
 - **Cite the spec.** Where a test verifies a standard, name the standard and clause.
 - **Round-trip.** Whatever the library writes, it must read back with the same content.
 - **Corpus.** Valid and malformed test files live in `tests/corpus/`. Every file is made by this project; never add a file created by someone else.
-- **Golden files.** Compare output with stored expected files exactly. Change an expected file only when the new output is intended.
+- **Independent expectations.** Expected values come from a standard or from reasoning that shares no code with the library; never copy them from its output.
 - **Fuzz every parser.** Untrusted input must never crash, hang or exhaust memory. Every finding becomes a corpus file.
 - **Deterministic.** No network, clock, randomness or dependence on test order.
 - **One conformance suite.** Shared cases are data files that every language binding runs.
