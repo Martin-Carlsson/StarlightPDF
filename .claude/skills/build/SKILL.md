@@ -42,7 +42,6 @@ A Stop hook reruns your checks whenever you try to stop and sends you back if on
 
 ## Rules
 
-- **Labels:** create one that is missing.
 - **Decisions in the issue are constraints.** Record each in `.architecture-decisions/`. If one does not work, ask; never deviate.
 - **Never make a hard-to-reverse decision yourself.** If the work forces one the issue does not cover, ask.
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
