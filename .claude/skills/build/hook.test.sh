@@ -79,10 +79,23 @@ reset 'status: working\ncheck: test -f marker\npr: https://example.test/1\n'
 check "check: runs from the root" 0 'pass test -f marker'
 echo 0 >"$dir/refusals"
 run "all pass allows stop" 0 ''
-expect test ! -e "$state"
-expect test ! -e "$results"
 expect test ! -e "$clock"
 expect test ! -e "$dir/refusals"
+
+# A finished build stays on disk for the pane, and no longer holds anything back.
+expect cmp -s "$state" "$dir/done"
+expect grep -qx 'pass test -f marker' "$results"
+echo change >"$proj/file"
+run "finished build allows stop" 0 ''
+echo 0 >"$clock"
+mode=tool
+run "tool: finished build allows" 0 ''
+mode=stop
+
+# A new build's state differs from the finished one, so it is enforced again.
+rm -f "$clock"
+printf 'status: working\ncheck: true\n' >"$state"
+run "new build after a finished one refuses" 2 'hook.sh check'
 
 reset 'status: working\ncheck: true\npr: https://example.test/1\n'
 check "check: passes" 0 'pass true'
@@ -108,6 +121,21 @@ check "check: commands get no stdin" 1 'fail read x'
 
 reset
 check "check: no state fails" 1 'no build'
+
+# The cap counts refusals since the checks last ran.
+reset 'status: working\ncheck: false\n'
+echo 29 >"$dir/refusals"
+check "check: resets the refusal count" 1 'fail false'
+expect test ! -e "$dir/refusals"
+
+# Check finds the repository root from a subdirectory by itself.
+reset 'status: working\ncheck: test -f marker\n'
+: >"$proj/marker"
+mkdir "$proj/sub"
+code=0
+(cd "$proj/sub" && unset CLAUDE_PROJECT_DIR && sh "$hook" check >"$tmp/out" 2>"$tmp/err") || code=$?
+expect test "$code" -eq 0
+expect grep -qx 'pass test -f marker' "$tmp/out"
 
 # The hooks themselves never run a command from the state file.
 reset 'status: working\ncheck: touch pwned\npr: https://example.test/1\n'

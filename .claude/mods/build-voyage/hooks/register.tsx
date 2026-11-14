@@ -19,13 +19,20 @@ const STAGES = [
 ]
 
 const voyage = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Voyage | null, {
-  shape: 'voyage-1',
+  shape: 'voyage-2',
 })
 
 const field = (text: string, name: string): string =>
   text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
 
-export const parse = (state: string, results: string, refusals: string, clock: string, nowMs: number): Voyage => {
+export const parse = (
+  state: string,
+  results: string,
+  refusals: string,
+  clock: string,
+  finished: string,
+  nowMs: number,
+): Voyage => {
   const done = results.split('\n').filter(line => line !== '')
   const checks: Check[] = state
     .split('\n')
@@ -42,6 +49,7 @@ export const parse = (state: string, results: string, refusals: string, clock: s
     issue: field(state, 'issue'),
     phase: field(state, 'phase'),
     isBlocked: field(state, 'status') === 'blocked',
+    isDone: finished === state,
     checks,
     fuelMinutes: started > 0 ? Math.max(0, Math.min(LIMIT_MINUTES, LIMIT_MINUTES - used)) : null,
     refusals: Number(refusals.trim()) || 0,
@@ -65,7 +73,7 @@ const describe = (one: Voyage | null): string => {
 
   return [
     `✦ Destination: ${one.issue === '' ? 'uncharted' : `issue #${one.issue}`}`,
-    `Stage: ${one.isBlocked ? 'Holding orbit, waiting for you' : stage}`,
+    `Stage: ${one.isDone ? 'Docked' : one.isBlocked ? 'Holding orbit, waiting for you' : stage}`,
     `Constellation: ${passed} of ${one.checks.length} stars lit`,
     ...one.checks.map(check => `  ${star(check)} ${check.command}`),
     ...(fuel === null ? [] : [`Fuel: ${Math.floor(fuel / 60)}h ${fuel % 60}m until check-in`]),
@@ -74,10 +82,32 @@ const describe = (one: Voyage | null): string => {
   ].join('\n')
 }
 
+// Polls only while a build runs; a tool call notices one that starts.
+let timer: ReturnType<EngineInterface['clock']['every']> | undefined
+
 const refresh = async ($: EngineInterface): Promise<void> => {
   const file = (name: string) => $.fs.read(`${DIR}/${name}`).catch(() => '')
   const state = await file('state')
-  const next = state === '' ? null : parse(state, await file('results'), await file('refusals'), await file('started'), await $.clock.now())
+  const next =
+    state === ''
+      ? null
+      : parse(
+          state,
+          await file('results'),
+          await file('refusals'),
+          await file('started'),
+          await file('done'),
+          await $.clock.now(),
+        )
+  const isRunning = next !== null && !next.isDone
+
+  if (isRunning && timer === undefined) {
+    timer = $.clock.every(5000, () => void refresh($))
+  }
+  if (!isRunning && timer !== undefined) {
+    timer.cancel()
+    timer = undefined
+  }
   const before = await read($, voyage)
 
   if (JSON.stringify(before) === JSON.stringify(next)) {
@@ -96,10 +126,19 @@ const refresh = async ($: EngineInterface): Promise<void> => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'voyage', description: 'Show the progress of the current /build' })
-    await refresh($)
-    $.clock.every(5000, () => refresh($))
+    void refresh($)
 
     return next(e)
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+
+    if (timer === undefined) {
+      void refresh($)
+    }
+
+    return ran
   })
 
   on('command.run', { command: 'voyage' }, async $ => {
@@ -128,13 +167,13 @@ export const register: Register = on => {
       )
     }
 
-    const at = STAGES.findIndex(stage => stage.phase === one.phase)
+    const at = one.isDone ? STAGES.length : STAGES.findIndex(stage => stage.phase === one.phase)
     const passed = one.checks.filter(check => check.result === 'pass').length
     const fuel = one.fuelMinutes
-    const log = one.isBlocked
-      ? 'Holding orbit. Awaiting word from mission control. That is you.'
-      : one.pr !== ''
-        ? 'Docked. Welcome home, crew.'
+    const log = one.isDone
+      ? 'Docked. Welcome home, crew.'
+      : one.isBlocked
+        ? 'Holding orbit. Awaiting word from mission control. That is you.'
         : (STAGES[at]?.log ?? 'Pre-flight checks. Counting snacks.')
 
     return (

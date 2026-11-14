@@ -4,6 +4,8 @@ export type Voyage = {
   issue: string
   phase: string
   isBlocked: boolean
+  /** The build finished: its checks passed and its pull request is open. */
+  isDone: boolean
   checks: Check[]
   /** Minutes left of the 24 hours, or null while the clock is stopped. */
   fuelMinutes: number | null

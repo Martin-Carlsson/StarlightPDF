@@ -19,11 +19,14 @@ const PANE = {
 // Stands for the engine: the files of .claude/build/, the clock at 100 000 s.
 const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) => {
   const clock = mock.clock(on, { now: 100_000_000 })
+  const reads = { count: 0 }
   on('command.register', () => ({ value: { command: 'voyage' } }))
   on('ui.open', () => ({ value: isPlaced ? { isPlaced } : { isPlaced, reason: 'no surface places panes' } }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => ({ result: {} }))
   on('fs.read', (_, e) => {
+    reads.count += 1
     const name = Object.keys(files).find(one => e.path.endsWith(one))
 
     if (name === undefined) {
@@ -33,7 +36,7 @@ const world = (on: On, files: Record<string, string>, isPlaced: boolean = true) 
     return { value: files[name] ?? '' }
   })
 
-  return clock
+  return { clock, reads }
 }
 
 // A Progress is drawn as a Text and a bar on some surfaces, natively on others.
@@ -50,7 +53,7 @@ const START = { cwd: '/', surface: 'desktop', isInteractive: true } as const
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 
 test('a build shows its checks, stage and fuel on every surface', async ($, on) => {
-  world(on, {
+  const { clock } = world(on, {
     // Started one hour before now: 23 of the 24 hours are left.
     '.claude/build/state':
       'status: working\nissue: 12 Reject empty files\nphase: implement\n' +
@@ -60,6 +63,7 @@ test('a build shows its checks, stage and fuel on every surface', async ($, on) 
     '.claude/build/refusals': '3\n',
   })
   await $.session.start(START)
+  await clock.settle()
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -90,12 +94,19 @@ test('no build shows the dry dock', async ($, on) => {
   }
 })
 
-test('a blocked build holds orbit, and a new file is picked up by the timer', async ($, on) => {
+test('an idle session does not poll; a tool call notices a build', async ($, on) => {
   const files: Record<string, string> = {}
-  const clock = world(on, files)
+  const { clock, reads } = world(on, files)
   await $.session.start(START)
+  await clock.settle()
+  const atStart = reads.count
+  await clock.advance(60_000)
+
+  expect(reads.count).toBe(atStart)
+
   files['.claude/build/state'] = 'status: blocked\ncheck: true\n'
-  await clock.advance(5000)
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  await clock.settle()
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
@@ -106,7 +117,7 @@ test('a blocked build holds orbit, and a new file is picked up by the timer', as
 })
 
 test('where no pane can be shown, the command answers in text', async ($, on) => {
-  world(
+  const { clock } = world(
     on,
     {
       '.claude/build/state': 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n',
@@ -115,6 +126,7 @@ test('where no pane can be shown, the command answers in text', async ($, on) =>
     false,
   )
   await $.session.start(START)
+  await clock.settle()
 
   const { text } = await $.command.run({
     command: 'voyage',
@@ -130,4 +142,31 @@ test('where no pane can be shown, the command answers in text', async ($, on) =>
   expect(text).toContain('☆ false')
   expect(text).toContain('no surface places panes')
   expect(text).not.toContain('pane opened')
+})
+
+test('a running build is polled; a finished one is docked and no longer polled', async ($, on) => {
+  const state = 'status: working\nissue: 12 Reject empty files\nphase: pr\ncheck: true\npr: https://example.test/1\n'
+  const files: Record<string, string> = { '.claude/build/state': state, '.claude/build/results': 'pass true\n' }
+  const { clock, reads } = world(on, files)
+  await $.session.start(START)
+  await clock.settle()
+  const running = reads.count
+  await clock.advance(5000)
+
+  expect(reads.count).toBeGreaterThan(running)
+
+  // The hook copies the state to `done` when the build finishes.
+  files['.claude/build/done'] = state
+  await clock.advance(5000)
+  const finished = reads.count
+  await clock.advance(60_000)
+
+  expect(reads.count).toBe(finished)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  expect(await ui.find({ type: 'Text', text: /Docked\. Welcome home/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /Dock$/ }))?.text).toBe('◉ Dock')
+  expect((await ui.find({ type: 'Text', text: /example\.test/ }))?.text).toBe('⚓ https://example.test/1')
+  await ui.unmount()
 })
