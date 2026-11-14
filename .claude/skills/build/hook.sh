@@ -1,9 +1,11 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check
-# stop: refuse to stop until every check has passed on the current files and a PR is recorded.
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|branch
+# stop: refuse to stop until the build is on its branch, every check has passed on the
+#       current files and a PR is recorded.
 #       Gives way once after 30 refusals with no check run in between.
 # tool: refuse tool calls after 24 hours without the user.
 # check: run every check and record the results. Only this mode runs commands.
+# branch: switch to the branch named after the issue, level with origin's, and print its name.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -16,6 +18,7 @@ done=$dir/done
 cap=30
 limit=86400
 again='run: sh .claude/skills/build/hook.sh check'
+switch='run: sh .claude/skills/build/hook.sh branch'
 
 # A hash of the working tree: every file git does not ignore.
 tree() {
@@ -38,6 +41,47 @@ expired() {
       ;;
   esac
   [ $((now - started)) -gt "$limit" ]
+}
+
+# Branch name from the issue: line: <number>-<slug of the title>. The title is untrusted.
+branch() {
+  issue=$(LC_ALL=C sed -n '/^issue: /{s///p;q;}' "$state" 2>/dev/null) || return 1
+  number=${issue%% *}
+  case $number in '' | *[!0-9]*) return 1 ;; esac
+  title=
+  case $issue in *' '*) title=${issue#* } ;; esac
+  slug=$(printf '%s' "$title" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C tr -cs 'a-z0-9' '-')
+  slug=${slug#-}
+  name=$(printf '%s' "$number-${slug%-}" | cut -c1-60)
+  printf '%s\n' "${name%-}"
+}
+
+# Track origin's branch and fast-forward to it.
+follow() {
+  [ "$found" -eq 0 ] || return 0
+  git config "branch.$name.remote" origin || return 1
+  git config "branch.$name.merge" "$mine" || return 1
+  # A clone of one branch does not map this one yet.
+  if ! git rev-parse -q --verify "$mine@{upstream}" >/dev/null 2>&1; then
+    git remote set-branches --add origin "$name" || return 1
+  fi
+  [ "$behind" -eq 0 ] || git merge -q --ff-only "$theirs"
+}
+
+# Return to where branch mode started.
+back() {
+  case $from in
+    "$mine") return 0 ;;
+    refs/heads/*)
+      if git show-ref --verify --quiet "$from"; then
+        git checkout -q "${from#refs/heads/}" --
+      else
+        git symbolic-ref HEAD "$from"
+      fi
+      ;;
+    *) git checkout -q --detach "$from" -- ;;
+  esac
+  [ "$had" -eq 1 ] || git branch -q -D "$name"
 }
 
 refuse() {
@@ -81,6 +125,55 @@ END
   exit
 fi
 
+if [ "$1" = branch ]; then
+  if ! name=$(branch); then
+    echo "build: no 'issue: <number> <title>' line in $state" >&2
+    exit 1
+  fi
+  found=2
+  if git remote 2>/dev/null | grep -qx origin; then
+    found=0
+    git ls-remote --exit-code --heads origin "refs/heads/$name" >/dev/null || found=$?
+  fi
+  if [ "$found" -ne 0 ] && [ "$found" -ne 2 ]; then
+    echo "build: cannot ask origin for branch $name" >&2
+    exit 1
+  fi
+  if [ "$found" -eq 0 ]; then
+    git fetch -q origin "+refs/heads/$name:refs/remotes/origin/$name" >&2 || exit 1
+  fi
+  mine=refs/heads/$name
+  theirs=refs/remotes/origin/$name
+  had=0
+  behind=0
+  if git show-ref --verify --quiet "$mine"; then
+    had=1
+    if [ "$found" -ne 0 ] || git merge-base --is-ancestor "$theirs" "$mine" 2>/dev/null; then
+      :
+    elif git merge-base --is-ancestor "$mine" "$theirs" 2>/dev/null; then
+      behind=1
+    else
+      echo "build: cannot fast-forward $name to origin/$name" >&2
+      exit 1
+    fi
+  fi
+  from=$(git symbolic-ref -q HEAD || git rev-parse -q --verify HEAD || true)
+  if [ "$had" -eq 1 ]; then
+    git checkout -q "$name" -- >&2 || exit 1
+  elif [ "$found" -eq 0 ]; then
+    git checkout -q --no-track -b "$name" "$theirs" -- >&2 || exit 1
+  else
+    git checkout -q --no-track -b "$name" >&2 || exit 1
+  fi
+  if ! follow >&2; then
+    echo "build: cannot fast-forward $name to origin/$name" >&2
+    back >&2 || true
+    exit 1
+  fi
+  echo "$name"
+  exit 0
+fi
+
 [ -f "$state" ] || exit 0
 # A finished build is kept for the pane; a new build's state differs from it.
 if cmp -s "$state" "$done"; then exit 0; fi
@@ -101,6 +194,13 @@ if expired; then
 fi
 
 [ "$1" = stop ] || exit 0
+
+if ! want=$(branch) || ! grep -qxF "branch: $want" "$state"; then
+  refuse "no branch: line for the issue in $state; $switch, then add 'branch: <name>' to $state"
+fi
+if [ "$(git symbolic-ref -q HEAD || true)" != "refs/heads/$want" ]; then
+  refuse "not on branch $want; $switch"
+fi
 
 grep -q '^check: .' "$state" || refuse "no check: lines in $state"
 [ -f "$results" ] || refuse "the checks have not run; $again"

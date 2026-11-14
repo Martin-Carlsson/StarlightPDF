@@ -32,13 +32,22 @@ expect() {
   fi
 }
 
-# reset STATE_TEXT: a fresh repository, with that state file if given.
+# The lines that put a build on its branch.
+head() {
+  printf 'issue: 1 T\nbranch: 1-t\n'
+}
+
+# reset STATE_TEXT: a fresh repository on the build's branch, with that state file if given.
 reset() {
   rm -rf "$proj"
   mkdir -p "$dir"
   git init -q "$proj"
+  git -C "$proj" symbolic-ref HEAD refs/heads/1-t
   echo '.claude/build/' >"$proj/.gitignore"
-  if [ $# -gt 0 ]; then printf "$1" >"$state"; fi
+  if [ $# -gt 0 ]; then
+    head >"$state"
+    printf "$1" >>"$state"
+  fi
 }
 
 check() {
@@ -94,7 +103,8 @@ mode=stop
 
 # A new build's state differs from the finished one, so it is enforced again.
 rm -f "$clock"
-printf 'status: working\ncheck: true\n' >"$state"
+head >"$state"
+printf 'status: working\ncheck: true\n' >>"$state"
 run "new build after a finished one refuses" 2 'hook.sh check'
 
 reset 'status: working\ncheck: true\npr: https://example.test/1\n'
