@@ -172,6 +172,27 @@ StarlightPDF will be available as a dependency in:
 - 💤 **Deployment:** zero dependencies, cross-platform, WebAssembly, command-line tool
 - 💤 **Robustness:** tolerance of malformed files, safe handling of untrusted input
 
+## Working with Claude Code
+
+The repository ships two [Claude Code](https://claude.com/claude-code) skills and a progress pane.
+
+| Command | What it does |
+| --- | --- |
+| `/issue <description>` | Asks questions, then drafts a bug or feature issue with a goal and a definition of done. Posts it after you approve. |
+| `/build <issue number>` | Works on the issue until its definition of done is met, then opens a pull request. Stops to ask after 24 hours, or when it needs a decision. |
+| `/voyage` | Shows the progress of the current build. |
+
+### One-time setup
+
+1. Create these labels in the GitHub repository: `feature`, `build-ready`, `api-additive`, `api-breaking`. `bug` exists by default.
+2. Install the progress pane from a shell on your computer. Answer `y`, then press Enter:
+
+   ```
+   claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
+   ```
+
+The skills need no installation. The pane is drawn in the terminal and in local desktop sessions; a cloud session answers `/voyage` in text.
+
 ## Contributing
 
 StarlightPDF is just getting started, and contributions are welcome. Open an issue to discuss a feature from the list above before starting work on it, so effort isn't duplicated.
