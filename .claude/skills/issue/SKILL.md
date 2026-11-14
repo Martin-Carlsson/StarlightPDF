@@ -23,6 +23,6 @@ Write a GitHub issue for: $ARGUMENTS
 - **Definition of done:** each item is one observable result that a test or command can check. "Opening an empty file returns error X", not "the parser is robust".
 - **Cover what is easy to forget:** malformed input, edge cases, round-trip. Cite the standard and clause an item verifies.
 - **Say what must be proven, not how.** No test files, modules, function names or algorithms.
-- **Decisions:** only what the user decided, each with its reason in one sentence. Omit the section if there are none.
+- **Decisions:** only choices the user made that are hard to reverse, surprising without context and a real trade-off, each with its reason in one sentence. Omit the section if there are none.
 - **One issue, one goal.** Split anything larger.
 - Use `GLOSSARY.md` terms.

@@ -20,4 +20,4 @@ labels: bug
 
 ## Decisions
 
-<!-- Hard-to-reverse choices already made, each with its reason. Delete if none. -->
+<!-- Choices already made that are hard to reverse, surprising without context and a real trade-off, each with its reason. Delete if none. -->
