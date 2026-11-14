@@ -180,7 +180,7 @@ The repository ships two [Claude Code](https://claude.com/claude-code) skills an
 | --- | --- |
 | `/issue <description>` | Asks questions, then drafts a bug or feature issue with a goal and a definition of done. Posts it after you approve. |
 | `/build <issue number>` | Works on the issue until its definition of done is met, then opens a pull request. Stops to ask after 24 hours, or when it needs a decision. |
-| `/voyage` | Shows the progress of the current build. |
+| `/voyage` | Reopens the progress pane. It opens by itself when a build starts. |
 
 The skills need no setup. To install the pane, run this in a shell, answer `y`, then press Enter:
 
