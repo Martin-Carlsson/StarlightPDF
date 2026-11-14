@@ -1,7 +1,7 @@
 ---
 name: Feature
 about: New behaviour
-labels: enhancement
+labels: feature
 ---
 
 ## Goal

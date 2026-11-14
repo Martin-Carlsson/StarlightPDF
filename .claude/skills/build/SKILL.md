@@ -14,7 +14,7 @@ Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the 
 
 A Stop hook reruns your checks whenever you try to stop and sends you back if one fails.
 
-1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user, update the issue, then continue.
+1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`.
 2. **Define checks.** For each Definition of done item, write at least one shell command that exits 0 only when the item holds; normally a test, written first. Run each: it should fail now. Write `.claude/build/state`:
 
    ```

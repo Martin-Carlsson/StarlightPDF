@@ -13,7 +13,7 @@ Write a GitHub issue for: $ARGUMENTS
    - Bug: steps to reproduce, input, expected, actual.
    - Feature: who needs it, what is in and out of scope, which standard and clause applies.
 4. **Draft.** Fill in `.github/ISSUE_TEMPLATE/bug.md` or `feature.md`, without its front matter, and show it.
-5. **Post.** Only after the user approves. Label `bug` or `enhancement`. Reply with the link.
+5. **Post.** Only after the user approves. Label `bug` or `feature`, plus `build-ready`. Reply with the link.
 
 ## Writing rules
 
