@@ -74,23 +74,52 @@ type Row = {
   isBold?: boolean
   isItalic?: boolean
   isDim?: boolean
-  isCheck?: boolean
+  isFixed?: boolean
   bar?: { value: number; max: number }
 }
 
-const tree = (agents: Agent[], parentId?: string, depth = 0): Row[] =>
+const commas = (n: number): string => String(n).replace(/\B(?=(\d{3})+$)/g, ',')
+
+const longest = (texts: string[]): number => texts.reduce((most, text) => Math.max(most, text.length), 0)
+
+type Line = { mark: string; title: string; model: string; tokens: string }
+
+const lines = (agents: Agent[], parentId?: string, depth = 0): Line[] =>
   agents
     .filter(agent => agent.parentId === parentId)
     .flatMap(agent => [
       {
-        text: `${'  '.repeat(depth)}${agent.description} · ${agent.model} · ${agent.isRunning ? 'running' : 'finished'} · ${agent.tokens} tokens`,
-        color: 'text' as const,
+        mark: agent.isRunning ? '⏳' : '✅',
+        title: `${'  '.repeat(depth)}${agent.description}`,
+        model: agent.model.replace(/^claude-/, ''),
+        tokens: commas(agent.tokens),
       },
-      ...tree(agents, agent.id, depth + 1),
+      ...lines(agents, agent.id, depth + 1),
     ])
 
+// A title is cut to fit; the model and tokens never are.
+const table = (tally: Run, columns?: number): Row[] => {
+  const agents = lines(tally.agents)
+  const all = [
+    ...agents,
+    { mark: '  ', title: 'Total', model: '', tokens: commas(tally.agents.reduce((sum, agent) => sum + agent.tokens, tally.mainTokens)) },
+  ]
+  const model = longest(agents.map(line => line.model))
+  const tokens = longest(all.map(line => line.tokens))
+  const title = Math.min(
+    longest(all.map(line => line.title)),
+    columns === undefined ? Infinity : Math.max(1, columns - 3 - 2 - model - 2 - tokens),
+  )
+
+  return all.map(line => ({
+    text: `${line.mark} ${(line.title.length > title ? `${line.title.slice(0, title - 1)}…` : line.title).padEnd(title)}  ${line.model.padEnd(model)}  ${line.tokens.padStart(tokens)}`,
+    color: 'text' as const,
+    isFixed: true,
+  }))
+}
+
 // Pane lines in groups; the text answer is the same lines.
-const rows = (one: Build | null, tally: Run | null): Row[][] => {
+const rows = (one: Build | null, tally: Run | null, columns?: number): Row[][] => {
   if (one === null) {
     return [
       [
@@ -123,7 +152,7 @@ const rows = (one: Build | null, tally: Run | null): Row[][] => {
       },
       ...one.checks.map(check => ({
         text: `${mark(check)} ${check.command}`,
-        isCheck: true,
+        isFixed: true,
         color: check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive',
       })),
     ],
@@ -151,11 +180,7 @@ const rows = (one: Build | null, tally: Run | null): Row[][] => {
               text: `${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m elapsed`,
               color: 'suggestion' as const,
             },
-            {
-              text: `${tally.agents.reduce((sum, agent) => sum + agent.tokens, tally.mainTokens)} tokens in all`,
-              color: 'text' as const,
-            },
-            ...tree(tally.agents),
+            ...table(tally, columns),
           ],
         ]),
     ...(one.pr === '' ? [] : [[{ text: one.pr, color: 'success' as const }]]),
@@ -381,7 +406,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {rows(await read($, build), await read($, run)).map(group => (
+        {rows(await read($, build), await read($, run), width).map(group => (
           <Box flexDirection="column">
             {group.flatMap(row => {
               const filled = row.bar === undefined ? 0 : Math.round((Math.min(row.bar.max, Math.max(0, row.bar.value)) / row.bar.max) * width)
@@ -392,7 +417,7 @@ export const register: Register = on => {
                   weight={row.isBold === true ? 'bold' : undefined}
                   italic={row.isItalic}
                   dimColor={row.isDim}
-                  wrap={row.isCheck === true ? 'truncate-end' : undefined}
+                  wrap={row.isFixed === true ? 'truncate-end' : undefined}
                 >
                   {row.text}
                 </Text>,
