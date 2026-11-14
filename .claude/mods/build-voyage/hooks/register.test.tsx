@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, TurnUsage } from 'claude-code'
 
 const ID = 'build-voyage'
 const PANE = {
@@ -64,6 +64,8 @@ const world = (
 
     return { text: '' }
   })
+  let spawned = 0
+  on('agent.spawn', (_, e) => ({ model: e.model ?? 'claude-haiku-5-5', agentId: `agent-${(spawned += 1)}` }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('tool.call', () => {
@@ -715,4 +717,162 @@ test('no starship word appears in the pane, the toast or the text answer', async
 
   expect(seen.toasts).not.toEqual([])
   expect(all.filter(one => words.test(one))).toEqual([])
+})
+
+const usage = (input: number, output: number, read: number, creation: number): TurnUsage => ({
+  model: 'claude-haiku-5-5',
+  input_tokens: input,
+  output_tokens: output,
+  cache_read_input_tokens: read,
+  cache_creation_input_tokens: creation,
+})
+
+// An agent of the build, started by `parentAgentId` (the main loop when absent).
+const spawn = async ($: Engine, description: string, parentAgentId?: string, model?: string): Promise<string> => {
+  const { agentId } = await $.agent.spawn({
+    tool_use_id: description,
+    prompt: '',
+    description,
+    subagentType: 'general-purpose',
+    provider: { plugin: 'engine', tier: 'core' },
+    parentModel: 'claude-opus-5',
+    background: false,
+    fork: false,
+    ...(parentAgentId === undefined ? {} : { parentAgentId }),
+    ...(model === undefined ? {} : { model }),
+  })
+
+  if (agentId === undefined) {
+    throw new Error('no agent started')
+  }
+
+  return agentId
+}
+
+// A turn of `agentId` (the main loop when absent) ends having cost `cost`.
+const complete = ($: Engine, cost: TurnUsage, agentId?: string) =>
+  $.turn.complete({
+    answer: '',
+    durationMs: 1000,
+    isAborted: false,
+    turnId: agentId ?? 'main',
+    reason: 'answer',
+    usage: cost,
+    ...(agentId === undefined ? {} : { agentId }),
+  })
+
+const agentLines = async ($: Engine, surface: (typeof SURFACES)[number]) =>
+  (await lines($, surface)).filter(one => one.includes(' · '))
+
+test('the pane lists every agent the build spawned as a tree', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  const lexer = await spawn($, 'Read the lexer', parser)
+  await spawn($, 'Write the docs')
+  await spawn($, 'Check tokens', lexer)
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect(await agentLines($, surface)).toEqual([
+      'Map the parser · claude-haiku-5-5 · running · 0 tokens',
+      '  Read the lexer · claude-haiku-5-5 · running · 0 tokens',
+      '    Check tokens · claude-haiku-5-5 · running · 0 tokens',
+      'Write the docs · claude-haiku-5-5 · running · 0 tokens',
+    ])
+  }
+})
+
+test('each agent shows its task, model, status and tokens', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  const tests = await spawn($, 'Write the tests', undefined, 'claude-sonnet-5-5')
+  await complete($, usage(10, 20, 30, 40), parser)
+  await complete($, usage(1, 2, 3, 4), tests)
+  await $.turn.start({ text: '', turnId: tests, agentId: tests })
+  await clock.settle()
+
+  for (const surface of SURFACES) {
+    expect(await agentLines($, surface)).toEqual([
+      'Map the parser · claude-haiku-5-5 · finished · 100 tokens',
+      'Write the tests · claude-sonnet-5-5 · running · 10 tokens',
+    ])
+  }
+})
+
+test('the pane shows one token total for the main loop and every agent', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  const lexer = await spawn($, 'Read the lexer', parser)
+  await complete($, usage(1, 2, 4, 8))
+  await complete($, usage(10, 20, 30, 40), parser)
+  await complete($, usage(1, 1, 1, 0), lexer)
+  await clock.settle()
+
+  expect(await shown($, /tokens in all/)).toEqual(every('118 tokens in all'))
+})
+
+test('the elapsed time ticks while the build runs and freezes when it is done', async ($, on) => {
+  const files = new Map<string, string>()
+  const { clock, act } = world(on, files)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+
+  expect(await shown($, /elapsed/)).toEqual(every('0h 0m elapsed'))
+
+  await clock.advance(125_000)
+
+  expect(await shown($, /elapsed/)).toEqual(every('0h 2m elapsed'))
+
+  const state = 'status: working\nissue: 10 Some title\nphase: pr\n'
+  files.set('state', state)
+  files.set('done', state)
+  await clock.advance(5000)
+  await clock.advance(3_600_000)
+
+  expect(await shown($, /elapsed/)).toEqual(every('0h 2m elapsed'))
+})
+
+test('an agent that finished before the pane opened shows its final figures', async ($, on) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  await complete($, usage(10, 20, 30, 40), parser)
+  await clock.settle()
+
+  expect(await shown($, /Map the parser/)).toEqual(every('Map the parser · claude-haiku-5-5 · finished · 100 tokens'))
+})
+
+test('/voyage without a pane gives the same tree, totals and elapsed time', async ($, on) => {
+  const { clock, seen, act } = world(on)
+  const { run } = act($)
+  seen.isPlaced = false
+  await $.session.start(START)
+  await clock.settle()
+  await run('build', '10')
+  const parser = await spawn($, 'Map the parser')
+  const lexer = await spawn($, 'Read the lexer', parser)
+  await complete($, usage(1, 2, 4, 8))
+  await complete($, usage(10, 20, 30, 40), parser)
+  await complete($, usage(1, 1, 1, 0), lexer)
+  await clock.advance(125_000)
+  const answer = (await run('voyage', '')).text.split('\n')
+
+  expect(answer).toContain('0h 2m elapsed')
+  expect(answer).toContain('118 tokens in all')
+  expect(answer.filter(one => one.includes(' · '))).toEqual([
+    'Map the parser · claude-haiku-5-5 · finished · 100 tokens',
+    '  Read the lexer · claude-haiku-5-5 · finished · 3 tokens',
+  ])
 })

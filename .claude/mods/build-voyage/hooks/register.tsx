@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
-import type { Build, Check, Launch, Stale } from '../types'
+import type { Agent, Build, Check, Launch, Run, Stale } from '../types'
 
 // Reads what the build skill's hook keeps in .claude/build/ and draws it.
 const PANE = 'build-voyage'
@@ -24,6 +24,8 @@ const build = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as B
 const launch = atom({ plugin: 'build-voyage', key: 'launch' } as const, null as Launch | null, { shape: 'launch-1' })
 
 const stale = atom({ plugin: 'build-voyage', key: 'stale' } as const, null as Stale | null, { shape: 'stale-1' })
+
+const run = atom({ plugin: 'build-voyage', key: 'run' } as const, null as Run | null, { shape: 'run-1' })
 
 const field = (text: string, name: string): string =>
   text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
@@ -75,8 +77,19 @@ type Row = {
   bar?: { value: number; max: number }
 }
 
+const tree = (agents: Agent[], parentId?: string, depth = 0): Row[] =>
+  agents
+    .filter(agent => agent.parentId === parentId)
+    .flatMap(agent => [
+      {
+        text: `${'  '.repeat(depth)}${agent.description} · ${agent.model} · ${agent.isRunning ? 'running' : 'finished'} · ${agent.tokens} tokens`,
+        color: 'text' as const,
+      },
+      ...tree(agents, agent.id, depth + 1),
+    ])
+
 // Pane lines in groups; the text answer is the same lines.
-const rows = (one: Build | null): Row[][] => {
+const rows = (one: Build | null, tally: Run | null): Row[][] => {
   if (one === null) {
     return [
       [
@@ -129,12 +142,27 @@ const rows = (one: Build | null): Row[][] => {
         bar: { value: one.refusals, max: CAP },
       },
     ],
+    ...(tally === null
+      ? []
+      : [
+          [
+            {
+              text: `${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m elapsed`,
+              color: 'suggestion' as const,
+            },
+            {
+              text: `${tally.agents.reduce((sum, agent) => sum + agent.tokens, tally.mainTokens)} tokens in all`,
+              color: 'text' as const,
+            },
+            ...tree(tally.agents),
+          ],
+        ]),
     ...(one.pr === '' ? [] : [[{ text: one.pr, color: 'success' as const }]]),
   ]
 }
 
-const describe = (one: Build | null): string =>
-  rows(one)
+const describe = (one: Build | null, tally: Run | null): string =>
+  rows(one, tally)
     .flat()
     .map(row => row.text)
     .join('\n')
@@ -192,6 +220,11 @@ const look = async ($: EngineInterface): Promise<boolean> => {
     timer.cancel()
     timer = undefined
   }
+  const now = await $.clock.now()
+
+  await update($, run, one =>
+    one === null || !one.isOpen ? one : { ...one, elapsedMs: now - one.startedMs, isOpen: isRunning },
+  )
   const before = await read($, build)
 
   if (JSON.stringify(before) !== JSON.stringify(next)) {
@@ -224,7 +257,9 @@ const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => 
 }
 
 const answer = async ($: EngineInterface, opened: UiOpenResult): Promise<string> =>
-  opened.isPlaced ? 'Build pane opened.' : `${describe(await read($, build))}\n\nNo pane here: ${opened.reason}`
+  opened.isPlaced
+    ? 'Build pane opened.'
+    : `${describe(await read($, build), await read($, run))}\n\nNo pane here: ${opened.reason}`
 
 const stateNow = async ($: EngineInterface): Promise<string> => (await reader($))('state')
 
@@ -272,12 +307,63 @@ export const register: Register = on => {
       const state = await stateNow($)
       await update($, stale, () => null)
       await update($, launch, () => ({ issue: number === undefined ? '' : String(Number(number)), state }))
+      const startedMs = await $.clock.now()
+      await update($, run, () => ({ startedMs, elapsedMs: 0, isOpen: true, mainTokens: 0, agents: [] }))
     })
     const opened = await open($)
 
     if (!opened.isPlaced) {
       $.ui.log(await answer($, opened))
     }
+
+    return next(e)
+  }).catch((_, e, next) => next(e))
+
+  on('agent.spawn', async ($, e, next) => {
+    const result = await next(e)
+    const id = result.agentId
+
+    if (id !== undefined) {
+      const agent: Agent = { id, description: e.description, model: result.model, isRunning: true, tokens: 0 }
+      await update($, run, one =>
+        one?.isOpen === true && (e.parentAgentId === undefined || one.agents.some(each => each.id === e.parentAgentId))
+          ? { ...one, agents: [...one.agents, e.parentAgentId === undefined ? agent : { ...agent, parentId: e.parentAgentId }] }
+          : one,
+      )
+    }
+
+    return result
+  }).catch((_, e, next) => next(e))
+
+  on('turn.start', async ($, e, next) => {
+    const id = e.agentId
+
+    await update($, run, one =>
+      one?.isOpen === true && one.agents.some(agent => agent.id === id)
+        ? { ...one, agents: one.agents.map(agent => (agent.id === id ? { ...agent, isRunning: true } : agent)) }
+        : one,
+    )
+
+    return next(e)
+  }).catch((_, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    const id = e.agentId
+    const u = e.usage
+    const used = u === undefined ? 0 : u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+
+    await update($, run, one =>
+      one === null || !one.isOpen
+        ? one
+        : id === undefined
+          ? { ...one, mainTokens: one.mainTokens + used }
+          : {
+              ...one,
+              agents: one.agents.map(agent =>
+                agent.id === id ? { ...agent, isRunning: false, tokens: agent.tokens + used } : agent,
+              ),
+            },
+    )
 
     return next(e)
   }).catch((_, e, next) => next(e))
@@ -294,7 +380,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {rows(await read($, build)).map(group => (
+        {rows(await read($, build), await read($, run)).map(group => (
           <Box flexDirection="column">
             {group.flatMap(row => {
               const filled = row.bar === undefined ? 0 : Math.round((Math.min(row.bar.max, Math.max(0, row.bar.value)) / row.bar.max) * width)
