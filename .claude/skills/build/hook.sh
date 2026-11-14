@@ -1,9 +1,9 @@
 #!/bin/sh
 # Hooks for the build skill. Usage: hook.sh stop|tool|check
-# stop: refuse to stop until every check has passed on the current files and a PR is recorded.
+# stop: refuse until every check passes on the current files, a PR is recorded and its CI is green.
 #       Gives way once after 30 refusals with no check run in between.
 # tool: refuse tool calls after 24 hours without the user.
-# check: run every check and record the results. Only this mode runs commands.
+# check: run every check and record the results. Only this mode runs the state file's commands.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -116,6 +116,23 @@ grep -qxF "tree $(tree)" "$results" || refuse "files changed since the checks ra
 if ! grep -q '^pr: .' "$state"; then
   refuse "checks pass; open the pull request and add 'pr: <url>' to $state"
 fi
+
+pr=$(sed -n 's/^pr: //p' "$state" | head -n 1)
+err=$(mktemp "$dir/gh.XXXXXX")
+code=0
+buckets=$(gh pr checks "$pr" --json bucket --jq '.[].bucket' 2>"$err") || code=$?
+msg=$(cat "$err")
+rm -f "$err"
+if [ "$code" -ne 0 ] && [ -z "$buckets" ]; then
+  case $msg in
+    *'no checks reported'*) ;;
+    *) refuse "gh failed: $msg" ;;
+  esac
+fi
+case $buckets in
+  *fail* | *cancel*) refuse "CI failing on $pr; read the log, fix the cause, push, then follow the new run" ;;
+  *pending*) refuse "CI pending on $pr; wait with: gh pr checks $pr --watch" ;;
+esac
 
 cp "$state" "$done"
 rm -f "$count" "$clock"
