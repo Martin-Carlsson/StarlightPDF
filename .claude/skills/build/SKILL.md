@@ -14,9 +14,9 @@ hooks:
           command: sh "$CLAUDE_PROJECT_DIR/.claude/skills/build/hook.sh" tool
 ---
 
-Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the pull request is open.
+Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the pull request is open and its CI is green.
 
-A Stop hook sends you back unless every check has passed on the files as they are now. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
+A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`.
 2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds: a test only where the item needs one and `CLAUDE.md` calls for it, otherwise a direct command. Run each: it should fail now. Write `.claude/build/state`:
@@ -28,7 +28,7 @@ A Stop hook sends you back unless every check has passed on the files as they ar
    check: <command, run from the repository root>
    ```
 
-   Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`.
+   Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`, `ci`.
 
    Then create branch `<number>-<slug>`, at most 60 characters, from `origin/main`. If it already exists, check its pull request and commits; ask only if someone else may be working on it.
 
@@ -41,6 +41,7 @@ A Stop hook sends you back unless every check has passed on the files as they ar
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report.
 4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Then add `pr: <url>` to the state file.
+5. **Follow CI.** Set `phase: ci` and run `gh pr checks <url> --watch`. If a CI check fails, read `gh run view --log-failed`, fix the cause, run the checks, push and follow the new run.
 
 ## Rules
 
@@ -48,5 +49,5 @@ A Stop hook sends you back unless every check has passed on the files as they ar
 - **Questions.** Ask only for a fact you cannot find in the repository, its issues or its pull requests, or a choice that is hard to reverse, surprising without context and a real trade-off. Make every other choice yourself. Recommend an answer to every question, multi-select included. Before you ask, look up again every fact the question depends on.
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
-- **Ask, don't loop.** If you must ask, or a check has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
+- **Ask, don't loop.** If you must ask, or a check, or the same CI check, has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
 - **Cancelled.** If the user cancels the build, delete `.claude/build/state`.

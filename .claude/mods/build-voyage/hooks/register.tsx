@@ -15,6 +15,7 @@ const PHASES = [
   { phase: 'implement', name: 'Implement', status: 'Changing the code until every check passes.' },
   { phase: 'review', name: 'Review', status: 'Reviewing the diff against the issue.' },
   { phase: 'pr', name: 'Pull request', status: 'Opening the pull request.' },
+  { phase: 'ci', name: 'CI', status: 'Waiting for CI to pass.' },
 ]
 
 const build = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Build | null, {
@@ -102,7 +103,7 @@ const rows = (one: Build | null, tally: Run | null): Row[][] => {
   const passed = one.checks.filter(check => check.result === 'pass').length
   const left = one.minutesLeft
   const status = one.isDone
-    ? 'Pull request open.'
+    ? 'CI passes; the pull request is ready to merge.'
     : one.isBlocked
       ? 'Waiting for your answer.'
       : (PHASES[at]?.status ?? 'Starting the build.')
