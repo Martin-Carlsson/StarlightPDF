@@ -172,6 +172,19 @@ StarlightPDF will be available as a dependency in:
 - 💤 **Deployment:** zero dependencies, cross-platform, WebAssembly, command-line tool
 - 💤 **Robustness:** tolerance of malformed files, safe handling of untrusted input
 
+## Working with Claude Code
+
+| Command | What it does |
+| --- | --- |
+| `/issue <description>` | Drafts a bug or feature issue. |
+| `/build <issue number>` | Builds the issue and opens a pull request. |
+
+Optional progress pane for `/build`:
+
+```
+claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
+```
+
 ## Contributing
 
 StarlightPDF is just getting started, and contributions are welcome. Open an issue to discuss a feature from the list above before starting work on it, so effort isn't duplicated.

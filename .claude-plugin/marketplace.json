@@ -1,0 +1,13 @@
+{
+  "name": "starlightpdf",
+  "description": "Claude Code mods for working on StarlightPDF.",
+  "owner": {
+    "name": "StarlightPDF"
+  },
+  "plugins": [
+    {
+      "name": "build-voyage",
+      "source": "./.claude/mods/build-voyage"
+    }
+  ]
+}
