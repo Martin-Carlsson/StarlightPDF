@@ -8,20 +8,12 @@
 
 ## GLOSSARY.md
 
-One root `GLOSSARY.md`.
-
 ```md
-# StarlightPDF
-
-{One or two sentences on what this project is.}
-
-## Language
-
 **Term**:
 {One or two sentences on what it is.}
 _Avoid_: {rejected synonyms}
 ```
 
-- One preferred term per concept; alternatives go under `_Avoid_`.
-- Project-specific terms only, no general programming concepts.
+- One term per concept.
+- Project-specific terms only.
 - Group related terms under subheadings.
