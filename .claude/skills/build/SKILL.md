@@ -35,14 +35,14 @@ A Stop hook sends you back unless every check has passed on the files as they ar
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
    - **Test:** one subagent per item writes the failing test from the issue and the spec, never from the implementation.
    - **Implement:** a different subagent per item makes it pass. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
-   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. Delegate the fixes and review again until clean.
+   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It asks for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report.
 4. **Open the pull request** once every check passes and the review is clean: commit, push, fill in `.github/pull_request_template.md`, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Then add `pr: <url>` to the state file.
 
 ## Rules
 
-- **Decisions in the issue are constraints.** Record each in `.architecture-decisions/`. If one does not work, ask; never deviate.
+- **Decisions in the issue are constraints.** Record one in `.architecture-decisions/` only if it is hard to reverse, surprising without context and a real trade-off; follow the rest without recording them. If one does not work, ask; never deviate.
 - **Never make a hard-to-reverse decision yourself.** If the work forces one the issue does not cover, ask.
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
