@@ -204,8 +204,12 @@ claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
 
 StarlightPDF is just getting started, and contributions are welcome. Open an issue to discuss a feature from the list above before starting work on it, so effort isn't duplicated.
 
-## License
+## Legal
+
+### License
 
 StarlightPDF is released under the [Apache License 2.0](LICENSE). You can use it in open-source and closed-source projects, including commercial products.
 
-The logo is [Noto Emoji](https://github.com/googlefonts/noto-emoji)'s 🌟, Copyright 2013 Google, Inc., under the Apache License 2.0.
+### Governing law and venue
+
+Danish law. Copenhagen City Court.
