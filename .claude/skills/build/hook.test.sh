@@ -10,7 +10,10 @@ proj="$tmp/proj"
 export CLAUDE_PROJECT_DIR="$proj"
 
 # Stub gh: logs its args to gh.log. Answers issue N's blocked_by
-# query with gh.blocked.N (none if absent); else prints gh.out
+# query with gh.blocked.N (none if absent); the pull request's head,
+# labels and body with gh.head, gh.labels and gh.body; its checks with
+# gh.checks ("NAME BUCKET LINK" lines); a merge with gh.merge.err and
+# exit gh.merge.code (default 0); an edit with nothing. Else prints gh.out
 # (default pass), exits gh.code (default 0), writes gh.err to stderr.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'END'
@@ -24,6 +27,28 @@ case "$*" in
     cat "$t/gh.blocked.${n%%/*}" 2>/dev/null
     exit 0
     ;;
+  'pr view '*' --json headRefOid,labels,body '*)
+    cat "$t/gh.head"
+    sed 's/^/label: /' "$t/gh.labels"
+    echo body:
+    exec cat "$t/gh.body"
+    ;;
+  'pr checks '*' --json name,bucket,link '*)
+    if [ ! -s "$t/gh.checks" ]; then
+      echo "no checks reported on the '81-x' branch" >&2
+      exit 1
+    fi
+    cat "$t/gh.checks"
+    if grep -Eq ' (fail|cancel) ' "$t/gh.checks"; then exit 1; fi
+    if grep -q ' pending ' "$t/gh.checks"; then exit 8; fi
+    exit 0
+    ;;
+  'pr edit '*) exit 0 ;;
+  'pr merge '*)
+    if [ -f "$t/gh.merge.err" ]; then cat "$t/gh.merge.err" >&2; fi
+    exit "$(cat "$t/gh.merge.code" 2>/dev/null || echo 0)"
+    ;;
+  *) ;;
 esac
 if [ -f "$t/gh.err" ]; then cat "$t/gh.err" >&2; fi
 if [ -f "$t/gh.out" ]; then cat "$t/gh.out"; else echo pass; fi
@@ -124,25 +149,6 @@ run "missing pr refuses" 2 'pr:'
 reset 'status: working\ncheck: test -f marker\npr: https://example.test/1\ncomment: https://example.test/1#c\n'
 : >"$proj/marker"
 check "check: runs from the root" 0 'pass test -f marker'
-echo 0 >"$dir/refusals"
-run "all pass allows stop" 0 ''
-expect test ! -e "$clock"
-expect test ! -e "$dir/refusals"
-
-# A finished build stays on disk for the pane, and no longer holds anything back.
-expect cmp -s "$state" "$dir/done"
-expect grep -qx 'pass test -f marker' "$results"
-echo change >"$proj/file"
-run "finished build allows stop" 0 ''
-echo 0 >"$clock"
-mode=tool
-run "tool: finished build allows" 0 ''
-mode=stop
-
-# A new build's state differs from the finished one, so it is enforced again.
-rm -f "$clock"
-printf 'status: working\ncheck: true\n' >"$state"
-run "new build after a finished one refuses" 2 'hook.sh check'
 
 reset 'status: working\ncheck: true\npr: https://example.test/1\n'
 check "check: passes" 0 'pass true'
@@ -165,8 +171,8 @@ run "pending CI check refuses" 2 'pending'
 expect test ! -e "$dir/done"
 expect grep -qx 'pr checks https://example.test/1 --json bucket --jq .\[\].bucket' "$tmp/gh.log"
 gh_says 'pass\nskipping\n' 0 ''
-run "skipping CI check counts as green" 0 ''
-expect cmp -s "$state" "$dir/done"
+run "skipping CI check counts as green" 2 'hook.sh merge'
+expect test ! -e "$dir/done"
 
 reset "$pr_state"
 check "check: passes" 0 'pass true'
@@ -180,8 +186,8 @@ expect test ! -e "$dir/done"
 reset "$commented"
 check "check: passes" 0 'pass true'
 gh_says '' 1 "no checks reported on the 'main' branch\n"
-run "no CI checks allows stop" 0 ''
-expect cmp -s "$state" "$dir/done"
+run "no CI checks counts as green" 2 'hook.sh merge'
+expect test ! -e "$dir/done"
 
 reset "$pr_state"
 check "check: passes" 0 'pass true'
@@ -193,8 +199,8 @@ expect test ! -e "$dir/done"
 reset "$commented"
 check "check: passes" 0 'pass true'
 gh_says 'pass\n' 0 'warning: 1 check failed to load\n'
-run "gh warning on stderr allows stop" 0 ''
-expect cmp -s "$state" "$dir/done"
+run "gh warning on stderr counts as green" 2 'hook.sh merge'
+expect test ! -e "$dir/done"
 
 # Stop: the ideas and retro comment must be recorded once CI is green.
 reset "$pr_state"
@@ -205,8 +211,8 @@ gh_says 'pass\n' 0 ''
 run "green CI without a comment refuses" 2 'comment:'
 expect test ! -e "$dir/done"
 echo 'comment: https://example.test/1#c' >>"$state"
-run "green CI with a comment allows stop" 0 ''
-expect cmp -s "$state" "$dir/done"
+run "green CI with a comment asks for the merge" 2 'hook.sh merge'
+expect test ! -e "$dir/done"
 
 # gh is not asked before a pr is recorded.
 reset 'status: working\ncheck: true\n'
@@ -600,6 +606,284 @@ gh_says 'false\n' 0 ''
 blocked 40 '11 closed' '12 closed'
 start_is "start: closed blockers builds" 0 40 \
   'grep -q "issues/40/dependencies/blocked_by" "$tmp/gh.log"'
+
+# Merge: the build's pull request, on an origin of its own.
+url=https://example.test/1
+commit() {
+  git -C "$proj" add -A
+  git -C "$proj" -c user.name=t -c user.email=t@t commit -qm "$1"
+}
+# pr_base: origin main holds README.md, core/tests/a.rs, tests/b.txt and an empty tests/e; branch 81-x starts from it.
+pr_base() {
+  reset "status: working\ncheck: true\npr: $url\ncomment: $url#c\n"
+  mkdir -p "$proj/core/tests" "$proj/tests"
+  printf 'a\nb\n' >"$proj/core/tests/a.rs"
+  printf 'a\nb\n' >"$proj/tests/b.txt"
+  : >"$proj/tests/e"
+  echo base >"$proj/README.md"
+  commit base
+  rm -rf "$tmp/pr.git" "$tmp/other"
+  git init -q --bare -b main "$tmp/pr.git"
+  git -C "$proj" remote set-url origin "$tmp/pr.git"
+  git -C "$proj" push -q origin HEAD:main
+  git -C "$proj" fetch -q origin main
+  git -C "$proj" checkout -q -b 81-x
+}
+# pr_ready: commit and push the branch, run the checks, and give its head green ci, a clean body and a safe verdict.
+pr_ready() {
+  commit change-subject
+  git -C "$proj" push -q -u origin 81-x
+  sh "$hook" check >/dev/null 2>&1 || true
+  head=$(git -C "$proj" rev-parse HEAD)
+  echo "$head" >"$tmp/gh.head"
+  echo 'ci pass https://example.test/runs/7' >"$tmp/gh.checks"
+  echo feature >"$tmp/gh.labels"
+  printf '%s\r\n' '## Merge impact' '' '- **API:** none' '- **Dependencies:** none' '- **Affects:** docs' >"$tmp/gh.body"
+  echo "verdict: safe $head docs-only-reason" >>"$state"
+}
+# pr_docs: a ready pull request that changes README.md only.
+pr_docs() {
+  pr_base
+  echo more >>"$proj/README.md"
+  pr_ready
+}
+# merge_runs: run the merge command on a fresh gh log; sets code.
+merge_runs() {
+  rm -f "$tmp/gh.log"
+  code=0
+  sh "$hook" merge </dev/null >"$tmp/out" 2>&1 || code=$?
+}
+# calls: the label and merge calls in the gh log, in order.
+calls() {
+  awk '/--add-label auto-merged/ { printf "add " } /^pr merge / { printf "merge " } /--remove-label auto-merged/ { printf "remove " }' "$tmp/gh.log" 2>/dev/null || true
+}
+# merges: good=0 unless the merge command exits 0, labelling and then squash-merging exactly the head.
+merges() {
+  merge_runs
+  if [ "$code" -ne 0 ] || [ "$(calls)" != 'add merge ' ] ||
+    ! grep -q "^pr merge .*--squash" "$tmp/gh.log" ||
+    ! grep -q "^pr merge .*--match-head-commit $head" "$tmp/gh.log"; then
+    good=0
+  fi
+}
+# stops CONDITION: good=0 unless the merge command exits non-zero, naming CONDITION, with no label or merge call.
+stops() {
+  merge_runs
+  if [ "$code" -eq 0 ] || [ -n "$(calls)" ] || ! grep -q "^$1: " "$tmp/out"; then good=0; fi
+}
+# unset_verdict: drop the state's verdict lines.
+unset_verdict() {
+  grep -v '^verdict:' "$state" >"$tmp/state" || true
+  mv "$tmp/state" "$state"
+}
+
+pr_docs
+good=1
+merges
+for want in "$url" README.md feature https://example.test/runs/7 "$(git -C "$proj" rev-parse --short=7 HEAD)" docs-only-reason; do
+  grep -qF -- "$want" "$tmp/out" || good=0
+done
+expect -n "merge merges when every condition holds" test "$good" -eq 1
+
+pr_base
+mkdir "$proj/ci"
+echo x >"$proj/ci/x"
+pr_ready
+unset_verdict
+good=1
+stops paths
+grep -q '^verdict: ' "$tmp/out" || good=0
+expect -n "merge refuses when a condition fails" test "$good" -eq 1
+
+pr_docs
+echo 1 >"$tmp/gh.merge.code"
+echo 'GraphQL: Head branch was modified. Review and try the merge again.' >"$tmp/gh.merge.err"
+good=1
+merge_runs
+[ "$code" -ne 0 ] || good=0
+[ "$(calls)" = 'add merge remove ' ] || good=0
+grep -qF 'Head branch was modified' "$tmp/out" || good=0
+expect -n "merge removes the label when GitHub refuses" test "$good" -eq 1
+
+# Paths: README.md, GLOSSARY.md, core/, bindings/ and tests/ only, no .toml.
+good=1
+for p in .claude/x ci/x core/Cargo.toml; do
+  pr_base
+  mkdir -p "$proj/$(dirname "$p")"
+  echo x >"$proj/$p"
+  pr_ready
+  stops paths
+done
+pr_base
+mkdir -p "$proj/core/src" "$proj/bindings/py"
+for p in README.md GLOSSARY.md core/src/x.rs bindings/py/x.py tests/new.txt; do echo x >>"$proj/$p"; done
+pr_ready
+merges
+expect -n "merge condition paths" test "$good" -eq 1
+
+# Tests: no file main has under a tests/ directory is deleted, renamed or loses a line.
+good=1
+for change in 'rm tests/e' 'mv tests/b.txt tests/c.txt' 'echo a >core/tests/a.rs'; do
+  pr_base
+  (cd "$proj" && eval "$change")
+  pr_ready
+  stops tests
+done
+pr_base
+echo c >>"$proj/core/tests/a.rs"
+echo c >>"$proj/tests/b.txt"
+pr_ready
+merges
+expect -n "merge condition tests" test "$good" -eq 1
+
+# API and dependencies: no such label, and the body's exact none lines.
+pr_docs
+good=1
+for l in api-additive api-breaking adds-dependency; do
+  printf 'feature\n%s\n' "$l" >"$tmp/gh.labels"
+  stops "api and dependencies"
+done
+echo feature >"$tmp/gh.labels"
+cp "$tmp/gh.body" "$tmp/body"
+sed 's/^- \*\*API:\*\* none/- **API:** additive/' "$tmp/body" >"$tmp/gh.body"
+stops "api and dependencies"
+sed 's/^- \*\*Dependencies:\*\* none/- **Dependencies:** none yet/' "$tmp/body" >"$tmp/gh.body"
+stops "api and dependencies"
+expect -n "merge condition api and dependencies" test "$good" -eq 1
+
+# CI: the ci check passed on the head commit.
+pr_docs
+good=1
+for checks in 'ci pending https://example.test/runs/7' 'ci pass https://example.test/runs/7
+ci fail https://example.test/runs/7' \
+  'ci cancel https://example.test/runs/7' 'mods pass https://example.test/runs/8' ''; do
+  printf '%s' "$checks" >"$tmp/gh.checks"
+  stops ci
+done
+expect -n "merge condition ci" test "$good" -eq 1
+
+# Up to date: main moves on origin after the checks; the command fetches it.
+pr_docs
+more=$(git -C "$tmp/pr.git" -c user.name=t -c user.email=t@t commit-tree -m more -p main 'main^{tree}')
+git -C "$tmp/pr.git" update-ref refs/heads/main "$more"
+good=1
+stops "up to date"
+expect -n "merge condition up to date" test "$good" -eq 1
+
+# Head: the last check run passed on exactly the head commit's files.
+good=1
+pr_docs
+echo 'check: false' >>"$state"
+sh "$hook" check >/dev/null 2>&1 || true
+stops head
+# Checked with a file the head lacks, then the file removed.
+pr_docs
+echo x >"$proj/core/extra.rs"
+sh "$hook" check >/dev/null 2>&1 || true
+rm "$proj/core/extra.rs"
+stops head
+# Uncommitted.
+pr_docs
+echo dirty >>"$proj/README.md"
+stops head
+# Unpushed: checked and committed locally, the pull request still on the old head.
+pr_docs
+echo local >>"$proj/README.md"
+commit local
+sh "$hook" check >/dev/null 2>&1 || true
+stops head
+# Foreign: someone else pushed to the branch.
+pr_docs
+git clone -q -b 81-x "$tmp/pr.git" "$tmp/other"
+echo foreign >>"$tmp/other/README.md"
+git -C "$tmp/other" -c user.name=t -c user.email=t@t commit -qam foreign
+git -C "$tmp/other" push -q origin 81-x
+foreign=$(git -C "$tmp/other" rev-parse HEAD)
+echo "$foreign" >"$tmp/gh.head"
+echo "verdict: safe $foreign foreign-reason" >>"$state"
+stops head
+expect -n "merge condition head" test "$good" -eq 1
+
+# Verdict: safe, for the head commit.
+pr_docs
+good=1
+unset_verdict
+stops verdict
+echo "verdict: unsafe $head doubt" >>"$state"
+stops verdict
+unset_verdict
+echo "verdict: safe $(git -C "$proj" rev-parse origin/main) other-commit" >>"$state"
+stops verdict
+expect -n "merge condition verdict" test "$good" -eq 1
+
+# Stop: once CI is green and the comment recorded, the merge command must have run on the current head.
+# stop_says WANT PATTERN: good=0 unless stop exits WANT with output matching PATTERN.
+stop_says() {
+  code=0
+  echo >"$tmp/out"
+  sh "$hook" stop </dev/null >>"$tmp/out" 2>&1 || code=$?
+  if [ "$code" -ne "$1" ] || ! grep -q "$2" "$tmp/out"; then good=0; fi
+}
+good=1
+pr_docs
+git -C "$proj" remote set-url origin "$tmp/none.git"
+merge_runs
+stop_says 2 'hook.sh merge'
+pr_docs
+unset_verdict
+echo "verdict: unsafe $head doubt" >>"$state"
+stop_says 2 'hook.sh merge'
+merge_runs
+[ "$code" -ne 0 ] || good=0
+echo again >>"$proj/README.md"
+commit again
+git -C "$proj" push -q origin 81-x
+sh "$hook" check >/dev/null 2>&1 || true
+git -C "$proj" rev-parse HEAD >"$tmp/gh.head"
+stop_says 2 'hook.sh merge'
+merge_runs
+[ "$code" -ne 0 ] || good=0
+stop_says 0 ''
+pr_docs
+merges
+echo 0 >"$dir/refusals"
+stop_says 0 ''
+expect -n "stop waits for merge on head" test "$good" -eq 1
+expect test ! -e "$clock"
+expect test ! -e "$dir/refusals"
+
+# A finished build stays on disk for the pane, and no longer holds anything back.
+expect cmp -s "$state" "$dir/done"
+expect grep -qx 'pass true' "$results"
+echo change >"$proj/file"
+run "finished build allows stop" 0 ''
+echo 0 >"$clock"
+mode=tool
+run "tool: finished build allows" 0 ''
+mode=stop
+
+# A new build's state differs from the finished one, so it is enforced again.
+rm -f "$clock"
+printf 'status: working\ncheck: true\n' >"$state"
+run "new build after a finished one refuses" 2 'hook.sh check'
+
+# Tool: during a build, only the merge command merges.
+# tool_says WANT PATTERN TOOL INPUT_FIELDS: good=0 unless the tool hook exits WANT with output matching PATTERN.
+tool_says() {
+  code=0
+  echo >"$tmp/out"
+  printf '{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":{%s}}' "$3" "$4" |
+    sh "$hook" tool >>"$tmp/out" 2>&1 || code=$?
+  if [ "$code" -ne "$1" ] || ! grep -q "$2" "$tmp/out"; then good=0; fi
+}
+good=1
+reset 'status: working\ncheck: true\n'
+tool_says 2 'hook.sh merge' Bash "\"command\":\"gh pr merge $url --squash\""
+tool_says 0 '' Bash '"command":"sh .claude/skills/build/hook.sh merge"'
+tool_says 0 '' Write '"file_path":"x.md","content":"never gh pr merge"'
+reset
+tool_says 0 '' Bash "\"command\":\"gh pr merge $url --squash\""
+expect -n "tool refuses gh pr merge" test "$good" -eq 1
 
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"

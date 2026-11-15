@@ -1,6 +1,6 @@
 ---
 name: build
-description: Build a GitHub issue until its definition of done is met, then open a pull request.
+description: Build a GitHub issue until its definition of done is met, then open a pull request and merge it if safe.
 argument-hint: [issue number]
 disable-model-invocation: true
 hooks:
@@ -14,9 +14,9 @@ hooks:
           command: sh "$CLAUDE_PROJECT_DIR/.claude/skills/build/hook.sh" tool
 ---
 
-Build issue $ARGUMENTS. With a number, first run `sh .claude/skills/build/hook.sh start <number>`: on exit 3, ask whether to build it anyway, since another build may be working on it (recommend no), and stop on no. With no number, run `sh .claude/skills/build/hook.sh next` and build the issue it prints. If either exits otherwise non-zero, say so and stop. Do not stop until its Definition of done is met and the pull request is open, its CI is green and the retro comment is posted.
+Build issue $ARGUMENTS. With a number, first run `sh .claude/skills/build/hook.sh start <number>`: on exit 3, ask whether to build it anyway, since another build may be working on it (recommend no), and stop on no. With no number, run `sh .claude/skills/build/hook.sh next` and build the issue it prints. If either exits otherwise non-zero, say so and stop. Do not stop until its Definition of done is met and the pull request is open, its CI is green, the retro comment is posted and the merge command has run.
 
-A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green and its retro comment is recorded; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
+A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green, its retro comment is recorded and the merge command has run on its head commit; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`. Run `gh issue edit <number> --add-label building`.
 2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds, and can do so while the build runs (the issue is labelled `building`): a test only where the item needs one and `CLAUDE.md` calls for it, otherwise a direct command. Write `.claude/build/state`:
@@ -46,13 +46,16 @@ A Stop hook sends you back unless every check passes on the current files and th
    While a subagent runs, end your turn and never poll: the Stop hook lets a stop through.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report. It names each failing check; a subagent reruns it and fixes the cause.
-4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `adds-dependency` if it adds one. Then add `pr: <url>` to the state file.
+4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its API and Dependencies lines included, which read exactly `- **API:** none` and `- **Dependencies:** none` when there is none, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `adds-dependency` if it adds one. Then add `pr: <url>` to the state file.
 5. **Follow CI.** Set `phase: ci` and run `gh pr checks <url> --watch`. If a CI check fails, a subagent reads its log (`gh run view --log-failed`), fixes the cause and pushes; follow the new run.
 6. **Retro.** Once CI is green, set `phase: retro`. This step changes no file but the state file and pushes no commit. Post one comment on the pull request with `gh pr comment`, then add `comment: <url>` to the state file. Its sections:
    - `Ideas for future issues`: what the build's agents came across outside the issue: a bug, a missing test, a simplification or a feature. Each is one line that states the outcome, ready to pass to `/issue`, and names what prompted it. Leave out an idea that an open issue already covers (check with `gh issue list`).
    - `Retro`: suggested changes to the agents' environment (skills, `CLAUDE.md`, checks, hooks, tools), never to the product, most severe first. Each names what happened in this build that prompted it, and is one of: navigation (something took long to find), automated check (a mistake a check could have caught; suggest it as a check, never as an instruction), review (a mistake the review missed), steering (an instruction that changed nothing, or belongs in a check), tool economy (an expensive tool call), information access (a fact the agents could not get).
 
    A section with nothing to report reads `Nothing.`
+7. **Merge.** A subagent that took no part in the build reads the diff, the issue and the pull request body and answers `safe` or `unsafe` with one reason: `unsafe` when in doubt, and always when the body says a check was changed, an item is verifiable only after merge or `Not done` is not `Nothing.` Add `verdict: safe|unsafe <sha> <reason>` to the state file, `<sha>` from `git rev-parse HEAD`, and run `sh .claude/skills/build/hook.sh merge`. If the branch is behind `main`, merge `origin/main` into it, run `sh .claude/skills/build/hook.sh check`, push, follow CI and ask for the verdict again, at most three times. Never otherwise change the pull request to make a condition hold.
+
+   Your last message to the user says whether the pull request was merged and repeats the command's lines: after a merge, what each condition found; otherwise, each failed condition.
 
 ## Rules
 

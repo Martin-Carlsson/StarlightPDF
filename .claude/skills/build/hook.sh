@@ -1,12 +1,13 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check|next|start N
-# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|next|start N|merge
+# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
-# tool: refuse tool calls after 24 hours without the user.
+# tool: refuse tool calls after 24 hours without the user, and Bash calls running gh pr merge.
 # check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
 # next: print the lowest open build-ready issue not building and blocked by no open issue; exit 1 if none.
 # start N: exit 1 naming N's open blockers; else 3 if N is building and the state does not name it.
+# merge: label and squash-merge the PR if every condition holds; else name each failed one and exit 1.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -17,9 +18,11 @@ results=$dir/results
 clock=$dir/started
 done=$dir/done
 lock=$dir/lock
+merged=$dir/merged
 cap=30
 limit=86400
 again='run: sh .claude/skills/build/hook.sh check'
+merge='sh .claude/skills/build/hook.sh merge'
 
 # A hash of the working tree: every file git does not ignore.
 tree() {
@@ -36,6 +39,16 @@ mods_changed() {
   base=$(git merge-base HEAD origin/main 2>/dev/null) &&
     base=$(git rev-parse --verify -q "$base:.claude/mods" 2>/dev/null) || base=
   [ "$now" != "$base" ]
+}
+
+# Print the first check not passing in the last run, the type-check (no check: line) included; false if none.
+failing() {
+  {
+    sed -n 's/^check: //p' "$state" | while IFS= read -r cmd; do
+      grep -qxF "pass $cmd" "$results" 2>/dev/null || printf '%s\n' "$cmd"
+    done
+    sed -n 's/^fail //p' "$results" 2>/dev/null || true
+  } | head -n 1 | grep .
 }
 
 # True if the limit has passed. Starts the clock if it is not running.
@@ -98,6 +111,98 @@ if [ "$1" = next ]; then
   done
   echo 'build: no open build-ready issue is unblocked and not building' >&2
   exit 1
+fi
+
+if [ "$1" = merge ]; then
+  pr=$(sed -n 's/^pr: //p' "$state" 2>/dev/null | head -n 1)
+  if [ -z "$pr" ]; then
+    echo "build: no pr: line in $state" >&2
+    exit 1
+  fi
+  if ! git fetch -q origin main </dev/null; then
+    echo 'build: git fetch origin main failed; nothing merged' >&2
+    exit 1
+  fi
+  git rev-parse HEAD >"$merged"
+  found=
+  failed=
+  # ok|no CONDITION TEXT: record one line for the condition.
+  ok() { found="$found$1: $(printf '%s' "$2" | tr '\n' ' ')
+"; }
+  no() { failed="$failed$1: $(printf '%s' "$2" | tr '\n' ' ')
+"; }
+  view=$(gh pr view "$pr" --json headRefOid,labels,body \
+    --jq '.headRefOid, (.labels[] | "label: \(.name)"), "body:", .body') || view=
+  head=$(printf '%s\n' "$view" | sed -n 1p)
+  labels=$(printf '%s\n' "$view" | awk 'NR > 1 && /^body:$/ { exit } NR > 1 { sub(/^label: /, ""); print }')
+  body=$(printf '%s\n' "$view" | awk 'b; /^body:$/ { b = 1 }' | tr -d '\r')
+  short=$(git rev-parse --short=7 HEAD)
+  base=origin/main...HEAD
+
+  paths=$(git diff --name-only --no-renames "$base")
+  bad=$(printf '%s\n' "$paths" | awk '/\.toml$/ || !/^(README\.md|GLOSSARY\.md|(core|bindings|tests)\/.*)?$/')
+  if [ -n "$bad" ]; then no paths "not allowed: $bad"; else ok paths "$paths"; fi
+
+  t=':(glob)**/tests/**'
+  lost=$({
+    git diff --name-only --no-renames --diff-filter=D "$base" -- "$t"
+    git diff --numstat --no-renames --diff-filter=a "$base" -- "$t" | awk -F '\t' '$2 != 0 { print $3 }'
+  } | sort -u)
+  if [ -n "$lost" ]; then no tests "deleted, renamed or losing lines: $lost"; else ok tests 'no file under tests/ deleted, renamed or losing a line'; fi
+
+  api='- **API:** none'
+  deps='- **Dependencies:** none'
+  if [ -z "$view" ]; then
+    no 'api and dependencies' 'gh pr view failed'
+  elif printf '%s\n' "$labels" | grep -Eqx 'api-additive|api-breaking|adds-dependency'; then
+    no 'api and dependencies' "labels: $labels"
+  elif ! printf '%s\n' "$body" | grep -qxF -- "$api" ||
+    ! printf '%s\n' "$body" | grep -qxF -- "$deps"; then
+    no 'api and dependencies' "body lacks '$api' or '$deps'"
+  else
+    ok 'api and dependencies' "labels: $labels; body: $api, $deps"
+  fi
+
+  ci=$(gh pr checks "$pr" --json name,bucket,link --jq '.[] | "\(.name) \(.bucket) \(.link)"' | grep '^ci ') || ci=
+  if [ -n "$ci" ] && ! printf '%s\n' "$ci" | grep -qv '^ci pass '; then ok ci "$ci"; else no ci "${ci:-no ci check}"; fi
+
+  if git merge-base --is-ancestor origin/main HEAD; then
+    ok 'up to date' "head $short contains main $(git rev-parse --short=7 origin/main)"
+  else
+    no 'up to date' "head $short lacks main $(git rev-parse --short=7 origin/main)"
+  fi
+
+  files=$(git rev-parse 'HEAD^{tree}')
+  why=
+  if f=$(failing); then
+    why="check not passing: $f"
+  elif ! grep -qxF "tree $files" "$results" 2>/dev/null; then
+    why='last check run was not on the files of the head commit'
+  elif [ "$(tree)" != "$files" ]; then
+    why='uncommitted changes'
+  elif [ "$(git rev-parse HEAD)" != "$head" ]; then
+    why="local head $short is not the pull request's head ${head:-unknown}"
+  fi
+  if [ -n "$why" ]; then no head "$why"; else ok head "checks passed on the files of $short"; fi
+
+  v=$(grep '^verdict: ' "$state" | tail -n 1)
+  case $v in
+    "verdict: safe $head "?*) ok verdict "${v#"verdict: safe $head "}" ;;
+    *) no verdict "no safe verdict for ${head:-the head}${v:+; last: $v}" ;;
+  esac
+
+  if [ -n "$failed" ]; then
+    printf 'build: not merged\n%s' "$failed" >&2
+    exit 1
+  fi
+  gh pr edit "$pr" --add-label auto-merged >/dev/null
+  if ! gh pr merge "$pr" --squash --match-head-commit "$head"; then
+    gh pr edit "$pr" --remove-label auto-merged >/dev/null || true
+    echo 'build: GitHub refused the merge; label removed' >&2
+    exit 1
+  fi
+  printf 'merged %s\n%s' "$pr" "$found"
+  exit 0
 fi
 
 if [ "$1" = check ]; then
@@ -196,10 +301,22 @@ if expired; then
   exit 0
 fi
 
-[ "$1" = stop ] || exit 0
-
 input=
 [ -t 0 ] || input=$(cat | LC_ALL=C tr '\n' ' ')
+
+if [ "$1" = tool ]; then
+  case $input in
+    *'gh pr merge'*)
+      if printf '%s\n' "$input" | grep -Eq '"tool_name"[[:space:]]*:[[:space:]]*"Bash"'; then
+        echo "build: only the merge command merges during a build: $merge" >&2
+        exit 2
+      fi
+      ;;
+    *) ;;
+  esac
+  exit 0
+fi
+[ "$1" = stop ] || exit 0
 case $input in
   *'"background_tasks"'*)
     # Strings are paired first (control characters never occur raw in JSON), then
@@ -228,17 +345,7 @@ esac
 grep -q '^check: .' "$state" || refuse "no check: lines in $state"
 [ -f "$results" ] || refuse "the checks have not run; $again"
 
-while IFS= read -r cmd; do
-  grep -qxF "pass $cmd" "$results" || refuse "check not passing: $cmd; delegate the fix, then $again"
-done <<END
-$(sed -n 's/^check: //p' "$state")
-END
-
-# The type-check has no check: line.
-fails=$(sed -n 's/^fail //p' "$results")
-if [ -n "$fails" ]; then
-  refuse "check not passing: $(printf '%s' "$fails" | head -n 1); delegate the fix, then $again"
-fi
+if f=$(failing); then refuse "check not passing: $f; delegate the fix, then $again"; fi
 
 grep -qxF "tree $(tree)" "$results" || refuse "files changed since the checks ran; $again"
 
@@ -267,5 +374,9 @@ if ! grep -q '^comment: .' "$state"; then
   refuse "CI is green; post the ideas and retro comment on $pr and add 'comment: <url>' to $state"
 fi
 
+if [ ! -f "$merged" ] || [ "$(cat "$merged")" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+  refuse "comment recorded; run the merge command on the current head: $merge"
+fi
+
 cp "$state" "$done"
-rm -f "$count" "$clock"
+rm -f "$count" "$clock" "$merged"
