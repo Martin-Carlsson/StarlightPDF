@@ -5,6 +5,7 @@ set -eu
 hook="$(cd "$(dirname "$0")" && pwd)/hook.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+export TMPDIR="$tmp"
 proj="$tmp/proj"
 export CLAUDE_PROJECT_DIR="$proj"
 
@@ -340,6 +341,82 @@ good=1
 [ "$code" -ne 0 ] || good=0
 grep -qi fetch "$tmp/out" || good=0
 expect -n "check fails when the fetch fails" test "$good" -eq 1
+
+# Overlapping checks. block.sh logs its PID to b/runs, then waits for b/go.N, N its run number.
+cat >"$tmp/block.sh" <<'END'
+b=$(dirname "$0")/b
+echo "$$" >>"$b/runs"
+n=$(($(wc -l <"$b/runs")))
+w=0
+while [ ! -e "$b/go.$n" ] && [ "$w" -lt 100 ]; do
+  sleep 0.1
+  w=$((w + 1))
+done
+END
+# await COMMAND...: true once COMMAND is, polling for at most 10 seconds.
+await() {
+  w=0
+  until "$@"; do
+    [ "$w" -lt 100 ] || return 1
+    sleep 0.1
+    w=$((w + 1))
+  done
+}
+runs() { [ "$(wc -l <"$tmp/b/runs")" -ge "$1" ]; }
+# fresh: a blocking build with no runs yet.
+fresh() {
+  reset "status: working\ncheck: true\ncheck: sh $tmp/block.sh\n"
+  rm -rf "$tmp/b"
+  mkdir "$tmp/b"
+  : >"$tmp/b/runs"
+}
+# bg NAME: check in the background; output in b/NAME.out, exit code in b/NAME.code once it ends.
+bg() {
+  (
+    c=0
+    sh "$hook" check >"$tmp/b/$1.out" 2>&1 || c=$?
+    echo "$c" >"$tmp/b/$1.code"
+  ) &
+}
+
+fresh
+good=1
+bg a
+a=$!
+await runs 1 || good=0
+bg b
+b=$!
+await eval 'test -e "$tmp/b/b.code" || runs 2' || good=0
+sh "$hook" check >/dev/null 2>&1 && good=0
+: >"$tmp/b/go.1"
+wait "$a"
+: >"$tmp/b/go.2"
+wait "$b"
+[ "$(cat "$tmp/b/b.code")" -ne 0 ] || good=0
+grep -qi 'progress' "$tmp/b/b.out" || good=0
+[ "$(wc -l <"$tmp/b/runs")" -eq 1 ] || good=0
+expect -n "overlapping check refuses" test "$good" -eq 1
+printf 'pass true\npass sh %s/block.sh\n' "$tmp" >"$tmp/want"
+good=1
+[ "$(cat "$tmp/b/a.code")" -eq 0 ] || good=0
+cmp -s "$tmp/want" "$tmp/b/a.out" || good=0
+grep -v '^tree ' "$results" | cmp -s "$tmp/want" - || good=0
+[ "$(grep -c '^tree [0-9a-f]' "$results")" -eq 1 ] || good=0
+expect -n "overlapped check ends whole" test "$good" -eq 1
+
+fresh
+good=1
+sh "$hook" check >/dev/null 2>&1 &
+k=$!
+await runs 1 || good=0
+read -r self <"$tmp/b/runs" || true
+kill -9 "$k" "$self" 2>/dev/null || true
+wait "$k" 2>/dev/null || true
+: >"$tmp/b/go.2"
+code=0
+sh "$hook" check >/dev/null 2>&1 || code=$?
+[ "$code" -eq 0 ] || good=0
+expect -n "check after killed run goes ahead" test "$good" -eq 1
 
 # The cap counts refusals since the checks last ran.
 reset 'status: working\ncheck: false\n'

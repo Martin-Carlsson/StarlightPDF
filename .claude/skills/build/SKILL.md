@@ -28,7 +28,7 @@ A Stop hook sends you back unless every check passes on the current files and th
    check: <command, run from the repository root>
    ```
 
-   Checks that read results of one test run share one command before the first ` | `, a plain one (words, paths and `2>&1` only), e.g. `<suite> 2>&1 | grep -qxF '<test>'`: `hook.sh check` has it run once and feeds its output to each check's filter. An item whose behaviour can only be observed after merge gets a static check; the pull request says it is verifiable only after merge, with the command to run then.
+   Checks that read results of one test run share one command before the first ` | `, a plain one (words, paths and `2>&1` only), e.g. `<suite> 2>&1 | grep -qxF '<test>'`: `hook.sh check` has it run once and feeds its output to each check's filter. An item whose behaviour can only be observed after merge gets a static check; the pull request says it is verifiable only after merge, with the command to run then. Check a crates.io link with a user agent against `https://crates.io/api/v1/crates/<name>`: the page answers curl 403 or 404, the API 403 without one.
 
    Run `sh .claude/skills/build/hook.sh check`: every check should fail now.
 

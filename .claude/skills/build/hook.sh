@@ -4,7 +4,7 @@
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user.
-# check: fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
+# check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
 # next: print the lowest open build-ready issue not building and blocked by no open issue; exit 1 if none.
 set -eu
 
@@ -15,6 +15,7 @@ count=$dir/refusals
 results=$dir/results
 clock=$dir/started
 done=$dir/done
+lock=$dir/lock
 cap=30
 limit=86400
 again='run: sh .claude/skills/build/hook.sh check'
@@ -82,6 +83,23 @@ if [ "$1" = check ]; then
     echo 'build: no build in progress, or no check: lines' >&2
     exit 1
   fi
+  # A link to the owner's PID; a dead owner's is taken over.
+  take() { ln -s "$$" "$lock" 2>/dev/null && [ "$(readlink "$lock")" = "$$" ]; }
+  busy() {
+    echo 'build: a check is in progress; no checks run' >&2
+    exit 1
+  }
+  if ! take; then
+    p=$(readlink "$lock" 2>/dev/null) || p=
+    case $p in
+      0* | *[!0-9]*) ;;
+      ?*) if kill -0 "$p" 2>/dev/null; then busy; fi ;;
+    esac
+    if [ -n "$p" ] && [ "$(readlink "$lock" 2>/dev/null)" = "$p" ]; then rm -f "$lock"; fi
+    take || busy
+  fi
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"; rm -f "$lock"' EXIT
   if ! git fetch -q origin main </dev/null; then
     echo 'build: git fetch origin main failed; no checks run' >&2
     exit 1
@@ -103,8 +121,6 @@ if [ "$1" = check ]; then
       *) ;;
     esac
   }
-  tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
   sed -n 's/^check: //p' "$state" >"$tmp/checks"
   if mods_changed; then
     echo 'sh .claude/mods/typecheck.sh' >>"$tmp/checks"
