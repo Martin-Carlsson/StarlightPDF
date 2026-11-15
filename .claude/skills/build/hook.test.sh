@@ -8,13 +8,22 @@ trap 'rm -rf "$tmp"' EXIT
 proj="$tmp/proj"
 export CLAUDE_PROJECT_DIR="$proj"
 
-# Stub gh: logs its args to gh.log; prints gh.out (default pass), exits gh.code
-# (default 0) and writes gh.err to stderr.
+# Stub gh: logs its args to gh.log. Answers issue N's blocked_by
+# query with gh.blocked.N (none if absent); else prints gh.out
+# (default pass), exits gh.code (default 0), writes gh.err to stderr.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'END'
 #!/bin/sh
 t=$(dirname "$0")/..
 echo "$*" >>"$t/gh.log"
+case "$*" in
+  *issues/*/dependencies/blocked_by*)
+    n=$*
+    n=${n#*issues/}
+    cat "$t/gh.blocked.${n%%/*}" 2>/dev/null
+    exit 0
+    ;;
+esac
 if [ -f "$t/gh.err" ]; then cat "$t/gh.err" >&2; fi
 if [ -f "$t/gh.out" ]; then cat "$t/gh.out"; else echo pass; fi
 if [ -f "$t/gh.code" ]; then exit "$(cat "$t/gh.code")"; fi
@@ -432,6 +441,31 @@ printf '1\n2\n' >"$clock"
 run "tool: bad clock restarts" 0 ''
 expect grep -qx '[0-9][0-9]*' "$clock"
 expect test "$(wc -l <"$clock")" -eq 1
+mode=stop
+
+# Next: the lowest build-ready issue blocked by no open issue.
+# Candidates are "NUMBER BUILDING" lines in any order.
+# blocked N STATE...: the states of issue N's blockers.
+blocked() {
+  n=$1
+  shift
+  printf '%s\n' "$@" >"$tmp/gh.blocked.$n"
+}
+mode=next
+reset
+gh_says '10 false\n2 true\n7 false\n3 false\n5 false\n' 0 ''
+blocked 3 closed open
+run 'next: lowest eligible' 0 '^5$'
+
+reset
+gh_says '8 false\n4 false\n' 0 ''
+blocked 4 closed closed
+run 'next: closed blockers' 0 '^4$'
+
+reset
+gh_says '2 false\n6 true\n' 0 ''
+blocked 2 closed open
+run 'next: none' 1 '.'
 mode=stop
 
 [ "$failed" -eq 0 ] && echo PASS
