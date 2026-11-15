@@ -19,7 +19,7 @@ Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the 
 A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`. Run `gh issue edit <number> --add-label building`.
-2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds: a test only where the item needs one and `CLAUDE.md` calls for it, otherwise a direct command. Write `.claude/build/state`:
+2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds, and can do so while the build runs (the issue is labelled `building`): a test only where the item needs one and `CLAUDE.md` calls for it, otherwise a direct command. Write `.claude/build/state`:
 
    ```
    status: working
