@@ -3,9 +3,9 @@
 set -eu
 
 case "$*" in
-  core | python | advisories | licenses | dependencies) ;;
+  core | python | advisories | licenses | dependencies | workflows | hook | mods) ;;
   *)
-    echo 'usage: sh ci/check.sh core|python|advisories|licenses|dependencies' >&2
+    echo 'usage: sh ci/check.sh core|python|advisories|licenses|dependencies|workflows|hook|mods' >&2
     exit 2
     ;;
 esac
@@ -39,6 +39,42 @@ case $1 in
     ;;
   dependencies)
     sh ci/dependencies.sh
+    exit 0
+    ;;
+  hook)
+    sh .claude/skills/build/hook.test.sh
+    exit 0
+    ;;
+  mods)
+    # Prettier: the standard formatter; large to write here.
+    npx -y prettier@3.10.1 --check .claude/mods
+    exit 0
+    ;;
+  workflows)
+    # actionlint (MIT): the standard workflow linter; large to write here. shellcheck (GPL) stays off.
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64) target=linux_amd64 sum=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
+      Darwin-arm64) target=darwin_arm64 sum=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f ;;
+      *)
+        echo "no actionlint for $(uname -s) $(uname -m)" >&2
+        exit 1
+        ;;
+    esac
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    version=1.7.12
+    archive=actionlint_${version}_$target.tar.gz
+    curl -fsSL -o "$tmp/$archive" "https://github.com/rhysd/actionlint/releases/download/v$version/$archive"
+    printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
+    tar -xzf "$tmp/$archive" -C "$tmp" actionlint
+    files=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
+    "$tmp/actionlint" -shellcheck= -pyflakes= $files
+    for f in $files; do
+      awk '{ if (a == "defaults:" && b == "  run:" && $0 == "    shell: bash") ok = 1; a = b; b = $0 } END { exit !ok }' "$f" || {
+        echo "$f: set top-level defaults.run.shell to bash" >&2
+        exit 1
+      }
+    done
     exit 0
     ;;
 esac

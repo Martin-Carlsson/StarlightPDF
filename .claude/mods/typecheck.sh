@@ -1,0 +1,22 @@
+#!/bin/sh
+# Type-checks every mod against the API declarations Claude Code writes at session start.
+# typescript 7.0.2 (Apache-2.0): the standard type-checker; too large to write here.
+set -eu
+
+mods=$(cd "$(dirname "$0")" && pwd)
+root=${CLAUDE_CODE_TMPDIR:-/tmp}/claude-$(id -u)/bundled-skills
+decl=$(ls -t "${root}"/*/*/plugin-authoring/types/claude-code.d.ts 2>/dev/null | head -n 1)
+[ -n "${decl}" ] || {
+  echo "typecheck.sh: no claude-code.d.ts in ${root}; start a Claude Code session to write it" >&2
+  exit 1
+}
+find "${mods}" \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -exec \
+  npx -y -p typescript@7.0.2 tsc --noEmit \
+  --target es2023 --lib es2023 --types '' --module esnext --moduleResolution bundler \
+  --jsx react --jsxFactory h --jsxFragmentFactory Fragment \
+  --strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes --noImplicitReturns \
+  --noFallthroughCasesInSwitch --noImplicitOverride --noPropertyAccessFromIndexSignature \
+  --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false \
+  --noUncheckedSideEffectImports --verbatimModuleSyntax --isolatedModules --erasableSyntaxOnly \
+  --declaration --isolatedDeclarations \
+  "${decl}" {} +

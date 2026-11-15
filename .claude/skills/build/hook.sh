@@ -3,7 +3,7 @@
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
 #       Gives way once after 30 refusals with no check run in between.
 # tool: refuse tool calls after 24 hours without the user.
-# check: run every check and record the results. Only this mode runs the state file's commands.
+# check: run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -24,6 +24,14 @@ tree() {
   GIT_INDEX_FILE="$index" git add -A >/dev/null 2>&1 || true
   GIT_INDEX_FILE="$index" git write-tree 2>/dev/null || true
   rm -f "$index"
+}
+
+# True if .claude/mods differs from its merge base with origin/main, or if there is no base.
+mods_changed() {
+  now=$(git rev-parse --verify -q "$(tree):.claude/mods" 2>/dev/null || true)
+  base=$(git merge-base HEAD origin/main 2>/dev/null) &&
+    base=$(git rev-parse --verify -q "$base:.claude/mods" 2>/dev/null) || base=
+  [ "$now" != "$base" ]
 }
 
 # True if the limit has passed. Starts the clock if it is not running.
@@ -61,6 +69,10 @@ if [ "$1" = check ]; then
   rm -f "$count"
   failures=
   : >"$results.tmp"
+  cmds=$(sed -n 's/^check: //p' "$state")
+  if mods_changed; then
+    cmds=$cmds$(printf '\n%s' 'sh .claude/mods/typecheck.sh')
+  fi
   while IFS= read -r cmd; do
     if sh -c "$cmd" </dev/null >/dev/null 2>&1; then
       echo "pass $cmd" >>"$results.tmp"
@@ -69,7 +81,7 @@ if [ "$1" = check ]; then
       failures=1
     fi
   done <<END
-$(sed -n 's/^check: //p' "$state")
+$cmds
 END
   cat "$results.tmp"
   echo "tree $(tree)" >>"$results.tmp"
@@ -107,6 +119,12 @@ while IFS= read -r cmd; do
 done <<END
 $(sed -n 's/^check: //p' "$state")
 END
+
+# The type-check has no check: line.
+fails=$(sed -n 's/^fail //p' "$results")
+if [ -n "$fails" ]; then
+  refuse "check not passing: $(printf '%s' "$fails" | head -n 1); delegate the fix, then $again"
+fi
 
 grep -qxF "tree $(tree)" "$results" || refuse "files changed since the checks ran; $again"
 

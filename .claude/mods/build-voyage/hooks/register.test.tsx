@@ -79,7 +79,9 @@ const world = (
   })
   on('fs.read', (_, e) => {
     reads.count += 1
-    const value = [...files].find(([one]) => e.path === (one.startsWith('/') ? one : `${root()}/.claude/build/${one}`))?.[1]
+    const value = [...files].find(
+      ([one]) => e.path === (one.startsWith('/') ? one : `${root()}/.claude/build/${one}`),
+    )?.[1]
 
     if (value === undefined) {
       throw new Error('ENOENT')
@@ -185,7 +187,8 @@ const paneRows = async ($: Engine, surface: Surface, columns: number = PANE.prop
   return all.filter(one => one.trim() !== '')
 }
 
-const rowsEach = ($: Engine, columns?: number): Promise<string[][]> => eachSurface(surface => paneRows($, surface, columns))
+const rowsEach = ($: Engine, columns?: number): Promise<string[][]> =>
+  eachSurface(surface => paneRows($, surface, columns))
 
 const headEach = async ($: Engine, columns?: number): Promise<(string | undefined)[]> =>
   (await rowsEach($, columns)).map(rows => rows[0])
@@ -193,7 +196,8 @@ const headEach = async ($: Engine, columns?: number): Promise<(string | undefine
 const currentOf = (rows: string[]): string[] =>
   rows.join('\n').match(/◉ (Explore|Test|Implement|Review|Pull request|CI|Retro)(?=  |$)/gm) ?? []
 
-const currentEach = async ($: Engine, columns?: number): Promise<string[][]> => (await rowsEach($, columns)).map(currentOf)
+const currentEach = async ($: Engine, columns?: number): Promise<string[][]> =>
+  (await rowsEach($, columns)).map(currentOf)
 
 const tableOf = (rows: string[]): string[] => {
   const from = rows.findIndex(one => /^ {2}Agent( |$)/.test(one))
@@ -288,7 +292,8 @@ test('an idle session does not poll; a tool call notices a build', async ($, on)
 })
 
 test('a running build is polled; a finished one is marked done and no longer polled', async ($, on) => {
-  const state = 'status: working\nissue: 12 Reject empty files\nphase: pr\ncheck: true\npr: https://example.test/pull/1\n'
+  const state =
+    'status: working\nissue: 12 Reject empty files\nphase: pr\ncheck: true\npr: https://example.test/pull/1\n'
   const files = new Map([
     ['state', state],
     ['results', 'pass true\n'],
@@ -497,7 +502,10 @@ test('a pane closed after a build finished or was cancelled stays closed', async
 
   for (const { issue, end } of endings) {
     await run('build', issue)
-    files.set('state', `status: working\nissue: ${issue} Some title\nphase: pr\npr: https://example.test/pull/${issue}\n`)
+    files.set(
+      'state',
+      `status: working\nissue: ${issue} Some title\nphase: pr\npr: https://example.test/pull/${issue}\n`,
+    )
     await call()
     await close()
     await call()
@@ -587,9 +595,15 @@ test('a build in a worktree the session entered shows its own issue, phase and c
     return next(e)
   })
   const { clock } = world(on, files, true, () => dir)
-  files.set('/main/.claude/build/state', 'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n')
+  files.set(
+    '/main/.claude/build/state',
+    'status: working\nissue: 12 Reject empty files\nphase: test\ncheck: true\ncheck: false\n',
+  )
   files.set('/main/.claude/build/results', 'pass true\nfail false\n')
-  files.set('/wt/.claude/build/state', 'status: working\nissue: 19 Show every build\nphase: implement\ncheck: sh a\ncheck: sh b\n')
+  files.set(
+    '/wt/.claude/build/state',
+    'status: working\nissue: 19 Show every build\nphase: implement\ncheck: sh a\ncheck: sh b\n',
+  )
   files.set('/wt/.claude/build/results', 'pass sh a\n')
   await $.session.start(START)
   await clock.settle()
@@ -801,10 +815,7 @@ test('an agent whose turn starts again is running again, keeping its model and t
   await clock.settle()
 
   for (const rows of await rowsEach($)) {
-    expect(agentRows(rows)).toEqual([
-      '◉ Main session     fable-5-2        –',
-      '◉ Write the tests  sonnet-5-5      10',
-    ])
+    expect(agentRows(rows)).toEqual(['◉ Main session     fable-5-2        –', '◉ Write the tests  sonnet-5-5      10'])
   }
 })
 
@@ -1040,7 +1051,8 @@ test('a done build draws no Pauses in or Stops refused row', async ($, on) => {
   const { clock } = world(on, files)
   await $.session.start(START)
   await clock.settle()
-  const names = (rows: string[]) => rows.filter(one => /^(Pauses in|Stops refused) /.test(one)).map(one => one.slice(0, 13).trim())
+  const names = (rows: string[]) =>
+    rows.filter(one => /^(Pauses in|Stops refused) /.test(one)).map(one => one.slice(0, 13).trim())
 
   for (const rows of await rowsEach($, 62)) {
     expect(names(rows)).toEqual(['Pauses in', 'Stops refused'])
@@ -1063,7 +1075,10 @@ test('a recorded pull request is a link under the status sentence', async ($, on
 
   expect(await linksEach($)).toEqual(every([]))
 
-  files.set('state', 'status: working\nissue: 52 Reject empty files\nphase: ci\ncheck: a\npr: https://example.test/pull/52\n')
+  files.set(
+    'state',
+    'status: working\nissue: 52 Reject empty files\nphase: ci\ncheck: a\npr: https://example.test/pull/52\n',
+  )
   await clock.advance(5000)
 
   expect(await linksEach($)).toEqual(every([{ href: 'https://example.test/pull/52', text: 'Pull request #52' }]))
@@ -1176,7 +1191,10 @@ test('in a pane 30 columns wide only check commands and agent titles are cut', a
 
   for (const rows of await rowsEach($, 30)) {
     expect(rows.filter(one => one.length > 30)).toEqual([])
-    expect(rows.filter(one => one.includes('…'))).toEqual(['✔ grep -q needle docs/guide/l…', '✔ Reviewing r…  opus-5   1,234'])
+    expect(rows.filter(one => one.includes('…'))).toEqual([
+      '✔ grep -q needle docs/guide/l…',
+      '✔ Reviewing r…  opus-5   1,234',
+    ])
     expect(rows.slice(0, 6)).toEqual([
       header('Build #52', 'Working  0h 0m', 30),
       'Keep files, diffs and logs out',
@@ -1185,11 +1203,7 @@ test('in a pane 30 columns wide only check commands and agent titles are cut', a
       'docs/guide/a-long-file-name-he',
       're.md',
     ])
-    expect(rows.slice(9, 12)).toEqual([
-      'Changing the code until every',
-      'check passes.',
-      'Pull request #52',
-    ])
+    expect(rows.slice(9, 12)).toEqual(['Changing the code until every', 'check passes.', 'Pull request #52'])
     expect(rows.slice(-4)).toEqual([
       '  Agent         Model   Tokens',
       '◉ Main session  opus-5       –',
