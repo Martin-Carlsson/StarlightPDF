@@ -43,6 +43,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         area: ${{ fromJSON(needs.changes.outputs.areas) }}
+        exclude:
+          - { os: macos-latest, area: licenses }
+          - { os: windows-latest, area: licenses }
+          - { os: macos-latest, area: dependencies }
+          - { os: windows-latest, area: dependencies }
     runs-on: ${{ matrix.os }}
     env:
       AREA: ${{ matrix.area }}
@@ -53,8 +58,10 @@ jobs:
           git config core.autocrlf false
           git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
-      - run: rustup toolchain install --no-self-update
-      - run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
+      - if: matrix.area != 'licenses'
+        run: rustup toolchain install --no-self-update
+      - if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
+        run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
       - run: sh ci/check.sh "$AREA"
   ci:
     needs: [changes, check]
