@@ -9,6 +9,7 @@ hook=0
 licenses=0
 mods=0
 python=0
+ruff=0
 workflows=0
 while IFS= read -r path || [ -n "$path" ]; do
   licenses=1
@@ -19,10 +20,16 @@ while IFS= read -r path || [ -n "$path" ]; do
     Cargo.toml | */Cargo.toml) dependencies=1 ;;
   esac
   case $path in
+    *.py | ci/licenses.sh | ruff.toml) ruff=1 ;;
+  esac
+  case $path in
     README.md) dependencies=1 ;;
-    *.md | REUSE.toml | ci/licenses.sh) ;;
+    *.md | REUSE.toml | ci/licenses.sh | ruff.toml) ;;
     ci/dependencies.sh) dependencies=1 ;;
-    Cargo.lock | ci/check.sh | .github/workflows/ci.yml)
+    ci/check.sh | .github/workflows/ci.yml)
+      advisories=1 core=1 dependencies=1 hook=1 mods=1 python=1 ruff=1 workflows=1
+      ;;
+    Cargo.lock)
       advisories=1
       core=1
       dependencies=1
@@ -53,4 +60,5 @@ if [ "$hook" = 1 ]; then echo hook; fi
 if [ "$licenses" = 1 ]; then echo licenses; fi
 if [ "$mods" = 1 ]; then echo mods; fi
 if [ "$python" = 1 ]; then echo python; fi
+if [ "$ruff" = 1 ]; then echo ruff; fi
 if [ "$workflows" = 1 ]; then echo workflows; fi
