@@ -1,10 +1,11 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|next
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user.
 # check: fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
+# next: print the lowest open build-ready issue not building and blocked by no open issue; exit 1 if none.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -61,6 +62,20 @@ refuse() {
   printf 'build: %s\n' "$1" >&2
   exit 2
 }
+
+if [ "$1" = next ]; then
+  list=$(gh issue list --label build-ready --limit 1000 --json number,labels \
+    --jq '.[] | "\(.number) \(any(.labels[]; .name == "building"))"')
+  for n in $(printf '%s\n' "$list" | grep ' false$' | cut -d' ' -f1 | sort -n); do
+    states=$(gh api --paginate "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --jq '.[].state')
+    if ! printf '%s\n' "$states" | grep -qx open; then
+      echo "$n"
+      exit 0
+    fi
+  done
+  echo 'build: no open build-ready issue is unblocked and not building' >&2
+  exit 1
+fi
 
 if [ "$1" = check ]; then
   if ! grep -q '^check: .' "$state" 2>/dev/null; then
