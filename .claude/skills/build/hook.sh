@@ -2,8 +2,9 @@
 # Hooks for the build skill. Usage: hook.sh stop|tool|check
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
 #       Gives way once after 30 refusals with no check run in between.
+#       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user.
-# check: run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
+# check: fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -66,23 +67,56 @@ if [ "$1" = check ]; then
     echo 'build: no build in progress, or no check: lines' >&2
     exit 1
   fi
+  if ! git fetch -q origin main </dev/null; then
+    echo 'build: git fetch origin main failed; no checks run' >&2
+    exit 1
+  fi
   rm -f "$count"
   failures=
   : >"$results.tmp"
-  cmds=$(sed -n 's/^check: //p' "$state")
+  # A plain command shared by several checks before their first " | " runs once.
+  shared() {
+    case $1 in
+      *' | '*)
+        s=${1%% | *}
+        t=$(printf '%s\n' "$s" | LC_ALL=C sed 's/2>&1//g; s|[[:alnum:] ._/=:,+-]||g')
+        case $t in
+          '') printf '%s\n' "$s" ;;
+          *) ;;
+        esac
+        ;;
+      *) ;;
+    esac
+  }
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  sed -n 's/^check: //p' "$state" >"$tmp/checks"
   if mods_changed; then
-    cmds=$cmds$(printf '\n%s' 'sh .claude/mods/typecheck.sh')
+    echo 'sh .claude/mods/typecheck.sh' >>"$tmp/checks"
   fi
   while IFS= read -r cmd; do
-    if sh -c "$cmd" </dev/null >/dev/null 2>&1; then
+    shared "$cmd"
+  done <"$tmp/checks" >"$tmp/suites"
+  while IFS= read -r cmd; do
+    suite=$(shared "$cmd")
+    same=0
+    if [ -n "$suite" ]; then same=$(grep -cxF -- "$suite" "$tmp/suites" || true); fi
+    if [ "$same" -gt 1 ]; then
+      n=$(grep -nxF -- "$suite" "$tmp/suites" | head -n 1 | cut -d: -f1)
+      [ -f "$tmp/$n" ] || sh -c "$suite" </dev/null >"$tmp/$n" 2>/dev/null || true
+      run="${cmd#"$suite" | }"
+      in=$tmp/$n
+    else
+      run=$cmd
+      in=/dev/null
+    fi
+    if sh -c "$run" <"$in" >/dev/null 2>&1; then
       echo "pass $cmd" >>"$results.tmp"
     else
       echo "fail $cmd" >>"$results.tmp"
       failures=1
     fi
-  done <<END
-$cmds
-END
+  done <"$tmp/checks"
   cat "$results.tmp"
   echo "tree $(tree)" >>"$results.tmp"
   mv "$results.tmp" "$results"
@@ -110,6 +144,33 @@ if expired; then
 fi
 
 [ "$1" = stop ] || exit 0
+
+input=
+[ -t 0 ] || input=$(cat | LC_ALL=C tr '\n' ' ')
+case $input in
+  *'"background_tasks"'*)
+    # Strings are paired first (control characters never occur raw in JSON), then
+    # keywords are kept and the rest blanked, so no text can split an entry.
+    o=$(printf '\001')
+    c=$(printf '\002')
+    b=$(printf '%s\n' "$input" | LC_ALL=C sed -E "
+      s/\"(([^\"\\\\]|\\\\.)*)\"/${o}\\1${c}/g
+      s/${o}(background_tasks|type|subagent|status|running|pending)${c}/@\\1@/g
+      s/${o}[^${c}]*${c}/\"\"/g") || b=
+    case $b in
+      *@background_tasks@*)
+        b=${b#*@background_tasks@}
+        if printf '%s\n' "${b%%]*}" | tr '}' '\n' |
+          grep '@type@[[:space:]]*:[[:space:]]*@subagent@' |
+          grep -Eq '@status@[[:space:]]*:[[:space:]]*@(running|pending)@'; then
+          exit 0
+        fi
+        ;;
+      *) ;;
+    esac
+    ;;
+  *) ;;
+esac
 
 grep -q '^check: .' "$state" || refuse "no check: lines in $state"
 [ -f "$results" ] || refuse "the checks have not run; $again"

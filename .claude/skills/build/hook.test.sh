@@ -47,19 +47,35 @@ run() {
   fi
 }
 
+# expect [-n NAME] COMMAND...: with a name, the case reports "ok NAME".
 expect() {
-  if ! "$@"; then
-    echo "FAIL: $*"
+  label=
+  if [ "$1" = -n ]; then
+    label=$2
+    shift 2
+  fi
+  if "$@"; then
+    if [ -n "$label" ]; then echo "ok $label"; fi
+  else
+    echo "FAIL ${label:-$*}"
     failed=1
   fi
 }
 
-# reset STATE_TEXT: a fresh repository, with that state file if given.
+# One local origin with one commit, shared by every case.
+origin="$tmp/origin.git"
+git init -q --bare -b main "$origin"
+root=$(git -C "$origin" mktree </dev/null)
+first=$(git -C "$origin" -c user.name=t -c user.email=t@example.test commit-tree -m init "$root")
+git -C "$origin" update-ref refs/heads/main "$first"
+
+# reset STATE_TEXT: a fresh repository on that origin, and that state file if given.
 reset() {
   rm -rf "$proj" "$tmp"/gh.*
   mkdir -p "$dir"
-  git init -q "$proj"
+  git init -q -b main "$proj"
   echo '.claude/build/' >"$proj/.gitignore"
+  git -C "$proj" remote add origin "$origin"
   if [ $# -gt 0 ]; then printf %b "$1" >"$state"; fi
 }
 
@@ -188,6 +204,60 @@ check "check: passes without a pr" 0 'pass true'
 run "missing pr refuses without asking gh" 2 'pr:'
 expect test ! -e "$tmp/gh.log"
 
+# Stop while subagents run: the Stop hook input lists background_tasks.
+shell='{"id":"b","type":"shell","status":"running"}'
+# stop_is WANT INPUT: a refusable build; stop with that input exits WANT, else the case is bad.
+good=1
+stop_is() {
+  code=0
+  printf %s "$2" | sh "$hook" stop >/dev/null 2>&1 || code=$?
+  [ "$code" -eq "$1" ] || good=0
+}
+# stop_with WANT SESSION TASK...: stop_is on Stop hook input with those background
+# tasks; a TASK is a subagent status, or a whole entry when it starts with "{".
+stop_with() {
+  want=$1
+  sid=$2
+  shift 2
+  list=
+  for e in "$@"; do
+    case $e in
+      '{'*) item=$e ;;
+      *) item="{\"id\":\"a\",\"type\":\"subagent\",\"status\":\"$e\"}" ;;
+    esac
+    list="${list:+$list,}$item"
+  done
+  stop_is "$want" "{\"hook_event_name\":\"Stop\",\"session_id\":\"$sid\",\"stop_hook_active\":false,\"background_tasks\":[$list]}"
+}
+failing='status: working\ncheck: false\n'
+
+reset "$failing"
+echo 3 >"$dir/refusals"
+good=1
+# Field order and whitespace vary.
+stop_is 0 '{ "background_tasks": [ { "status": "running", "type": "subagent", "id": "x" } ], "session_id": "s" }'
+expect grep -qx 3 "$dir/refusals"
+stop_with 2 s "$shell"
+# A brace inside a string is not the end of the entry.
+stop_with 0 s '{"id":"c","type":"subagent","description":"fix {x}","status":"running"}'
+# A string ending in a keyword after an escaped quote does not mispair quotes.
+stop_is 0 '{"last_assistant_message":"he said \"type","background_tasks":[{"type":"subagent","status":"running"}],"session_id":"s"}'
+expect -n "stop passes while a subagent runs" test "$good" -eq 1
+
+reset "$failing"
+good=1
+stop_with 0 s completed running
+stop_with 0 s completed pending
+stop_with 2 s completed failed killed
+expect -n "stop refused only once every subagent ends" test "$good" -eq 1
+
+reset "$failing"
+good=1
+# The hook keeps nothing between stops.
+stop_with 0 s1 running
+stop_with 2 s2
+expect -n "subagent from an ended session does not count" test "$good" -eq 1
+
 # Check mode.
 reset 'status: working\ncheck: true\ncheck: false\ncheck: test -f marker\n'
 : >"$proj/marker"
@@ -209,6 +279,59 @@ check "check: commands get no stdin" 1 'fail read x'
 reset
 check "check: no state fails" 1 'no build'
 
+# Checks on named tests of one suite run the suite once; each check is its own.
+cat >"$tmp/suite.sh" <<'END'
+echo run >>"$(dirname "$0")/suite.count"
+for t in p01 p02 p03 p04 p05 p06 p07 p08 p09; do echo "test $t ... ok"; done
+for t in f01 f02 f03 f04; do echo "test $t ... FAILED"; done
+exit 1
+END
+# add_check WANT COMMAND: a check and the result it must record.
+add_check() {
+  echo "check: $2" >>"$state"
+  echo "$1 $2" >>"$tmp/want"
+}
+reset
+rm -f "$tmp/suite.count" "$tmp/want"
+echo 'status: working' >"$state"
+for t in p01 f01 p02 p03 f02 p04 p05 p06 f03 p07 p08 f04 p09; do
+  case $t in
+    p*) add_check pass "sh $tmp/suite.sh 2>&1 | grep -q '$t ... ok'" ;;
+    *) add_check fail "sh $tmp/suite.sh 2>&1 | grep -q '$t ... ok'" ;;
+  esac
+done
+add_check fail "false && sh $tmp/suite.sh | wc -l"
+add_check fail "false && sh $tmp/suite.sh | wc -c"
+code=0
+sh "$hook" check >"$tmp/out" 2>&1 || code=$?
+grep -v '^tree ' "$results" >"$tmp/got" || true
+good=1
+runs=$(wc -l <"$tmp/suite.count")
+[ "$runs" -eq 1 ] || good=0
+[ "$code" -eq 1 ] || good=0
+expect -n "one suite run serves many checks" test "$good" -eq 1
+expect -n "results list every check" cmp -s "$tmp/want" "$tmp/got"
+
+# Check fetches main from origin first; this case moves its own copy of origin.
+reset 'status: working\ncheck: true\n'
+moved="$tmp/moved.git"
+cp -R "$origin" "$moved"
+git -C "$proj" remote set-url origin "$moved"
+more=$(git -C "$moved" -c user.name=t -c user.email=t@example.test commit-tree -m more -p main 'main^{tree}')
+git -C "$moved" update-ref refs/heads/main "$more"
+sh "$hook" check >/dev/null 2>&1 || true
+fetched=$(git -C "$proj" rev-parse origin/main 2>/dev/null) || fetched=
+expect -n "check fetches main from origin" test "$fetched" = "$more"
+
+reset 'status: working\ncheck: true\n'
+git -C "$proj" remote set-url origin "$tmp/missing.git"
+code=0
+sh "$hook" check >"$tmp/out" 2>&1 || code=$?
+good=1
+[ "$code" -ne 0 ] || good=0
+grep -qi fetch "$tmp/out" || good=0
+expect -n "check fails when the fetch fails" test "$good" -eq 1
+
 # The cap counts refusals since the checks last ran.
 reset 'status: working\ncheck: false\n'
 echo 29 >"$dir/refusals"
@@ -224,13 +347,17 @@ code=0
 expect test "$code" -eq 0
 expect grep -qx 'pass test -f marker' "$tmp/out"
 
-# mods_base: commit a failing type-check stub and make it origin/main.
+# mods_base: commit a failing type-check stub and make it origin/main, on an origin of its own that check can fetch.
 mods_base() {
   mkdir -p "$proj/.claude/mods"
   echo 'exit 1' >"$proj/.claude/mods/typecheck.sh"
   git -C "$proj" add -A
   git -C "$proj" -c user.name=t -c user.email=t@t commit -qm base
-  git -C "$proj" update-ref refs/remotes/origin/main HEAD
+  rm -rf "$tmp/mods.git"
+  git init -q --bare -b main "$tmp/mods.git"
+  git -C "$proj" push -q "$tmp/mods.git" HEAD:main
+  git -C "$proj" remote set-url origin "$tmp/mods.git"
+  git -C "$proj" fetch -q origin main
 }
 
 # Check: a build that changes .claude/mods fails while the type-check fails.
