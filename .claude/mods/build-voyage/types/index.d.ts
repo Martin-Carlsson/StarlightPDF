@@ -38,6 +38,8 @@ export type Run = {
   startedMs: number
   elapsedMs: number
   isOpen: boolean
+  /** Main session's model at /build. */
+  mainModel: string
   mainTokens: number
   agents: Agent[]
 }
