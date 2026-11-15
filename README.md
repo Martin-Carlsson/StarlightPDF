@@ -59,7 +59,7 @@ CI builds prebuilt binaries per platform and publishes them to each package regi
 ### Reading and inspecting
 
 - 🔜 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
-- 🔜 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
+- 👨‍💻 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
 - 💤 **Metadata:** read title, author, subject, keywords, dates; XMP metadata
 - 💤 **Structure access:** raw objects, streams, cross-reference table, document catalog
 - 💤 **Validation:** check a file against the PDF specification and report errors

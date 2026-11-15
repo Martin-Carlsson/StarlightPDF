@@ -3,14 +3,25 @@
 use std::ffi::OsStr;
 use std::fs;
 
+/// The repository root, against which case paths resolve.
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
 /// Calls `operation`; only operations listed here are known.
 fn call(operation: &str, args: &[&str]) -> Result<String, String> {
     match operation {
-        "greet" => {
-            let [name] = *args else {
-                return Err(format!("greet takes 1 argument, got {}", args.len()));
+        "header_version" => {
+            let [path] = *args else {
+                return Err(format!(
+                    "header_version takes 1 argument, got {}",
+                    args.len()
+                ));
             };
-            Ok(starlightpdf::greet(name))
+            let file = format!("{ROOT}/{path}");
+            let bytes = fs::read(&file).map_err(|err| format!("{file}: {err}"))?;
+            Ok(starlightpdf::header_version(&bytes).map_or_else(
+                |_| String::from("error"),
+                |version| format!("{}.{}", version.major, version.minor),
+            ))
         }
         _ => Err(format!("unknown operation '{operation}'")),
     }
@@ -55,9 +66,9 @@ fn rejects(suite: &str) -> Result<(), String> {
 /// Every suite file passes.
 #[test]
 fn suite_passes() -> Result<(), String> {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/conformance");
+    let dir = format!("{ROOT}/tests/conformance");
     let mut paths = Vec::new();
-    for entry in fs::read_dir(dir).map_err(|err| format!("{dir}: {err}"))? {
+    for entry in fs::read_dir(&dir).map_err(|err| format!("{dir}: {err}"))? {
         let path = entry.map_err(|err| format!("{dir}: {err}"))?.path();
         if path.extension() == Some(OsStr::new("tsv")) {
             paths.push(path);
