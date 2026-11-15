@@ -1,0 +1,74 @@
+
+# cargo-vet audits file
+
+[[audits.libc]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.2.191"
+notes = "Read build.rs (cfg and env probes, runs RUSTC --version); grepped src: extern C declarations and type definitions linking only system libraries (c, m, rt, pthread, util); no fs, net or process use."
+
+[[audits.once_cell]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "1.21.4"
+notes = "Read src/imp_std.rs (default feature) in full: lock-free waiter queue with sound unsafe; grep found no fs/net/process/build.rs; other unsafe is atomic-pointer cells in race.rs."
+
+[[audits.portable-atomic]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "1.15.0"
+notes = "Read build.rs and version.rs (cfg probes, runs RUSTC -vV); grepped src: no fs or net use, sysctl process only in cfg(test); unsafe atomics and asm per target were sampled (fallback, x86), not read in full."
+
+[[audits.proc-macro2]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.94 -> 1.0.107"
+notes = "Delta from Mozilla-audited 1.0.94: no unsafe; build.rs only probes rustc for features; no fs/net/process use beyond the probe."
+
+[[audits.pyo3]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.30.1"
+notes = "Read build.rs; grepped src: no fs, net or process use; read internal/state.rs attach logic and sampled impl_/pymodule.rs unsafe sites (module init, Sync impls); the rest of the 81k lines of CPython-FFI unsafe were not read in full."
+
+[[audits.pyo3-build-config]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.30.1"
+notes = "Build-time crate; grep for unsafe, fs, process and env use: unsafe only in tests; reads sysconfigdata and runs the Python interpreter chosen by PYO3_PYTHON, virtualenv or PATH, as advertised; read those paths."
+
+[[audits.pyo3-ffi]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.30.1"
+notes = "Read build.rs (reads pyo3-build-config output, prints cargo link directives) and grepped src: extern C declarations of the CPython API plus small inline helpers; no fs, net or process use."
+
+[[audits.pyo3-macros]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.30.1"
+notes = "Read src/lib.rs in full (257 lines): thin proc-macro entry points delegating to pyo3-macros-backend; no unsafe, fs, net or process use."
+
+[[audits.pyo3-macros-backend]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.30.1"
+notes = "Read build.rs (only sets a cfg from PYO3_WIP_NO_STD); grepped src: no fs, net or process use; unsafe appears only inside generated code, which calls pyo3 helpers with a documented trusted-receiver policy."
+
+[[audits.syn]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "3.0.10"
+notes = "No build.rs; grep found no fs, net or process use outside doc examples; read the unsafe sites (token buffer cursor, lifetime transmutes, ThreadBound Send/Sync), the same design as the widely audited syn 2."
+
+[[audits.target-lexicon]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.13.6"
+notes = "Read build.rs (writes OUT_DIR/host.rs, runs RUSTC --version); library has no unsafe, fs, net or process use."
+
+[[audits.unicode-ident]]
+who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.18 -> 1.0.27"
+notes = "Delta from Mozilla-audited 1.0.18: new generated tables; the two get_unchecked lookups stay in bounds (max index 8063 of 8064 LEAF bytes, checked from table maxima); no fs/net/process."

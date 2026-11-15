@@ -1,6 +1,6 @@
 # StarlightPDF 🌟
 
-An open-source PDF library with a zero-dependency core crate that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
+An open-source PDF library that aims to cover everything you can do with a PDF: read, extract, create, edit, sign, render and optimize.
 
 Website: [starlightpdf.com](https://starlightpdf.com)
 
@@ -182,7 +182,7 @@ CI builds prebuilt binaries per platform and publishes them to each package regi
 ### Engineering properties
 
 - 💤 **Performance:** streaming, low memory use, incremental updates, thread safety, async, batch processing
-- 💤 **Deployment:** zero dependencies in the core crate, cross-platform, WebAssembly, command-line tool
+- 💤 **Deployment:** minimal, audited dependencies, cross-platform, WebAssembly, command-line tool
 - 💤 **Robustness:** tolerance of malformed files, safe handling of untrusted input
 
 ## Working with Claude Code

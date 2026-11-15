@@ -3,7 +3,7 @@
 ## Code
 
 **Core crate**:
-The Rust crate `starlightpdf` in `core/`, with no dependencies.
+The Rust crate `starlightpdf` in `core/`.
 _Avoid_: core library
 
 **Binding crate**:

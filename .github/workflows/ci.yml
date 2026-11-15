@@ -54,6 +54,7 @@ jobs:
           git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
       - run: rustup toolchain install --no-self-update
+      - run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
       - run: sh ci/check.sh "$AREA"
   ci:
     needs: [changes, check]
