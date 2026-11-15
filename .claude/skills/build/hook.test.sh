@@ -13,8 +13,10 @@ export CLAUDE_PROJECT_DIR="$proj"
 # query with gh.blocked.N (none if absent); the pull request's head,
 # labels and body with gh.head, gh.labels and gh.body; its checks with
 # gh.checks ("NAME BUCKET LINK" lines); a merge with gh.merge.err and
-# exit gh.merge.code (default 0); an edit with nothing. Else prints gh.out
-# (default pass), exits gh.code (default 0), writes gh.err to stderr.
+# exit gh.merge.code (default 0); a pr edit with nothing. issue edit N
+# --add-label building claims N. With gh.issues ("NUMBER BUILDING" lines),
+# issue list prints it after a delay (search lags); issue view N, whether N is claimed.
+# Else prints gh.out (default pass), exits gh.code (default 0), writes gh.err to stderr.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/gh" <<'END'
 #!/bin/sh
@@ -41,6 +43,26 @@ case "$*" in
     cat "$t/gh.checks"
     if grep -Eq ' (fail|cancel) ' "$t/gh.checks"; then exit 1; fi
     if grep -q ' pending ' "$t/gh.checks"; then exit 8; fi
+    exit 0
+    ;;
+  'issue list '*)
+    if [ -f "$t/gh.issues" ]; then
+      sleep 0.5
+      exec cat "$t/gh.issues"
+    fi
+    ;;
+  'issue view '*)
+    if [ -f "$t/gh.issues" ]; then
+      n=$*
+      n=${n#issue view }
+      if grep -qx "${n%% *}" "$t/gh.claimed" 2>/dev/null; then echo true; else echo false; fi
+      exit 0
+    fi
+    ;;
+  'issue edit '*' --add-label building')
+    n=$*
+    n=${n#issue edit }
+    echo "${n%% *}" >>"$t/gh.claimed"
     exit 0
     ;;
   'pr edit '*) exit 0 ;;
@@ -283,6 +305,19 @@ grep -v '^tree ' "$results" >"$tmp/got"
 expect cmp -s "$tmp/want" "$tmp/got"
 expect test ! -e "$dir/refusals"
 
+# A check's backslash is recorded as written.
+reset
+c="printf 'a\\n' | grep -qx a"
+printf '%s\n' 'status: working' "check: $c" >"$state"
+good=1
+sh "$hook" check >"$tmp/out" 2>&1 || good=0
+grep -qxF "pass $c" "$tmp/out" || good=0
+grep -qxF "pass $c" "$results" || good=0
+code=0
+sh "$hook" stop </dev/null >"$tmp/out" 2>&1 || code=$?
+[ "$code" -eq 2 ] && grep -q 'pr:' "$tmp/out" || good=0
+expect -n "check: records a backslash intact" test "$good" -eq 1
+
 # The main session learns which check failed, never its output.
 reset 'status: working\ncheck: cat secret; false\n'
 echo leaked-output >"$proj/secret"
@@ -376,11 +411,11 @@ fresh() {
   mkdir "$tmp/b"
   : >"$tmp/b/runs"
 }
-# bg NAME: check in the background; output in b/NAME.out, exit code in b/NAME.code once it ends.
+# bg NAME [MODE DIR]: MODE (default check) from DIR in the background; output in b/NAME.out, exit code in b/NAME.code once it ends.
 bg() {
   (
     c=0
-    sh "$hook" check >"$tmp/b/$1.out" 2>&1 || c=$?
+    CLAUDE_PROJECT_DIR=${3:-$proj} sh "$hook" "${2:-check}" >"$tmp/b/$1.out" 2>&1 || c=$?
     echo "$c" >"$tmp/b/$1.code"
   ) &
 }
@@ -560,6 +595,33 @@ gh_says '9 false
 run 'ready: picks' 0 '^9$'
 expect -n 'ready: claims nothing' sh -c '! grep -q "^issue edit" "$1"' _ "$tmp/gh.log"
 mode=stop
+
+# nexts ISSUE...: those issues eligible; next runs a from proj and b from a second worktree, together.
+nexts() {
+  reset
+  printf '%s false\n' "$@" >"$tmp/gh.issues"
+  git -C "$proj" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+  rm -rf "$tmp/wt" "$tmp/b"
+  mkdir "$tmp/b"
+  git -C "$proj" worktree add -q -b wt "$tmp/wt"
+  bg a next "$proj"
+  a=$!
+  bg b next "$tmp/wt"
+  b=$!
+  wait "$a" "$b"
+}
+nexts 3 5
+good=1
+[ "$(cat "$tmp/b/a.code") $(cat "$tmp/b/b.code")" = '0 0' ] || good=0
+[ "$(cat "$tmp/b/a.out" "$tmp/b/b.out" | sort | tr '\n' ' ')" = '3 5 ' ] || good=0
+expect -n "next: concurrent runs pick different issues" test "$good" -eq 1
+
+nexts 3
+good=1
+[ "$(sort "$tmp/b/a.code" "$tmp/b/b.code" | tr '\n' ' ')" = '0 1 ' ] || good=0
+[ "$(cat "$tmp/b/a.out" "$tmp/b/b.out" | grep -cx 3)" -eq 1 ] || good=0
+[ "$(cat "$tmp/b/a.out" "$tmp/b/b.out" | grep -c '^build: ')" -eq 1 ] || good=0
+expect -n "next: second run finds none eligible" test "$good" -eq 1
 
 # Start N: refuse an issue blocked by an open issue (exit 1), ask about
 # one labelled building by another build (exit 3).
@@ -894,6 +956,44 @@ tool_says 0 '' Write '"file_path":"x.md","content":"never gh pr merge"'
 reset
 tool_says 0 '' Bash "\"command\":\"gh pr merge $url --squash\""
 expect -n "tool refuses gh pr merge" test "$good" -eq 1
+
+# Check: files both the build and main changed since their merge base fail it.
+# main_changes FILE...: on origin, main appends a line to each FILE.
+main_changes() {
+  rm -rf "$tmp/other"
+  git clone -q -b main "$tmp/pr.git" "$tmp/other"
+  for f in "$@"; do echo main >>"$tmp/other/$f"; done
+  git -C "$tmp/other" -c user.name=t -c user.email=t@t commit -qam main
+  git -C "$tmp/other" push -q origin main
+}
+pr_base
+echo branch >>"$proj/README.md"
+commit branch
+echo branch >>"$proj/tests/b.txt"
+main_changes README.md tests/b.txt core/tests/a.rs
+good=1
+check "check: names files changed on both sides" 1 README.md
+grep -qF tests/b.txt "$tmp/out" || good=0
+! grep -qF core/tests/a.rs "$tmp/out" || good=0
+code=0
+sh "$hook" stop </dev/null >"$tmp/out" 2>&1 || code=$?
+[ "$code" -eq 2 ] && ! grep -q 'hook.sh merge' "$tmp/out" || good=0
+commit y
+git -C "$proj" fetch -q origin main
+git -C "$proj" -c user.name=t -c user.email=t@t merge -q -X ours --no-edit origin/main >/dev/null
+check "check: names files changed on both sides" 0 'pass true'
+stop_says 2 'hook.sh merge'
+echo more >>"$proj/README.md"
+check "check: names files changed on both sides" 0 'pass true'
+expect -n "check: names files changed on both sides" test "$good" -eq 1
+
+pr_base
+echo branch >>"$proj/README.md"
+commit branch
+main_changes tests/b.txt
+good=1
+check "check: passes when main shares no file or is merged" 0 'pass true'
+expect -n "check: passes when main shares no file or is merged" test "$good" -eq 1
 
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"

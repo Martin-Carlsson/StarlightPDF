@@ -1,5 +1,5 @@
 #!/bin/sh
-# Type-checks every mod against the API declarations Claude Code writes at session start.
+# Type-checks every mod against Claude Code's API declarations.
 # typescript 7.0.2 (Apache-2.0): the standard type-checker; too large to write here.
 set -eu
 
@@ -7,7 +7,7 @@ mods=$(cd "$(dirname "$0")" && pwd)
 root=${CLAUDE_CODE_TMPDIR:-/tmp}/claude-$(id -u)/bundled-skills
 decl=$(ls -t "${root}"/*/*/plugin-authoring/types/claude-code.d.ts 2>/dev/null | head -n 1)
 [ -n "${decl}" ] || {
-  echo "typecheck.sh: no claude-code.d.ts in ${root}; start a Claude Code session to write it" >&2
+  echo "typecheck.sh: no claude-code.d.ts in ${root}; load the plugin-authoring skill to write it" >&2
   exit 1
 }
 find "${mods}" \( -name '*.ts' -o -name '*.tsx' \) -not -path '*/node_modules/*' -exec \

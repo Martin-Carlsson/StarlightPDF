@@ -4,9 +4,9 @@
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user, and Bash calls running gh pr merge.
-# check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
+# check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; fail each file main also changed since the merge base; record the results. Only this mode runs the state file's commands.
 # ready: print the lowest open build-ready issue of mine not building and blocked by no open issue; exit 1 if none.
-# next: as ready, and label it building.
+# next: as ready, one at a time across worktrees; label it building.
 # start N: exit 1 naming N's open blockers; else 3 if N is building and the state does not name it.
 # merge: label and squash-merge the PR if every condition holds; else name each failed one and exit 1.
 set -eu
@@ -34,15 +34,15 @@ tree() {
   rm -f "$index"
 }
 
-# True if .claude/mods differs from its merge base with origin/main, or if there is no base.
+# True if .claude/mods differs from merge base $1's, or $1 is empty.
 mods_changed() {
   now=$(git rev-parse --verify -q "$(tree):.claude/mods" 2>/dev/null || true)
-  base=$(git merge-base HEAD origin/main 2>/dev/null) &&
-    base=$(git rev-parse --verify -q "$base:.claude/mods" 2>/dev/null) || base=
+  base=
+  if [ -n "$1" ]; then base=$(git rev-parse --verify -q "$1:.claude/mods" 2>/dev/null) || base=; fi
   [ "$now" != "$base" ]
 }
 
-# Print the first check not passing in the last run, the type-check (no check: line) included; false if none.
+# Print the first check not passing in the last run, fail lines with no check: line included; false if none.
 failing() {
   {
     sed -n 's/^check: //p' "$state" | while IFS= read -r cmd; do
@@ -86,6 +86,19 @@ blockers() {
   printf '%s\n' "$b" | sed -n 's/^\([0-9]*\) open$/#\1/p'
 }
 
+# Take $lock, a link to the owner's PID; a dead owner's is taken over. False if a live process holds it.
+hold() {
+  take() { ln -s "$$" "$lock" 2>/dev/null && [ "$(readlink "$lock")" = "$$" ]; }
+  take && return
+  p=$(readlink "$lock" 2>/dev/null) || p=
+  case $p in
+    0* | *[!0-9]*) ;;
+    ?*) if kill -0 "$p" 2>/dev/null; then return 1; fi ;;
+  esac
+  if [ -n "$p" ] && [ "$(readlink "$lock" 2>/dev/null)" = "$p" ]; then rm -f "$lock"; fi
+  take
+}
+
 if [ "$1" = start ]; then
   open=$(blockers "$2")
   if [ -n "$open" ]; then
@@ -101,12 +114,21 @@ if [ "$1" = start ]; then
 fi
 
 if [ "$1" = ready ] || [ "$1" = next ]; then
+  if [ "$1" = next ]; then
+    lock=$(git rev-parse --git-common-dir)/build-next
+    until hold; do sleep 1; done
+    trap 'rm -f "$lock"' EXIT
+  fi
   list=$(gh issue list --label build-ready --author @me --limit 1000 --json number,labels \
     --jq '.[] | "\(.number) \(any(.labels[]; .name == "building"))"')
   for n in $(printf '%s\n' "$list" | grep ' false$' | cut -d' ' -f1 | sort -n); do
     open=$(blockers "$n")
     if [ -z "$open" ]; then
-      if [ "$1" = next ]; then gh issue edit "$n" --add-label building >/dev/null; fi
+      if [ "$1" = next ]; then
+        b=$(gh issue view "$n" --json labels --jq 'any(.labels[]; .name == "building")')
+        if [ "$b" = true ]; then continue; fi
+        gh issue edit "$n" --add-label building >/dev/null
+      fi
       echo "$n"
       exit 0
     fi
@@ -212,20 +234,9 @@ if [ "$1" = check ]; then
     echo 'build: no build in progress, or no check: lines' >&2
     exit 1
   fi
-  # A link to the owner's PID; a dead owner's is taken over.
-  take() { ln -s "$$" "$lock" 2>/dev/null && [ "$(readlink "$lock")" = "$$" ]; }
-  busy() {
+  if ! hold; then
     echo 'build: a check is in progress; no checks run' >&2
     exit 1
-  }
-  if ! take; then
-    p=$(readlink "$lock" 2>/dev/null) || p=
-    case $p in
-      0* | *[!0-9]*) ;;
-      ?*) if kill -0 "$p" 2>/dev/null; then busy; fi ;;
-    esac
-    if [ -n "$p" ] && [ "$(readlink "$lock" 2>/dev/null)" = "$p" ]; then rm -f "$lock"; fi
-    take || busy
   fi
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"; rm -f "$lock"' EXIT
@@ -251,7 +262,8 @@ if [ "$1" = check ]; then
     esac
   }
   sed -n 's/^check: //p' "$state" >"$tmp/checks"
-  if mods_changed; then
+  m=$(git merge-base HEAD origin/main 2>/dev/null) || m=
+  if mods_changed "$m"; then
     echo 'sh .claude/mods/typecheck.sh' >>"$tmp/checks"
   fi
   while IFS= read -r cmd; do
@@ -271,14 +283,20 @@ if [ "$1" = check ]; then
       in=/dev/null
     fi
     if sh -c "$run" <"$in" >/dev/null 2>&1; then
-      echo "pass $cmd" >>"$results.tmp"
+      printf 'pass %s\n' "$cmd" >>"$results.tmp"
     else
-      echo "fail $cmd" >>"$results.tmp"
+      printf 'fail %s\n' "$cmd" >>"$results.tmp"
       failures=1
     fi
   done <"$tmp/checks"
+  b=${m:-$(git hash-object -t tree /dev/null)}
+  w=$(tree)
+  git diff --name-only --no-renames "$b" origin/main | LC_ALL=C sort >"$tmp/main"
+  git diff --name-only --no-renames "$b" "$w" | LC_ALL=C sort >"$tmp/build"
+  LC_ALL=C comm -12 "$tmp/main" "$tmp/build" | sed 's/^/fail merge origin\/main, which also changed /' >"$tmp/both"
+  if grep . "$tmp/both" >>"$results.tmp"; then failures=1; fi
   cat "$results.tmp"
-  echo "tree $(tree)" >>"$results.tmp"
+  echo "tree $w" >>"$results.tmp"
   mv "$results.tmp" "$results"
   [ -z "$failures" ]
   exit
@@ -369,7 +387,7 @@ if [ "$code" -ne 0 ] && [ -z "$buckets" ]; then
 fi
 case $buckets in
   *fail* | *cancel*) refuse "CI failing on $pr; delegate the fix, then follow the new run" ;;
-  *pending*) refuse "CI pending on $pr; wait with: gh pr checks $pr --watch" ;;
+  *pending*) refuse "CI pending on $pr; wait with: gh pr checks $pr --watch >/dev/null; gh pr checks $pr" ;;
 esac
 
 if ! grep -q '^comment: .' "$state"; then
