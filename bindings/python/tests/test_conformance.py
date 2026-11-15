@@ -13,35 +13,52 @@ class SuiteError(Exception):
     """A case failed."""
 
 
-def run_case(line):
+def run_case(line: str) -> None:
+    """Run one case: operation, arguments and expected result, tab-separated."""
     *head, expected = line.split("\t")
     if not head:
-        raise SuiteError(f"malformed line {line!r}")
+        msg = f"malformed line {line!r}"
+        raise SuiteError(msg)
     operation, *args = head
     if operation not in OPERATIONS:
-        raise SuiteError(f"unknown operation {operation!r}")
+        msg = f"unknown operation {operation!r}"
+        raise SuiteError(msg)
     actual = OPERATIONS[operation](*args)
     if actual != expected:
-        raise SuiteError(f"{operation}: expected {expected!r}, got {actual!r}")
+        msg = f"{operation}: expected {expected!r}, got {actual!r}"
+        raise SuiteError(msg)
 
 
-def run(suite):
-    cases = [line for line in suite.removesuffix("\n").split("\n") if not line.startswith("#")]
+def run(suite: str) -> None:
+    """Run every case of `suite`, skipping `#` lines."""
+    cases = [
+        line
+        for line in suite.removesuffix("\n").split("\n")
+        if not line.startswith("#")
+    ]
     if not cases:
-        raise SuiteError("no cases")
+        msg = "no cases"
+        raise SuiteError(msg)
     for case in cases:
         run_case(case)
 
 
 class Conformance(unittest.TestCase):
-    def test_suite_passes(self):
-        texts = [path.read_text(encoding="utf-8") for path in sorted(SUITE_DIR.glob("*.tsv"))]
+    """The suite and the runner."""
+
+    def test_suite_passes(self) -> None:
+        """Every case passes."""
+        texts = [
+            path.read_text(encoding="utf-8") for path in sorted(SUITE_DIR.glob("*.tsv"))
+        ]
         run("".join(text if text.endswith("\n") else text + "\n" for text in texts))
 
-    def test_unknown_operation_fails(self):
+    def test_unknown_operation_fails(self) -> None:
+        """An unknown operation fails."""
         with self.assertRaises(SuiteError):
             run("nope\tx\ty\n")
 
-    def test_suite_without_cases_fails(self):
+    def test_suite_without_cases_fails(self) -> None:
+        """A suite with no cases fails."""
         with self.assertRaises(SuiteError):
             run("# operation\targuments\texpected\n")

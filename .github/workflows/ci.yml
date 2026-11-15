@@ -57,6 +57,10 @@ jobs:
           - { os: windows-latest, area: hook }
           - { os: macos-latest, area: mods }
           - { os: windows-latest, area: mods }
+          - os: macos-latest
+            area: ruff
+          - os: windows-latest
+            area: ruff
     runs-on: ${{ matrix.os }}
     env:
       AREA: ${{ matrix.area }}
