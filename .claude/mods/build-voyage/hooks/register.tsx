@@ -110,13 +110,14 @@ const lines = (agents: Agent[], parentId?: string, depth = 0): Line[] =>
       ...lines(agents, agent.id, depth + 1),
     ])
 
-// A title is cut to fit; the model and tokens never are.
+// A title is cut to fit; the model and tokens never are, but the model is left out rather than cut Main session.
 const table = (tally: Run, isDone: boolean, width: number): Row[] => {
+  const main = 'Main session'
   const all: Line[] = [
     { mark: ' ', title: 'Agent', model: 'Model', tokens: 'Tokens' },
     {
       mark: isDone ? '✔' : '◉',
-      title: 'Main session',
+      title: main,
       model: tally.mainModel.replace(/^claude-/, ''),
       tokens: commas(tally.mainTokens),
     },
@@ -130,11 +131,15 @@ const table = (tally: Run, isDone: boolean, width: number): Row[] => {
   ]
   const model = longest(all.map(line => line.model))
   const tokens = longest(all.map(line => line.tokens))
-  const title = Math.min(longest(all.map(line => line.title)), Math.max(1, width - 2 - 2 - model - 2 - tokens))
+  const isModel = width - 2 - 2 - model - 2 - tokens >= main.length
+  const title = Math.min(
+    longest(all.map(line => line.title)),
+    Math.max(1, width - 2 - 2 - tokens - (isModel ? model + 2 : 0)),
+  )
 
   return all.map(line => [
     {
-      text: `${line.mark} ${cut(line.title, title).padEnd(title)}  ${line.model.padEnd(model)}  ${line.tokens.padStart(tokens)}`,
+      text: `${line.mark} ${cut(line.title, title).padEnd(title)}  ${isModel ? `${line.model.padEnd(model)}  ` : ''}${line.tokens.padStart(tokens)}`,
     },
   ])
 }

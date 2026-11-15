@@ -1213,6 +1213,44 @@ test('in a pane 30 columns wide only check commands and agent titles are cut', a
   }
 })
 
+// The main session on claude-fable-5-2 at 123,456 tokens and one agent of no tokens yet.
+const mainAt123456 = async ($: Engine, on: On) => {
+  const { clock, act } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  await act($).run('build', '10')
+  await spawn($, 'Map the parser')
+  await complete($, usage(100_000, 20_000, 3_000, 456))
+  await clock.settle()
+}
+
+test('in a 30-column pane Main session is shown uncut', async ($, on) => {
+  await mainAt123456($, on)
+
+  for (const rows of await rowsEach($, 30)) {
+    expect(rows.filter(one => one.length > 30)).toEqual([])
+    expect(agentRows(rows)[0]).toMatch(/^◉ Main session .*123,456/)
+  }
+})
+
+test('the Model column is left out exactly when keeping it would cut Main session', async ($, on) => {
+  await mainAt123456($, on)
+
+  // 2 for the mark, 12 for Main session, 2, 9 for fable-5-2, 2, 7 for 123,456.
+  for (const rows of await rowsEach($, 34)) {
+    expect(tableOf(rows)).toEqual([
+      '  Agent         Model       Tokens',
+      '◉ Main session  fable-5-2  123,456',
+      '◉ Map the par…  haiku-5-5        –',
+      '  Total                    123,456',
+    ])
+  }
+
+  for (const rows of await rowsEach($, 33)) {
+    expect(tableOf(rows).filter(one => /Model|fable|haiku/.test(one))).toEqual([])
+  }
+})
+
 test('the /voyage text answer gives the same facts in the same words without bars', async ($, on) => {
   const files = new Map<string, string>()
   const { clock, act } = world(on, files, false)
