@@ -62,13 +62,11 @@ if [ "$1" = check ]; then
   failures=
   : >"$results.tmp"
   while IFS= read -r cmd; do
-    if out=$(sh -c "$cmd" </dev/null 2>&1); then
+    if sh -c "$cmd" </dev/null >/dev/null 2>&1; then
       echo "pass $cmd" >>"$results.tmp"
     else
       echo "fail $cmd" >>"$results.tmp"
-      failures="${failures}check failed: $cmd
-$out
-"
+      failures=1
     fi
   done <<END
 $(sed -n 's/^check: //p' "$state")
@@ -76,7 +74,6 @@ END
   cat "$results.tmp"
   echo "tree $(tree)" >>"$results.tmp"
   mv "$results.tmp" "$results"
-  printf '%s' "$failures" >&2
   [ -z "$failures" ]
   exit
 fi
@@ -106,7 +103,7 @@ grep -q '^check: .' "$state" || refuse "no check: lines in $state"
 [ -f "$results" ] || refuse "the checks have not run; $again"
 
 while IFS= read -r cmd; do
-  grep -qxF "pass $cmd" "$results" || refuse "check not passing: $cmd; fix it, then $again"
+  grep -qxF "pass $cmd" "$results" || refuse "check not passing: $cmd; delegate the fix, then $again"
 done <<END
 $(sed -n 's/^check: //p' "$state")
 END
@@ -130,7 +127,7 @@ if [ "$code" -ne 0 ] && [ -z "$buckets" ]; then
   esac
 fi
 case $buckets in
-  *fail* | *cancel*) refuse "CI failing on $pr; read the log, fix the cause, push, then follow the new run" ;;
+  *fail* | *cancel*) refuse "CI failing on $pr; delegate the fix, then follow the new run" ;;
   *pending*) refuse "CI pending on $pr; wait with: gh pr checks $pr --watch" ;;
 esac
 

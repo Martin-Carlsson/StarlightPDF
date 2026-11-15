@@ -88,7 +88,6 @@ run "checks never run refuses" 2 'hook.sh check'
 
 reset 'status: working\ncheck: true\ncheck: echo boom; false\npr: https://example.test/1\n'
 check "check: fails when a check fails" 1 'fail echo boom; false'
-expect grep -q boom "$tmp/err"
 run "failing check refuses" 2 'not passing: echo boom; false'
 expect test -f "$state"
 
@@ -184,6 +183,12 @@ printf 'pass true\nfail false\npass test -f marker\n' >"$tmp/want"
 grep -v '^tree ' "$results" >"$tmp/got"
 expect cmp -s "$tmp/want" "$tmp/got"
 expect test ! -e "$dir/refusals"
+
+# The main session learns which check failed, never its output.
+reset 'status: working\ncheck: cat secret; false\n'
+echo leaked-output >"$proj/secret"
+check "check: hides a failing check's output" 1 'fail cat secret; false'
+expect sh -c '! grep -q leaked-output "$1" "$2"' - "$tmp/out" "$tmp/err"
 
 reset 'status: working\ncheck: read x\n'
 check "check: commands get no stdin" 1 'fail read x'
