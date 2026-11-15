@@ -5,8 +5,20 @@ import unittest
 
 import starlightpdf
 
-SUITE_DIR = pathlib.Path(__file__).resolve().parents[3] / "tests" / "conformance"
-OPERATIONS = {"greet": starlightpdf.greet}
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+SUITE_DIR = ROOT / "tests" / "conformance"
+
+
+def header_version(path: str) -> str:
+    """Render the header version of the file at `path`, or `error`."""
+    try:
+        major, minor = starlightpdf.header_version((ROOT / path).read_bytes())
+    except ValueError:
+        return "error"
+    return f"{major}.{minor}"
+
+
+OPERATIONS = {"header_version": header_version}
 
 
 class SuiteError(Exception):
