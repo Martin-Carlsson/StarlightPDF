@@ -1,0 +1,18 @@
+name: building
+on:
+  issues:
+    types: [closed]
+permissions:
+  contents: read
+jobs:
+  unlabel:
+    if: contains(github.event.issue.labels.*.name, 'building')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - run: gh issue edit "$NUMBER" --remove-label building
