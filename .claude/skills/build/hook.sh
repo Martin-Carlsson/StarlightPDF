@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hooks for the build skill. Usage: hook.sh stop|tool|check|ready|next|start N|merge
-# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head.
+# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head and, for the first three heads behind main, found it up to date.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user, and Bash calls running gh pr merge.
@@ -20,6 +20,7 @@ clock=$dir/started
 done=$dir/done
 lock=$dir/lock
 merged=$dir/merged
+behind=$dir/behind
 cap=30
 limit=86400
 again='run: sh .claude/skills/build/hook.sh check'
@@ -110,6 +111,7 @@ if [ "$1" = start ]; then
     echo "build: #$2 is labelled building; another build may be working on it" >&2
     exit 3
   fi
+  rm -f "$behind"
   exit 0
 fi
 
@@ -128,6 +130,7 @@ if [ "$1" = ready ] || [ "$1" = next ]; then
         b=$(gh issue view "$n" --json labels --jq 'any(.labels[]; .name == "building")')
         if [ "$b" = true ]; then continue; fi
         gh issue edit "$n" --add-label building >/dev/null
+        rm -f "$behind"
       fi
       echo "$n"
       exit 0
@@ -147,7 +150,8 @@ if [ "$1" = merge ]; then
     echo 'build: git fetch origin main failed; nothing merged' >&2
     exit 1
   fi
-  git rev-parse HEAD >"$merged"
+  h=$(git rev-parse HEAD)
+  echo "$h" >"$merged"
   found=
   failed=
   # ok|no CONDITION TEXT: record one line for the condition.
@@ -194,6 +198,7 @@ if [ "$1" = merge ]; then
     ok 'up to date' "head $short contains main $(git rev-parse --short=7 origin/main)"
   else
     no 'up to date' "head $short lacks main $(git rev-parse --short=7 origin/main)"
+    grep -qxF "$h" "$behind" 2>/dev/null || echo "$h" >>"$behind"
   fi
 
   files=$(git rev-parse 'HEAD^{tree}')
@@ -369,6 +374,11 @@ if f=$(failing); then refuse "check not passing: $f; delegate the fix, then $aga
 
 grep -qxF "tree $(tree)" "$results" || refuse "files changed since the checks ran; $again"
 
+h=$(git rev-parse HEAD 2>/dev/null || true)
+if [ "$(cat "$merged" 2>/dev/null)" = "$h" ] && grep -qxF "$h" "$behind" 2>/dev/null && [ "$(wc -l <"$behind")" -le 3 ]; then
+  refuse "head is behind main; merge origin/main, run ${again#run: }, push, record a new verdict, then run $merge"
+fi
+
 if ! grep -q '^pr: .' "$state"; then
   refuse "checks pass; open the pull request and add 'pr: <url>' to $state"
 fi
@@ -394,7 +404,7 @@ if ! grep -q '^comment: .' "$state"; then
   refuse "CI is green; post the ideas and retro comment on $pr and add 'comment: <url>' to $state"
 fi
 
-if [ ! -f "$merged" ] || [ "$(cat "$merged")" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+if [ ! -f "$merged" ] || [ "$(cat "$merged")" != "$h" ]; then
   refuse "comment recorded; run the merge command on the current head: $merge"
 fi
 

@@ -573,9 +573,11 @@ mode=next
 reset
 gh_says '10 false\n2 true\n7 false\n3 false\n5 false\n' 0 ''
 blocked 3 '20 closed' '21 open'
+echo a >"$dir/behind"
 run 'next: lowest eligible' 0 '^5$'
 expect -n 'next: only my issues' grep -q '^issue list .*--author @me' "$tmp/gh.log"
 expect -n 'next: claims it' grep -qx 'issue edit 5 --add-label building' "$tmp/gh.log"
+expect -n 'next: claim clears heads behind main' test ! -e "$dir/behind"
 
 reset
 gh_says '8 false\n4 false\n' 0 ''
@@ -834,12 +836,15 @@ ci fail https://example.test/runs/7' \
 done
 expect -n "merge condition ci" test "$good" -eq 1
 
-# Up to date: main moves on origin after the checks; the command fetches it.
+# behind: main moves on origin after the checks; the merge command fetches it and fails up to date.
+behind() {
+  more=$(git -C "$tmp/pr.git" -c user.name=t -c user.email=t@t commit-tree -m more -p main 'main^{tree}')
+  git -C "$tmp/pr.git" update-ref refs/heads/main "$more"
+  stops "up to date"
+}
 pr_docs
-more=$(git -C "$tmp/pr.git" -c user.name=t -c user.email=t@t commit-tree -m more -p main 'main^{tree}')
-git -C "$tmp/pr.git" update-ref refs/heads/main "$more"
 good=1
-stops "up to date"
+behind
 expect -n "merge condition up to date" test "$good" -eq 1
 
 # Head: the last check run passed on exactly the head commit's files.
@@ -938,6 +943,46 @@ mode=stop
 rm -f "$clock"
 printf 'status: working\ncheck: true\n' >"$state"
 run "new build after a finished one refuses" 2 'hook.sh check'
+
+# Stop: a head behind main sends the build back to merge main, for a build's first three heads.
+# Heads an earlier build left behind do not count; once up to date, the stop passes unmerged.
+good=1
+pr_docs
+printf '%s\n' a b c >"$dir/behind"
+sh "$hook" start 81 >/dev/null 2>&1 || good=0
+unset_verdict
+echo "verdict: unsafe $head doubt" >>"$state"
+behind
+stop_says 2 'origin/main'
+# CI failing too: merging main comes first.
+echo 'ci fail https://example.test/runs/7' >"$tmp/gh.checks"
+echo fail >"$tmp/gh.out"
+echo 1 >"$tmp/gh.code"
+stops ci
+stop_says 2 'origin/main'
+rm "$tmp/gh.out" "$tmp/gh.code"
+echo 'ci pass https://example.test/runs/7' >"$tmp/gh.checks"
+git -C "$proj" -c user.name=t -c user.email=t@t merge -q -m main origin/main
+git -C "$proj" push -q origin 81-x
+sh "$hook" check >/dev/null 2>&1 || true
+head=$(git -C "$proj" rev-parse HEAD)
+echo "$head" >"$tmp/gh.head"
+echo "verdict: unsafe $head doubt" >>"$state"
+merge_runs
+[ "$code" -ne 0 ] || good=0
+stop_says 0 ''
+expect -n "stop asks to merge main when the branch is behind" test "$good" -eq 1
+
+good=1
+pr_base
+for want in 2 2 2 0; do
+  echo "$want" >>"$proj/README.md"
+  pr_ready
+  behind
+  merge_runs
+  if [ "$want" -eq 2 ]; then stop_says 2 'origin/main'; else stop_says 0 ''; fi
+done
+expect -n "stop gives way on the fourth head behind main" test "$good" -eq 1
 
 # Tool: during a build, only the merge command merges.
 # tool_says WANT PATTERN TOOL INPUT_FIELDS: good=0 unless the tool hook exits WANT with output matching PATTERN.
