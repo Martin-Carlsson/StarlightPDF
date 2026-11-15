@@ -1,0 +1,14 @@
+target-version = "py311"
+
+[lint]
+select = ["ALL"]
+ignore = [
+  "COM812", # conflicts with the formatter
+  "CPY001", # copyright lives in REUSE.toml
+  "D203", # conflicts with D211
+  "D213", # conflicts with D212
+  "INP001", # scripts and unittest directories, not packages
+  "PT009", # tests use unittest, not pytest
+  "PT027", # tests use unittest, not pytest
+  "S607", # tools come from PATH, as in the shell scripts
+]

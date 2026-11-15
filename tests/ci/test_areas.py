@@ -5,20 +5,37 @@ import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FIVE = {"advisories", "core", "dependencies", "licenses", "python"}
 
 
-def areas(*paths):
+def areas(*paths: str) -> set[str]:
+    """Return the areas ci/areas.sh selects for `paths`."""
     stdin = "".join(f"{path}\n" for path in paths)
     out = subprocess.run(
-        ["sh", "ci/areas.sh"], cwd=ROOT, input=stdin, capture_output=True, text=True, check=True
+        ["sh", "ci/areas.sh"],
+        cwd=ROOT,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return set(out.split())
 
 
 class AreasTest(unittest.TestCase):
-    def test_includes(self):
+    """Areas selected for changed paths."""
+
+    def accepted(self) -> set[str]:
+        """Return the areas ci/check.sh accepts."""
+        run = subprocess.run(
+            ["sh", "ci/check.sh"], cwd=ROOT, capture_output=True, text=True, check=False
+        )
+        self.assertEqual(2, run.returncode)
+        return set(run.stderr.strip().removeprefix("usage: sh ci/check.sh ").split("|"))
+
+    def test_includes(self) -> None:
+        """Each path selects at least its areas."""
         cases = {
+            "Cargo.lock": {"advisories", "core", "dependencies", "licenses", "python"},
             "README.md": {"dependencies", "licenses"},
             "Cargo.toml": {"dependencies", "licenses"},
             "core/Cargo.toml": {"dependencies", "licenses"},
@@ -26,23 +43,37 @@ class AreasTest(unittest.TestCase):
             "ci/dependencies.sh": {"dependencies", "licenses"},
             "core/src/lib.rs": {"core", "python", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
+            "ci/licenses.sh": {"licenses", "ruff"},
+            "tests/ci/test_areas.py": {"licenses", "ruff"},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertLessEqual(expected, areas(path))
 
-    def test_all(self):
-        for path in ("Cargo.lock", "ci/check.sh", ".github/workflows/ci.yml"):
+    def test_all(self) -> None:
+        """CI's own files select every accepted area."""
+        for path in ("ci/check.sh", ".github/workflows/ci.yml"):
             with self.subTest(path=path):
-                self.assertLessEqual(FIVE, areas(path))
+                self.assertEqual(self.accepted(), areas(path))
 
-    def test_licenses_alone(self):
+    def test_every_area_reachable_and_accepted(self) -> None:
+        """Tracked files select exactly the accepted areas."""
+        paths = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout.split("\n")
+        own = {"", "ci/check.sh", ".github/workflows/ci.yml"}
+        self.assertEqual(self.accepted(), areas(*(p for p in paths if p not in own)))
+
+    def test_licenses_alone(self) -> None:
+        """Prose selects only licenses."""
         self.assertEqual({"licenses"}, areas("GLOSSARY.md"))
 
-    def test_python_without_core(self):
+    def test_python_without_core(self) -> None:
+        """The binding alone skips core."""
         self.assertNotIn("core", areas("bindings/python/src/lib.rs"))
 
-    def test_no_paths(self):
+    def test_no_paths(self) -> None:
+        """No paths select nothing."""
         self.assertEqual(set(), areas())
 
 
