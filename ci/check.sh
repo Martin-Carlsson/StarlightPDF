@@ -35,6 +35,18 @@ case $1 in
     ;;
   licenses)
     sh ci/licenses.sh
+    # covered FILE...: CHANGED (changed paths, one per line) is unset or names a FILE.
+    covered() {
+      [ -z "${CHANGED+x}" ] && return
+      for f; do printf '%s\n' "$CHANGED" | grep -qxF -- "$f" && return; done
+      return 1
+    }
+    if covered tests/ci/test_licenses.py ci/licenses.sh ci/check.sh REUSE.toml || printf '%s\n' "$CHANGED" | grep -q '^LICENSES/'; then
+      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_licenses.py
+    fi
+    if covered tests/ci/test_areas.py ci/areas.sh ci/check.sh; then
+      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_areas.py
+    fi
     exit 0
     ;;
   dependencies)

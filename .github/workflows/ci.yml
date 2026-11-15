@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       areas: ${{ steps.areas.outputs.areas }}
+      changed: ${{ steps.areas.outputs.changed }}
       date: ${{ steps.date.outputs.date }}
     steps:
       - id: date
@@ -29,10 +30,12 @@ jobs:
       - id: areas
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            areas=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^ HEAD | sh ci/areas.sh)
+            changed=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^ HEAD)
           else
-            areas=$(git ls-files | sh ci/areas.sh)
+            changed=$(git -c core.quotePath=false ls-files)
           fi
+          areas=$(printf '%s' "$changed" | sh ci/areas.sh)
+          printf 'changed<<END-%s\n%s\nEND-%s\n' "$GITHUB_RUN_ID" "$changed" "$GITHUB_RUN_ID" >>"$GITHUB_OUTPUT"
           json=$(printf '%s' "$areas" | awk 'NR > 1 { printf "," } { printf "\"%s\"", $0 }')
           echo "areas=[$json]" >>"$GITHUB_OUTPUT"
   check:
@@ -57,6 +60,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       AREA: ${{ matrix.area }}
+      CHANGED: ${{ needs.changes.outputs.changed }}
     steps:
       - name: Check out
         run: |

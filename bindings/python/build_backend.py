@@ -42,14 +42,17 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     with open(HERE / "pyproject.toml", "rb") as f:
         requires = tomllib.load(f)["project"]["requires-python"]
     with open(HERE.parents[1] / "Cargo.toml", "rb") as f:
-        version = tomllib.load(f)["workspace"]["package"]["version"]
+        package = tomllib.load(f)["workspace"]["package"]
+    version = package["version"]
     info = f"starlightpdf-{version}.dist-info"
     files = {
         MODULE: _library().read_bytes(),
         f"{info}/WHEEL": f"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: {TAG}\n".encode(),
         f"{info}/METADATA": (
-            f"Metadata-Version: 2.1\nName: starlightpdf\nVersion: {version}\nRequires-Python: {requires}\n".encode()
-        ),
+            f"Metadata-Version: 2.4\nName: starlightpdf\nVersion: {version}\nRequires-Python: {requires}\n"
+            f"License-Expression: {package['license']}\nLicense-File: LICENSE\n"
+        ).encode(),
+        f"{info}/licenses/LICENSE": (HERE.parents[1] / "LICENSE").read_bytes(),
     }
     record = "".join(
         f"{path},sha256={base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()},{len(data)}\n"
