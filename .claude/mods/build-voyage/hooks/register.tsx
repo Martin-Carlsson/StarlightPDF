@@ -16,6 +16,7 @@ const PHASES = [
   { phase: 'review', name: 'Review', status: 'Reviewing the diff against the issue.' },
   { phase: 'pr', name: 'Pull request', status: 'Opening the pull request.' },
   { phase: 'ci', name: 'CI', status: 'Waiting for CI to pass.' },
+  { phase: 'retro', name: 'Retro', status: 'Posting ideas for future issues and a retro.' },
 ]
 
 const build = atom({ plugin: 'build-voyage', key: 'voyage' } as const, null as Build | null, {

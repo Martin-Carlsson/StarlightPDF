@@ -95,7 +95,7 @@ reset 'status: working\ncheck: true\n'
 check "check: passes without a pr" 0 'pass true'
 run "missing pr refuses" 2 'pr:'
 
-reset 'status: working\ncheck: test -f marker\npr: https://example.test/1\n'
+reset 'status: working\ncheck: test -f marker\npr: https://example.test/1\ncomment: https://example.test/1#c\n'
 : >"$proj/marker"
 check "check: runs from the root" 0 'pass test -f marker'
 echo 0 >"$dir/refusals"
@@ -130,8 +130,9 @@ run "check added since the run refuses" 2 'not passing: false'
 
 # Stop: CI on the pull request must be green (gh pr checks buckets).
 pr_state='status: working\ncheck: true\npr: https://example.test/1\n'
+commented="${pr_state}comment: https://example.test/1#c\n"
 
-reset "$pr_state"
+reset "$commented"
 check "check: passes" 0 'pass true'
 gh_says 'pass\npending\n' 8 ''
 run "pending CI check refuses" 2 'pending'
@@ -150,7 +151,7 @@ gh_says 'pass\ncancel\n' 1 ''
 run "cancelled CI check refuses" 2 'failing'
 expect test ! -e "$dir/done"
 
-reset "$pr_state"
+reset "$commented"
 check "check: passes" 0 'pass true'
 gh_says '' 1 "no checks reported on the 'main' branch\n"
 run "no CI checks allows stop" 0 ''
@@ -163,10 +164,22 @@ run "other gh failure refuses" 2 '.'
 expect test ! -e "$dir/done"
 
 # A gh warning on stderr is never read as a bucket.
-reset "$pr_state"
+reset "$commented"
 check "check: passes" 0 'pass true'
 gh_says 'pass\n' 0 'warning: 1 check failed to load\n'
 run "gh warning on stderr allows stop" 0 ''
+expect cmp -s "$state" "$dir/done"
+
+# Stop: the ideas and retro comment must be recorded once CI is green.
+reset "$pr_state"
+check "check: passes" 0 'pass true'
+gh_says 'pending\n' 8 ''
+run "pending CI without a comment refuses for CI first" 2 'pending'
+gh_says 'pass\n' 0 ''
+run "green CI without a comment refuses" 2 'comment:'
+expect test ! -e "$dir/done"
+echo 'comment: https://example.test/1#c' >>"$state"
+run "green CI with a comment allows stop" 0 ''
 expect cmp -s "$state" "$dir/done"
 
 # gh is not asked before a pr is recorded.

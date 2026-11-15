@@ -535,8 +535,8 @@ test('a build in a worktree the session entered shows its own issue, phase and c
   expect(await shown($, /^✗/)).toEqual(every(''))
 })
 
-const phases = ['explore', 'test', 'implement', 'review', 'pr', 'ci'] as const
-const NAMES = ['Explore', 'Test', 'Implement', 'Review', 'Pull request', 'CI']
+const phases = ['explore', 'test', 'implement', 'review', 'pr', 'ci', 'retro'] as const
+const NAMES = ['Explore', 'Test', 'Implement', 'Review', 'Pull request', 'CI', 'Retro']
 const STATE = (phase: string, status = 'working') =>
   `status: ${status}\nissue: 12 Reject empty files\nphase: ${phase}\ncheck: a\ncheck: b\n`
 
@@ -613,6 +613,7 @@ test('the status line says what the build is doing in one sentence', async ($, o
     [STATE('review'), 'Reviewing the diff against the issue.'],
     [STATE('pr'), 'Opening the pull request.'],
     [STATE('ci'), 'Waiting for CI to pass.'],
+    [STATE('retro'), 'Posting ideas for future issues and a retro.'],
     [STATE('other'), 'Starting the build.'],
     [STATE('implement', 'blocked'), 'Waiting for your answer.'],
     [STATE('pr'), 'CI passes; the pull request is ready to merge.'],
@@ -649,7 +650,7 @@ test('the pane is titled Build #<issue> and /voyage answers in the same words', 
   const { text } = await run('voyage', '')
   const answer = text.split('\n')
 
-  expect(answer.slice(0, 9)).toEqual([
+  expect(answer.slice(0, 10)).toEqual([
     'Build #12 Reject empty files',
     '◉ Explore',
     '◎ Test',
@@ -657,6 +658,7 @@ test('the pane is titled Build #<issue> and /voyage answers in the same words', 
     '○ Review',
     '○ Pull request',
     '○ CI',
+    '○ Retro',
     'Writing tests that fail until the issue is done.',
     expect.stringMatching(/checks pass/),
   ])

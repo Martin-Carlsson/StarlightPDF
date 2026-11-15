@@ -14,9 +14,9 @@ hooks:
           command: sh "$CLAUDE_PROJECT_DIR/.claude/skills/build/hook.sh" tool
 ---
 
-Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the pull request is open and its CI is green.
+Build issue $ARGUMENTS. Do not stop until its Definition of done is met and the pull request is open, its CI is green and the retro comment is posted.
 
-A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
+A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green and its retro comment is recorded; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 
 1. **Read** the issue and `CLAUDE.md`. If the Goal or Definition of done is missing or not checkable, ask the user and update the issue. Then make sure it is labelled `build-ready` and `bug` or `feature`. Run `gh issue edit <number> --add-label building`.
 2. **Define checks.** For each Definition of done item, write a shell command that exits 0 only when the item holds, and can do so while the build runs (the issue is labelled `building`): a test only where the item needs one and `CLAUDE.md` calls for it, otherwise a direct command. Write `.claude/build/state`:
@@ -30,12 +30,12 @@ A Stop hook sends you back unless every check passes on the current files and th
 
    Run `sh .claude/skills/build/hook.sh check`: every check should fail now.
 
-   Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`, `ci`.
+   Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`, `ci`, `retro`.
 
    Then create branch `<number>-<slug>`, at most 60 characters, from `origin/main`. If it already exists, check its pull request and commits; ask only if someone else may be working on it.
 
    Show the checks. Do not wait for approval.
-3. **Orchestrate.** You plan, delegate and verify; subagents do the work. You read no source file, test file, diff or log yourself, in any step: a subagent reads them and reports what you need to plan, write the checks and verify. Brief each with the issue, its items, the files and the checks it must pass. Each report holds its result and what you must decide, never file contents or a diff.
+3. **Orchestrate.** You plan, delegate and verify; subagents do the work. You read no source file, test file, diff or log yourself, in any step: a subagent reads them and reports what you need to plan, write the checks and verify. Brief each with the issue, its items, the files and the checks it must pass. Each report holds its result, what you must decide and the ideas it came across outside the issue (one line each, with what prompted it), never file contents or a diff. Note retro material as you go: what took long, failed checks, review misses, expensive calls, missing facts.
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
    - **Test:** where an item needs a test and `CLAUDE.md` calls for it, a subagent writes it, failing, from the issue and the spec, never from the implementation.
    - **Implement:** a different subagent per item makes its check pass by the simplest means that fully meets it: instructions or configuration before code, existing code before new. Add nothing that no item needs: no extra option, abstraction, fallback, check or test. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
@@ -44,6 +44,11 @@ A Stop hook sends you back unless every check passes on the current files and th
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report. It names each failing check; a subagent reruns it and fixes the cause.
 4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `adds-dependency` if it adds one. Then add `pr: <url>` to the state file.
 5. **Follow CI.** Set `phase: ci` and run `gh pr checks <url> --watch`. If a CI check fails, a subagent reads its log (`gh run view --log-failed`), fixes the cause and pushes; follow the new run.
+6. **Retro.** Once CI is green, set `phase: retro`. This step changes no file but the state file and pushes no commit. Post one comment on the pull request with `gh pr comment`, then add `comment: <url>` to the state file. Its sections:
+   - `Ideas for future issues`: what the build's agents came across outside the issue: a bug, a missing test, a simplification or a feature. Each is one line that states the outcome, ready to pass to `/issue`, and names what prompted it. Leave out an idea that an open issue already covers (check with `gh issue list`).
+   - `Retro`: suggested changes to the agents' environment (skills, `CLAUDE.md`, checks, hooks, tools), never to the product, most severe first. Each names what happened in this build that prompted it, and is one of: navigation (something took long to find), automated check (a mistake a check could have caught; suggest it as a check, never as an instruction), review (a mistake the review missed), steering (an instruction that changed nothing, or belongs in a check), tool economy (an expensive tool call), information access (a fact the agents could not get).
+
+   A section with nothing to report reads `Nothing.`
 
 ## Rules
 
