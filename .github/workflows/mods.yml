@@ -1,5 +1,9 @@
 name: mods
-on: pull_request
+on:
+  pull_request:
+    paths:
+      - '.claude/mods/**'
+      - '.claude-plugin/**'
 permissions:
   contents: read
 jobs:
