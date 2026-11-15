@@ -23,7 +23,7 @@ _Avoid_: {rejected synonyms}
 - A file covers one topic and holds every decision on it: a title, then per decision its context, the decision and why.
 - Add a decision to the existing file on its topic; make a new file only when none covers it.
 - Name files `descriptive-slug.md`, unnumbered, so the name alone tells an agent the topic.
-- Each file stands alone.
+- Each file stands alone; never build on another file.
 - When a decision changes, rewrite it in place; when it no longer applies, delete it, or the file if it was the last. Never add a superseding one.
 - Record only decisions that are hard to reverse, surprising without context and a real trade-off.
 
