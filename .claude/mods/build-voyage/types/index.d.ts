@@ -46,6 +46,11 @@ export type Run = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'build-voyage': { voyage: Shaped<Build | null>; launch: Shaped<Launch | null>; stale: Shaped<Stale | null>; run: Shaped<Run | null> }
+    'build-voyage': {
+      voyage: Shaped<Build | null>
+      launch: Shaped<Launch | null>
+      stale: Shaped<Stale | null>
+      run: Shaped<Run | null>
+    }
   }
 }

@@ -29,8 +29,7 @@ const stale = atom({ plugin: 'build-voyage', key: 'stale' } as const, null as St
 
 const run = atom({ plugin: 'build-voyage', key: 'run' } as const, null as Run | null, { shape: 'run-2' })
 
-const field = (text: string, name: string): string =>
-  text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
+const field = (text: string, name: string): string => text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
 
 export const parse = (
   state: string,
@@ -90,7 +89,8 @@ const flow = <T,>(items: T[], length: (item: T) => number, width: number, gap: n
   items.reduce<T[][]>((all, item) => {
     const last = all.at(-1)
 
-    return last !== undefined && last.reduce((sum, each) => sum + length(each), 0) + gap * last.length + length(item) <= width
+    return last !== undefined &&
+      last.reduce((sum, each) => sum + length(each), 0) + gap * last.length + length(item) <= width
       ? [...all.slice(0, -1), [...last, item]]
       : [...all, [item]]
   }, [])
@@ -177,7 +177,8 @@ const rows = (one: Build | null, tally: Run | null, columns?: number): Row[][] =
     : one.isBlocked
       ? ['Needs you', 'warning']
       : ['Working', 'suggestion']
-  const elapsed = tally === null ? '' : `  ${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m`
+  const elapsed =
+    tally === null ? '' : `  ${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m`
   const gap = columns === undefined ? 2 : Math.max(1, columns - name.length - state.length - elapsed.length)
   const gauges: Gauge[] = [
     {
@@ -249,8 +250,16 @@ const rows = (one: Build | null, tally: Run | null, columns?: number): Row[][] =
       : [
           one.checks.map(check => [
             {
-              text: cut(`${check.result === 'pass' ? '✔' : check.result === 'fail' ? '✘' : '○'} ${check.command}`, width),
-              color: check.result === 'pass' ? ('success' as const) : check.result === 'fail' ? ('warning' as const) : ('inactive' as const),
+              text: cut(
+                `${check.result === 'pass' ? '✔' : check.result === 'fail' ? '✘' : '○'} ${check.command}`,
+                width,
+              ),
+              color:
+                check.result === 'pass'
+                  ? ('success' as const)
+                  : check.result === 'fail'
+                    ? ('warning' as const)
+                    : ('inactive' as const),
             },
           ]),
         ]),
@@ -295,7 +304,16 @@ const look = async ($: EngineInterface): Promise<boolean> => {
     await update($, stale, () => null)
   }
   const next: Build | null = isLaunched
-    ? { issue: launched.issue, phase: 'explore', isBlocked: false, isDone: false, checks: [], minutesLeft: null, refusals: 0, pr: '' }
+    ? {
+        issue: launched.issue,
+        phase: 'explore',
+        isBlocked: false,
+        isDone: false,
+        checks: [],
+        minutesLeft: null,
+        refusals: 0,
+        pr: '',
+      }
     : state === ''
       ? null
       : parse(
@@ -342,11 +360,13 @@ let queue: Promise<boolean> = Promise.resolve(false)
 
 // One look at a time, after `step`; true while a closed pane should reopen.
 const refresh = ($: EngineInterface, step: () => Promise<unknown> = async () => undefined): Promise<boolean> => {
-  queue = queue.catch(() => false).then(async () => {
-    await step()
+  queue = queue
+    .catch(() => false)
+    .then(async () => {
+      await step()
 
-    return look($)
-  })
+      return look($)
+    })
 
   return queue
 }
@@ -423,7 +443,10 @@ export const register: Register = on => {
       const agent: Agent = { id, description: e.description, model: result.model, isRunning: true, tokens: 0 }
       await update($, run, one =>
         one?.isOpen === true && (e.parentAgentId === undefined || one.agents.some(each => each.id === e.parentAgentId))
-          ? { ...one, agents: [...one.agents, e.parentAgentId === undefined ? agent : { ...agent, parentId: e.parentAgentId }] }
+          ? {
+              ...one,
+              agents: [...one.agents, e.parentAgentId === undefined ? agent : { ...agent, parentId: e.parentAgentId }],
+            }
           : one,
       )
     }
@@ -446,7 +469,8 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const id = e.agentId
     const u = e.usage
-    const used = u === undefined ? 0 : u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+    const used =
+      u === undefined ? 0 : u.input_tokens + u.output_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
 
     await update($, run, one =>
       one === null || !one.isOpen
@@ -483,9 +507,9 @@ export const register: Register = on => {
                   part.href === undefined ? (
                     <Text
                       color={part.color ?? 'text'}
-                      weight={part.isBold === true ? 'bold' : undefined}
-                      italic={part.isItalic}
-                      dimColor={part.isDim}
+                      weight={part.isBold === true ? 'bold' : 'regular'}
+                      italic={part.isItalic === true}
+                      dimColor={part.isDim === true}
                     >
                       {part.text}
                     </Text>

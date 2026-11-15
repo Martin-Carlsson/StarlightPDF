@@ -4,6 +4,9 @@ on:
     types: [closed]
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   unlabel:
     if: contains(github.event.issue.labels.*.name, 'building')

@@ -5,10 +5,18 @@ set -eu
 advisories=0
 core=0
 dependencies=0
+hook=0
 licenses=0
+mods=0
 python=0
+workflows=0
 while IFS= read -r path || [ -n "$path" ]; do
   licenses=1
+  case $path in
+    .github/workflows/*) workflows=1 ;;
+    .claude/skills/build/*) hook=1 ;;
+    .claude/mods/*) mods=1 ;;
+  esac
   case $path in
     README.md) dependencies=1 ;;
     *.md | REUSE.toml | ci/licenses.sh) ;;
@@ -39,5 +47,8 @@ done
 if [ "$advisories" = 1 ]; then echo advisories; fi
 if [ "$core" = 1 ]; then echo core; fi
 if [ "$dependencies" = 1 ]; then echo dependencies; fi
+if [ "$hook" = 1 ]; then echo hook; fi
 if [ "$licenses" = 1 ]; then echo licenses; fi
+if [ "$mods" = 1 ]; then echo mods; fi
 if [ "$python" = 1 ]; then echo python; fi
+if [ "$workflows" = 1 ]; then echo workflows; fi

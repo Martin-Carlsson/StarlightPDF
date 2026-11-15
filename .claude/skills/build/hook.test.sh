@@ -224,6 +224,32 @@ code=0
 expect test "$code" -eq 0
 expect grep -qx 'pass test -f marker' "$tmp/out"
 
+# mods_base: commit a failing type-check stub and make it origin/main.
+mods_base() {
+  mkdir -p "$proj/.claude/mods"
+  echo 'exit 1' >"$proj/.claude/mods/typecheck.sh"
+  git -C "$proj" add -A
+  git -C "$proj" -c user.name=t -c user.email=t@t commit -qm base
+  git -C "$proj" update-ref refs/remotes/origin/main HEAD
+}
+
+# Check: a build that changes .claude/mods fails while the type-check fails.
+reset 'status: working\ncheck: true\npr: https://example.test/1\ncomment: https://example.test/1#c\n'
+mods_base
+echo 'x' >"$proj/.claude/mods/new.ts"
+check "check: failing type-check fails a mods change" 1 ''
+run "stop refuses while the type-check fails" 2 'not passing: sh .claude/mods/typecheck.sh'
+
+reset 'status: working\ncheck: true\ncheck: sh .claude/mods/typecheck.sh\n'
+mods_base
+echo 'x' >"$proj/.claude/mods/new.ts"
+check "check: failing type-check fails with its own check line" 1 ''
+
+reset 'status: working\ncheck: true\n'
+mods_base
+echo 'x' >"$proj/other"
+check "check: type-check skipped when mods are unchanged" 0 'pass true'
+
 # The hooks themselves never run a command from the state file.
 reset 'status: working\ncheck: touch pwned\npr: https://example.test/1\n'
 run "stop does not run checks" 2 'hook.sh check'

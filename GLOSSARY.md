@@ -21,5 +21,5 @@ A set of checks run together by `sh ci/check.sh <area>`. CI runs the areas that 
 _Avoid_: job
 
 **Nightly**:
-The 22:00 UTC CI run of every area on Ubuntu, macOS and Windows; when all pass, it tags `main` as `nightly-YYYY-MM-DD`.
+The 22:00 UTC CI run of every area; when all pass, it tags `main` as `nightly-YYYY-MM-DD`.
 _Avoid_: nightly build
