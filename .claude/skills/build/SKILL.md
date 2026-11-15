@@ -28,6 +28,8 @@ A Stop hook sends you back unless every check passes on the current files and th
    check: <command, run from the repository root>
    ```
 
+   Checks that read results of one test run share one command before the first ` | `, a plain one (words, paths and `2>&1` only), e.g. `<suite> 2>&1 | grep -qxF '<test>'`: `hook.sh check` has it run once and feeds its output to each check's filter. An item whose behaviour can only be observed after merge gets a static check; the pull request says it is verifiable only after merge, with the command to run then.
+
    Run `sh .claude/skills/build/hook.sh check`: every check should fail now.
 
    Keep `phase:` current: `explore`, `test`, `implement`, `review`, `pr`, `ci`, `retro`.
@@ -37,9 +39,11 @@ A Stop hook sends you back unless every check passes on the current files and th
    Show the checks. Do not wait for approval.
 3. **Orchestrate.** You plan, delegate and verify; subagents do the work. You read no source file, test file, diff or log yourself, in any step: a subagent reads them and reports what you need to plan, write the checks and verify. Brief each with the issue, its items, the files and the checks it must pass. Each report holds its result, what you must decide and the ideas it came across outside the issue (one line each, with what prompted it), never file contents or a diff. Note retro material as you go: what took long, failed checks, review misses, expensive calls, missing facts.
    - **Explore:** subagents map the relevant code and spec clauses, in parallel.
-   - **Test:** where an item needs a test and `CLAUDE.md` calls for it, a subagent writes it, failing, from the issue and the spec, never from the implementation.
+   - **Test:** where an item needs a test and `CLAUDE.md` calls for it, a subagent writes it, failing, from the issue and the spec, never from the implementation, and none for behaviour the issue puts out of scope.
    - **Implement:** a different subagent per item makes its check pass by the simplest means that fully meets it: instructions or configuration before code, existing code before new. Add nothing that no item needs: no extra option, abstraction, fallback, check or test. Bug: reproduce first, then fix. Run items in parallel when their files don't overlap.
-   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It traces every file, function and test the diff adds to an item, and asks for the rest to be removed or simplified, and for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
+   - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It traces every file, function and test the diff adds to an item, and asks for the rest to be removed or simplified, for tests that repeat another to be removed, for each limit an item sets to be tried with the input that fits it worst (a width with one unbreakable word), and for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
+
+   While a subagent runs, end your turn and never poll: the Stop hook lets a stop through.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report. It names each failing check; a subagent reruns it and fixes the cause.
 4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `adds-dependency` if it adds one. Then add `pr: <url>` to the state file.
