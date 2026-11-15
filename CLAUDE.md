@@ -20,10 +20,11 @@ _Avoid_: {rejected synonyms}
 
 ## .architecture-decisions/
 
-- One decision per file: a title, then 1–3 sentences on context, decision and why.
-- Name files `descriptive-slug.md`, unnumbered. An agent must be able to find the decision from the name alone.
-- Each file stands alone; never build on another decision.
-- When a decision changes, rewrite its file; when it no longer applies, delete it. Never add a superseding one.
+- A file covers one topic and holds every decision on it: a title, then per decision its context, the decision and why.
+- Add a decision to the existing file on its topic; make a new file only when none covers it.
+- Name files `descriptive-slug.md`, unnumbered, so the name alone tells an agent the topic.
+- Each file stands alone; never build on another file.
+- When a decision changes, rewrite it in place; when it no longer applies, delete it, or the file if it was the last. Never add a superseding one.
 - Record only decisions that are hard to reverse, surprising without context and a real trade-off.
 
 # Testing
