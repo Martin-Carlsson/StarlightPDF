@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hooks for the build skill. Usage: hook.sh stop|tool|check
-# stop: refuse until every check passes on the current files, a PR is recorded and its CI is green.
+# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
 #       Gives way once after 30 refusals with no check run in between.
 # tool: refuse tool calls after 24 hours without the user.
 # check: run every check and record the results. Only this mode runs the state file's commands.
@@ -130,6 +130,10 @@ case $buckets in
   *fail* | *cancel*) refuse "CI failing on $pr; delegate the fix, then follow the new run" ;;
   *pending*) refuse "CI pending on $pr; wait with: gh pr checks $pr --watch" ;;
 esac
+
+if ! grep -q '^comment: .' "$state"; then
+  refuse "CI is green; post the ideas and retro comment on $pr and add 'comment: <url>' to $state"
+fi
 
 cp "$state" "$done"
 rm -f "$count" "$clock"
