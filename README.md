@@ -190,7 +190,7 @@ CI builds prebuilt binaries per platform and publishes them to each package regi
 | Command | What it does |
 | --- | --- |
 | `/issue <description>` | Drafts a bug or feature issue. |
-| `/build [issue number]` | Builds the issue, opens a pull request and merges it when the merge command's conditions hold; refuses one blocked by an open issue and asks first if it is `building`. Without a number, builds the lowest open `build-ready` issue that is neither. |
+| `/build [issue number]` | Builds the issue, opens a pull request and merges it when the merge command's conditions hold; refuses one blocked by an open issue and asks first if it is `building`. Without a number, labels `building` and builds the lowest open `build-ready` issue you opened that is neither. |
 
 `/build` shows a progress pane, enabled and kept up to date by `.claude/settings.json`. Install it if missing:
 

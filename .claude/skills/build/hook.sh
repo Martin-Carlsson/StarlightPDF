@@ -1,11 +1,12 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check|next|start N|merge
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|ready|next|start N|merge
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user, and Bash calls running gh pr merge.
 # check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
-# next: print the lowest open build-ready issue not building and blocked by no open issue; exit 1 if none.
+# ready: print the lowest open build-ready issue of mine not building and blocked by no open issue; exit 1 if none.
+# next: as ready, and label it building.
 # start N: exit 1 naming N's open blockers; else 3 if N is building and the state does not name it.
 # merge: label and squash-merge the PR if every condition holds; else name each failed one and exit 1.
 set -eu
@@ -99,12 +100,13 @@ if [ "$1" = start ]; then
   exit 0
 fi
 
-if [ "$1" = next ]; then
-  list=$(gh issue list --label build-ready --limit 1000 --json number,labels \
+if [ "$1" = ready ] || [ "$1" = next ]; then
+  list=$(gh issue list --label build-ready --author @me --limit 1000 --json number,labels \
     --jq '.[] | "\(.number) \(any(.labels[]; .name == "building"))"')
   for n in $(printf '%s\n' "$list" | grep ' false$' | cut -d' ' -f1 | sort -n); do
     open=$(blockers "$n")
     if [ -z "$open" ]; then
+      if [ "$1" = next ]; then gh issue edit "$n" --add-label building >/dev/null; fi
       echo "$n"
       exit 0
     fi
