@@ -539,6 +539,8 @@ reset
 gh_says '10 false\n2 true\n7 false\n3 false\n5 false\n' 0 ''
 blocked 3 '20 closed' '21 open'
 run 'next: lowest eligible' 0 '^5$'
+expect -n 'next: only my issues' grep -q '^issue list .*--author @me' "$tmp/gh.log"
+expect -n 'next: claims it' grep -qx 'issue edit 5 --add-label building' "$tmp/gh.log"
 
 reset
 gh_says '8 false\n4 false\n' 0 ''
@@ -549,6 +551,14 @@ reset
 gh_says '2 false\n6 true\n' 0 ''
 blocked 2 '20 closed' '21 open'
 run 'next: none' 1 '.'
+expect -n 'next: none claims nothing' sh -c '! grep -q "^issue edit" "$1"' _ "$tmp/gh.log"
+
+mode=ready
+reset
+gh_says '9 false
+' 0 ''
+run 'ready: picks' 0 '^9$'
+expect -n 'ready: claims nothing' sh -c '! grep -q "^issue edit" "$1"' _ "$tmp/gh.log"
 mode=stop
 
 # Start N: refuse an issue blocked by an open issue (exit 1), ask about
