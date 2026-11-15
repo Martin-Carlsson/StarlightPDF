@@ -16,6 +16,7 @@ while IFS= read -r path || [ -n "$path" ]; do
     .github/workflows/*) workflows=1 ;;
     .claude/skills/build/*) hook=1 ;;
     .claude/mods/*) mods=1 ;;
+    Cargo.toml | */Cargo.toml) dependencies=1 ;;
   esac
   case $path in
     README.md) dependencies=1 ;;
@@ -32,7 +33,8 @@ while IFS= read -r path || [ -n "$path" ]; do
       core=1
       python=1
       ;;
-    bindings/python/*) python=1 ;;
+    bindings/python/* | LICENSE) python=1 ;;
+    tests/ci/*) ;;
     core/* | tests/* | ci/* | .cargo/* | supply-chain/*)
       core=1
       python=1

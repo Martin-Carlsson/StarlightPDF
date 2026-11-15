@@ -1,12 +1,13 @@
 #!/bin/sh
-# Fails when a file lacks a declared copyright or license, or LICENSES/ differs from the licenses declared.
+# Fails when a file lacks a declared copyright or license, a license is off the allow list, or LICENSES/ differs from the licenses declared.
 # Reads only REUSE.toml (no in-file tags or .license files); replaces `reuse lint`, which is partly GPL.
 set -eu
 cd "$(dirname "$0")/.."
 exec "${PY:?run through ci/check.sh}" -I - <<'PY'
-import os, re, subprocess, sys, tomllib
+import os, pathlib, re, subprocess, sys, tomllib
 
 KEYS = {"path", "precedence", "SPDX-FileCopyrightText", "SPDX-License-Identifier"}
+ALLOWED = {"Apache-2.0", "BSD-3-Clause", "MPL-2.0", "LLVM-exception"}
 errors = []
 
 
@@ -100,17 +101,16 @@ for path in paths:
             if token.upper() in ("AND", "OR", "WITH"):
                 continue
             token = token.removesuffix("+")
-            if re.fullmatch(r"[A-Za-z0-9.-]+", token):
-                used.add(token)
-            else:
-                fail(f"{path}: invalid license identifier {token}")
+            if token not in ALLOWED:
+                fail(f"{path}: license {token} not allowed")
+            used.add(token)
 
 present = {p for p in paths if p.startswith("LICENSES/")}
 wanted = {f"LICENSES/{i}.txt" for i in used}
 for p in sorted(wanted - present):
     fail(f"{p}: missing")
 for p in sorted(wanted & present):
-    if os.path.getsize(p) == 0:
+    if not pathlib.Path(p).read_bytes().strip():
         fail(f"{p}: lacks the text")
 for p in sorted(present - wanted):
     fail(f"{p}: not a declared license text")
