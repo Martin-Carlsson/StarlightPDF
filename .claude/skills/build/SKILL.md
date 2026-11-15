@@ -42,7 +42,7 @@ A Stop hook sends you back unless every check passes on the current files and th
    - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It traces every file, function and test the diff adds to an item, and asks for the rest to be removed or simplified, and for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report. It names each failing check; a subagent reruns it and fixes the cause.
-4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `dependencies` if it adds one. Then add `pr: <url>` to the state file.
+4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `adds-dependency` if it adds one. Then add `pr: <url>` to the state file.
 5. **Follow CI.** Set `phase: ci` and run `gh pr checks <url> --watch`. If a CI check fails, a subagent reads its log (`gh run view --log-failed`), fixes the cause and pushes; follow the new run.
 
 ## Rules
