@@ -27,7 +27,7 @@ const launch = atom({ plugin: 'build-voyage', key: 'launch' } as const, null as 
 
 const stale = atom({ plugin: 'build-voyage', key: 'stale' } as const, null as Stale | null, { shape: 'stale-1' })
 
-const run = atom({ plugin: 'build-voyage', key: 'run' } as const, null as Run | null, { shape: 'run-1' })
+const run = atom({ plugin: 'build-voyage', key: 'run' } as const, null as Run | null, { shape: 'run-2' })
 
 const field = (text: string, name: string): string =>
   text.match(new RegExp(`^${name}: (.*)$`, 'm'))?.[1]?.trim() ?? ''
@@ -67,21 +67,33 @@ export const parse = (
 const allPass = (one: Build | null): boolean =>
   one !== null && one.checks.length > 0 && one.checks.every(check => check.result === 'pass')
 
-const mark = (check: Check): string => (check.result === 'pass' ? '✓' : check.result === 'fail' ? '✗' : '·')
+type Part = { text: string; color?: Color; isBold?: boolean; isItalic?: boolean; isDim?: boolean; href?: string }
+type Row = Part[]
 
-type Row = {
-  text: string
-  color: Color
-  isBold?: boolean
-  isItalic?: boolean
-  isDim?: boolean
-  isFixed?: boolean
-  bar?: { value: number; max: number }
-}
-
-const commas = (n: number): string => String(n).replace(/\B(?=(\d{3})+$)/g, ',')
+const commas = (n: number): string => (n === 0 ? '–' : String(n).replace(/\B(?=(\d{3})+$)/g, ','))
 
 const longest = (texts: string[]): number => texts.reduce((most, text) => Math.max(most, text.length), 0)
+
+const buildName = (issue: string): string => {
+  const number = /^\d+/.exec(issue)?.[0]
+
+  return number === undefined ? 'Build' : `Build #${number}`
+}
+
+const cut = (text: string, width: number): string => (text.length > width ? `${text.slice(0, width - 1)}…` : text)
+
+const pieces = (word: string, width: number): string[] =>
+  word.length <= width ? [word] : [word.slice(0, width), ...pieces(word.slice(width), width)]
+
+// Items packed greedily into rows of at most `width`, `gap` apart.
+const flow = <T,>(items: T[], length: (item: T) => number, width: number, gap: number): T[][] =>
+  items.reduce<T[][]>((all, item) => {
+    const last = all.at(-1)
+
+    return last !== undefined && last.reduce((sum, each) => sum + length(each), 0) + gap * last.length + length(item) <= width
+      ? [...all.slice(0, -1), [...last, item]]
+      : [...all, [item]]
+  }, [])
 
 type Line = { mark: string; title: string; model: string; tokens: string }
 
@@ -90,7 +102,7 @@ const lines = (agents: Agent[], parentId?: string, depth = 0): Line[] =>
     .filter(agent => agent.parentId === parentId)
     .flatMap(agent => [
       {
-        mark: agent.isRunning ? '⏳' : '✅',
+        mark: agent.isRunning ? '◉' : '✔',
         title: `${'  '.repeat(depth)}${agent.description}`,
         model: agent.model.replace(/^claude-/, ''),
         tokens: commas(agent.tokens),
@@ -99,36 +111,58 @@ const lines = (agents: Agent[], parentId?: string, depth = 0): Line[] =>
     ])
 
 // A title is cut to fit; the model and tokens never are.
-const table = (tally: Run, columns?: number): Row[] => {
-  const agents = lines(tally.agents)
-  const all = [
-    ...agents,
-    { mark: '  ', title: 'Total', model: '', tokens: commas(tally.agents.reduce((sum, agent) => sum + agent.tokens, tally.mainTokens)) },
+const table = (tally: Run, isDone: boolean, width: number): Row[] => {
+  const all: Line[] = [
+    { mark: ' ', title: 'Agent', model: 'Model', tokens: 'Tokens' },
+    {
+      mark: isDone ? '✔' : '◉',
+      title: 'Main session',
+      model: tally.mainModel.replace(/^claude-/, ''),
+      tokens: commas(tally.mainTokens),
+    },
+    ...lines(tally.agents),
+    {
+      mark: ' ',
+      title: 'Total',
+      model: '',
+      tokens: commas(tally.agents.reduce((sum, agent) => sum + agent.tokens, tally.mainTokens)),
+    },
   ]
-  const model = longest(agents.map(line => line.model))
+  const model = longest(all.map(line => line.model))
   const tokens = longest(all.map(line => line.tokens))
-  const title = Math.min(
-    longest(all.map(line => line.title)),
-    columns === undefined ? Infinity : Math.max(1, columns - 3 - 2 - model - 2 - tokens),
-  )
+  const title = Math.min(longest(all.map(line => line.title)), Math.max(1, width - 2 - 2 - model - 2 - tokens))
 
-  return all.map(line => ({
-    text: `${line.mark} ${(line.title.length > title ? `${line.title.slice(0, title - 1)}…` : line.title).padEnd(title)}  ${line.model.padEnd(model)}  ${line.tokens.padStart(tokens)}`,
-    color: 'text' as const,
-    isFixed: true,
-  }))
+  return all.map(line => [
+    {
+      text: `${line.mark} ${cut(line.title, title).padEnd(title)}  ${line.model.padEnd(model)}  ${line.tokens.padStart(tokens)}`,
+    },
+  ])
 }
 
-// Pane lines in groups; the text answer is the same lines.
+type Gauge = { label: string; value: string; ratio: number; color: Color }
+
+const LABEL = 15
+
+// Pane rows in groups; the text answer is the same rows, uncut and without bars.
 const rows = (one: Build | null, tally: Run | null, columns?: number): Row[][] => {
   if (one === null) {
     return [
       [
-        { text: 'Build', color: 'suggestion', isBold: true },
-        { text: 'No build is running. Start one with /build and an issue number.', color: 'text', isDim: true },
+        [{ text: 'Build', color: 'suggestion', isBold: true }],
+        [{ text: 'No build is running. Start one with /build and an issue number.', color: 'text', isDim: true }],
       ],
     ]
   }
+  const width = columns ?? Infinity
+  const prose = (text: string, part: Omit<Part, 'text'> = {}): Row[] =>
+    text === ''
+      ? []
+      : flow(
+          text.split(' ').flatMap(word => pieces(word, width)),
+          word => word.length,
+          width,
+          1,
+        ).map(words => [{ ...part, text: words.join(' ') }])
   const at = one.isDone ? PHASES.length : PHASES.findIndex(each => each.phase === one.phase)
   const passed = one.checks.filter(check => check.result === 'pass').length
   const left = one.minutesLeft
@@ -137,67 +171,101 @@ const rows = (one: Build | null, tally: Run | null, columns?: number): Row[][] =
     : one.isBlocked
       ? 'Waiting for your answer.'
       : (PHASES[at]?.status ?? 'Starting the build.')
-
-  return [
-    [{ text: one.issue === '' ? 'Build' : `Build #${one.issue}`, color: 'suggestion', isBold: true }],
-    PHASES.map((each, index) => ({
-      text: `${index < at ? '◉' : index === at ? '◎' : '○'} ${each.name}`,
-      color: index < at ? 'success' : index === at ? 'claude' : 'inactive',
-    })),
-    [{ text: status, color: one.isBlocked ? 'warning' : 'text', isItalic: true }],
-    [
-      {
-        text: `${passed} of ${one.checks.length} checks pass`,
-        color: 'success',
-        bar: { value: passed, max: Math.max(1, one.checks.length) },
-      },
-      ...one.checks.map(check => ({
-        text: `${mark(check)} ${check.command}`,
-        isFixed: true,
-        color: check.result === 'pass' ? 'success' : check.result === 'fail' ? 'warning' : 'inactive',
-      })),
-    ],
-    [
-      ...(left === null
-        ? []
-        : [
-            {
-              text: `${Math.floor(left / 60)}h ${left % 60}m left before the build pauses`,
-              color: left < 120 ? 'warning' : 'suggestion',
-              bar: { value: left, max: LIMIT_MINUTES },
-            },
-          ]),
-      {
-        text: `${one.refusals} of ${CAP} stops refused`,
-        color: one.refusals > 20 ? 'error' : 'permission',
-        bar: { value: one.refusals, max: CAP },
-      },
-    ],
-    ...(tally === null
+  const name = buildName(one.issue)
+  const [state, stateColor]: [string, Color] = one.isDone
+    ? ['Done', 'success']
+    : one.isBlocked
+      ? ['Needs you', 'warning']
+      : ['Working', 'suggestion']
+  const elapsed = tally === null ? '' : `  ${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m`
+  const gap = columns === undefined ? 2 : Math.max(1, columns - name.length - state.length - elapsed.length)
+  const gauges: Gauge[] = [
+    {
+      label: 'Checks pass',
+      value: one.checks.length === 0 ? 'none yet' : `${passed} of ${one.checks.length}`,
+      ratio: passed / Math.max(1, one.checks.length),
+      color: 'success',
+    },
+    ...(left === null || one.isDone
       ? []
       : [
-          [
-            {
-              text: `${Math.floor(tally.elapsedMs / 3_600_000)}h ${Math.floor(tally.elapsedMs / 60_000) % 60}m elapsed`,
-              color: 'suggestion' as const,
-            },
-            ...table(tally, columns),
-          ],
+          {
+            label: 'Pauses in',
+            value: `${Math.floor(left / 60)}h ${left % 60}m`,
+            ratio: left / LIMIT_MINUTES,
+            color: left < 120 ? ('warning' as const) : ('suggestion' as const),
+          },
         ]),
-    ...(one.pr === '' ? [] : [[{ text: one.pr, color: 'success' as const }]]),
+    ...(one.isDone
+      ? []
+      : [
+          {
+            label: 'Stops refused',
+            value: `${one.refusals} of ${CAP}`,
+            ratio: Math.min(1, one.refusals / CAP),
+            color: one.refusals > 20 ? ('error' as const) : ('permission' as const),
+          },
+        ]),
+  ]
+  const values = longest(gauges.map(gauge => gauge.value))
+  const bar = Math.max(0, width - LABEL - 2 - values)
+
+  return [
+    [
+      [
+        { text: name + ' '.repeat(gap), isBold: true },
+        { text: state, color: stateColor },
+        ...(elapsed === '' ? [] : [{ text: elapsed }]),
+      ],
+      ...prose(one.issue.replace(/^\d+\s*/, '')),
+    ],
+    [
+      ...flow(
+        PHASES.map((each, index) => ({
+          text: `${index < at ? '✔' : index === at ? '◉' : '○'} ${each.name}`,
+          color: index < at ? ('success' as const) : index === at ? ('claude' as const) : ('inactive' as const),
+        })),
+        part => part.text.length,
+        width,
+        2,
+      ).map(row => row.map((part, index) => (index === 0 ? part : { ...part, text: `  ${part.text}` }))),
+      ...prose(status, { color: one.isBlocked ? 'warning' : 'text', isItalic: true }),
+      ...(one.pr === '' ? [] : [[{ text: `Pull request #${one.pr.replace(/^.*\D/, '')}`, href: one.pr }]]),
+    ],
+    gauges.map(gauge => [
+      { text: gauge.label.padEnd(LABEL) },
+      ...(columns === undefined
+        ? [{ text: gauge.value, color: gauge.color }]
+        : [
+            {
+              text: '━'.repeat(Math.round(gauge.ratio * bar)) + '─'.repeat(bar - Math.round(gauge.ratio * bar)),
+              color: gauge.color,
+            },
+            { text: `  ${gauge.value.padStart(values)}`, color: gauge.color },
+          ]),
+    ]),
+    ...(one.checks.length === 0
+      ? []
+      : [
+          one.checks.map(check => [
+            {
+              text: cut(`${check.result === 'pass' ? '✔' : check.result === 'fail' ? '✘' : '○'} ${check.command}`, width),
+              color: check.result === 'pass' ? ('success' as const) : check.result === 'fail' ? ('warning' as const) : ('inactive' as const),
+            },
+          ]),
+        ]),
+    ...(tally === null || tally.agents.length === 0 ? [] : [table(tally, one.isDone, width)]),
   ]
 }
 
 const describe = (one: Build | null, tally: Run | null): string =>
   rows(one, tally)
     .flat()
-    .map(row => row.text)
+    .map(row => row.map(part => (part.href === undefined ? part.text : `${part.text} ${part.href}`)).join(''))
     .join('\n')
 
 const open = async ($: EngineInterface): Promise<UiOpenResult> => {
-  const number = /^\d+/.exec((await read($, build))?.issue ?? '')?.[0]
-
-  return $.ui.open({ id: PANE, title: number === undefined ? 'Build' : `Build #${number}` })
+  return $.ui.open({ id: PANE, title: buildName((await read($, build))?.issue ?? '') })
 }
 
 // Polls only while a build runs; a tool call notices one that starts.
@@ -330,12 +398,13 @@ export const register: Register = on => {
 
   on('command.run', { command: 'build' }, async ($, e, next) => {
     const number = /^\d+/.exec(e.args.trim())?.[0]
+    const mainModel = await $.session.model()
     await refresh($, async () => {
       const state = await stateNow($)
       await update($, stale, () => null)
       await update($, launch, () => ({ issue: number === undefined ? '' : String(Number(number)), state }))
       const startedMs = await $.clock.now()
-      await update($, run, () => ({ startedMs, elapsedMs: 0, isOpen: true, mainTokens: 0, agents: [] }))
+      await update($, run, () => ({ startedMs, elapsedMs: 0, isOpen: true, mainModel, mainTokens: 0, agents: [] }))
     })
     const opened = await open($)
 
@@ -402,35 +471,30 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const width = Math.max(1, e.props.bodyColumns)
+    const { Box, Text, Link } = $.ui.resolve(e)
 
     return (
       <Box flexDirection="column" gap={1}>
-        {rows(await read($, build), await read($, run), width).map(group => (
+        {rows(await read($, build), await read($, run), Math.max(1, e.props.bodyColumns)).map(group => (
           <Box flexDirection="column">
-            {group.flatMap(row => {
-              const filled = row.bar === undefined ? 0 : Math.round((Math.min(row.bar.max, Math.max(0, row.bar.value)) / row.bar.max) * width)
-
-              return [
-                <Text
-                  color={row.color}
-                  weight={row.isBold === true ? 'bold' : undefined}
-                  italic={row.isItalic}
-                  dimColor={row.isDim}
-                  wrap={row.isFixed === true ? 'truncate-end' : undefined}
-                >
-                  {row.text}
-                </Text>,
-                ...(row.bar === undefined
-                  ? []
-                  : [
-                      <Text color={row.color} wrap="truncate-end">
-                        {'█'.repeat(filled) + '░'.repeat(width - filled)}
-                      </Text>,
-                    ]),
-              ]
-            })}
+            {group.map(row => (
+              <Box flexDirection="row">
+                {row.map(part =>
+                  part.href === undefined ? (
+                    <Text
+                      color={part.color ?? 'text'}
+                      weight={part.isBold === true ? 'bold' : undefined}
+                      italic={part.isItalic}
+                      dimColor={part.isDim}
+                    >
+                      {part.text}
+                    </Text>
+                  ) : (
+                    <Link href={part.href} label={part.text} />
+                  ),
+                )}
+              </Box>
+            ))}
           </Box>
         ))}
       </Box>
