@@ -347,13 +347,17 @@ code=0
 expect test "$code" -eq 0
 expect grep -qx 'pass test -f marker' "$tmp/out"
 
-# mods_base: commit a failing type-check stub and make it origin/main.
+# mods_base: commit a failing type-check stub and make it origin/main, on an origin of its own that check can fetch.
 mods_base() {
   mkdir -p "$proj/.claude/mods"
   echo 'exit 1' >"$proj/.claude/mods/typecheck.sh"
   git -C "$proj" add -A
   git -C "$proj" -c user.name=t -c user.email=t@t commit -qm base
-  git -C "$proj" update-ref refs/remotes/origin/main HEAD
+  rm -rf "$tmp/mods.git"
+  git init -q --bare -b main "$tmp/mods.git"
+  git -C "$proj" push -q "$tmp/mods.git" HEAD:main
+  git -C "$proj" remote set-url origin "$tmp/mods.git"
+  git -C "$proj" fetch -q origin main
 }
 
 # Check: a build that changes .claude/mods fails while the type-check fails.
