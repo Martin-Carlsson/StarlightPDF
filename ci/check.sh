@@ -3,13 +3,18 @@
 set -eu
 
 case "$*" in
-  core | python) ;;
+  core | python | advisories) ;;
   *)
-    echo 'usage: sh ci/check.sh core|python' >&2
+    echo 'usage: sh ci/check.sh core|python|advisories' >&2
     exit 2
     ;;
 esac
 cd "$(dirname "$0")/.."
+
+if [ "$1" = advisories ]; then
+  cargo deny --locked check -D warnings advisories
+  exit 0
+fi
 
 if [ "$1" = core ]; then
   sh ci/lints.sh

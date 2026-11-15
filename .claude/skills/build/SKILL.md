@@ -42,13 +42,14 @@ A Stop hook sends you back unless every check passes on the current files and th
    - **Review:** a fresh subagent reviews the diff against the issue and `CLAUDE.md`, and classifies the API change itself. It traces every file, function and test the diff adds to an item, and asks for the rest to be removed or simplified, and for every documentation file and code comment the diff adds or changes to be merged with an existing one on the same topic, deleted if unneeded, or shortened, where it can be; such a fix leaves no file that repeats another. Delegate the fixes and review again until clean.
 
    After every hand-back and after any change, run `sh .claude/skills/build/hook.sh check` from the repository root yourself; never trust a report. It names each failing check; a subagent reruns it and fixes the cause.
-4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Then add `pr: <url>` to the state file.
+4. **Open the pull request** once every check passes and the review is clean: a subagent commits, pushes and fills in `.github/pull_request_template.md`, its Dependencies line included, ready for review. Label it `api-additive` or `api-breaking`; no label means none. Label it `dependencies` if it adds one. Then add `pr: <url>` to the state file.
 5. **Follow CI.** Set `phase: ci` and run `gh pr checks <url> --watch`. If a CI check fails, a subagent reads its log (`gh run view --log-failed`), fixes the cause and pushes; follow the new run.
 
 ## Rules
 
 - **Decisions in the issue are constraints.** Record one in `.architecture-decisions/` only if it is hard to reverse, surprising without context and a real trade-off; follow the rest without recording them. If one does not work, ask; never deviate.
 - **Questions.** Ask only for a fact you cannot find in the repository, its issues or its pull requests, or a choice that is hard to reverse, surprising without context and a real trade-off. Make every other choice yourself. Recommend an answer to every question, multi-select included. Before you ask, have a subagent look up again every fact the question depends on.
+- **Dependencies:** one the issue does not name is added without asking when Rule 1 is met. Where no imported audit covers it, a subagent reviews its source and runs `cargo vet certify`; never an exemption.
 - **API change:** `none`, `additive` or `breaking`. Breaking means existing callers must change or get a different result, including different bytes written. Use it before 1.0 too. If the change is breaking and the issue does not say so, ask.
 - **Never weaken a check.** Change one only if it was wrong, and say why in the pull request.
 - **Ask, don't loop.** If you must ask, or a check, or the same CI check, has failed three times and you have no new idea: set `status: blocked`, ask one precise question and stop. When they answer, set `status: working`.
