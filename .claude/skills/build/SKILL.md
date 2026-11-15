@@ -14,7 +14,7 @@ hooks:
           command: sh "$CLAUDE_PROJECT_DIR/.claude/skills/build/hook.sh" tool
 ---
 
-Build issue $ARGUMENTS. With no number, run `sh .claude/skills/build/hook.sh next` and build the issue it prints; if it exits non-zero, say so and stop. Do not stop until its Definition of done is met and the pull request is open, its CI is green and the retro comment is posted.
+Build issue $ARGUMENTS. With a number, first run `sh .claude/skills/build/hook.sh start <number>`: on exit 3, ask whether to build it anyway, since another build may be working on it (recommend no), and stop on no. With no number, run `sh .claude/skills/build/hook.sh next` and build the issue it prints. If either exits otherwise non-zero, say so and stop. Do not stop until its Definition of done is met and the pull request is open, its CI is green and the retro comment is posted.
 
 A Stop hook sends you back unless every check passes on the current files and the open pull request's CI is green and its retro comment is recorded; no CI checks counts as green. After 24 hours without the user, tool calls are refused: stop and ask whether to continue.
 

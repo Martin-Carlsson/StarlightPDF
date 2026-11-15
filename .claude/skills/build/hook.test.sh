@@ -522,7 +522,7 @@ mode=stop
 
 # Next: the lowest build-ready issue blocked by no open issue.
 # Candidates are "NUMBER BUILDING" lines in any order.
-# blocked N STATE...: the states of issue N's blockers.
+# blocked N 'NUMBER STATE'...: issue N's blockers.
 blocked() {
   n=$1
   shift
@@ -531,19 +531,75 @@ blocked() {
 mode=next
 reset
 gh_says '10 false\n2 true\n7 false\n3 false\n5 false\n' 0 ''
-blocked 3 closed open
+blocked 3 '20 closed' '21 open'
 run 'next: lowest eligible' 0 '^5$'
 
 reset
 gh_says '8 false\n4 false\n' 0 ''
-blocked 4 closed closed
+blocked 4 '20 closed' '21 closed'
 run 'next: closed blockers' 0 '^4$'
 
 reset
 gh_says '2 false\n6 true\n' 0 ''
-blocked 2 closed open
+blocked 2 '20 closed' '21 open'
 run 'next: none' 1 '.'
 mode=stop
+
+# Start N: refuse an issue blocked by an open issue (exit 1), ask about
+# one labelled building by another build (exit 3).
+# The label query prints true or false.
+snapshot() {
+  git -C "$proj" for-each-ref refs/heads
+  git -C "$proj" symbolic-ref HEAD
+  ls -A "$dir"
+  cat "$dir"/* 2>/dev/null || true
+}
+# start_is NAME WANT N [TEST...]: start N exits WANT, changes no build file,
+# branch or HEAD, makes only gh reads, and each TEST (shell code) holds.
+start_is() {
+  name=$1
+  want=$2
+  snapshot >"$tmp/before"
+  code=0
+  sh "$hook" start "$3" </dev/null >"$tmp/out" 2>"$tmp/err" || code=$?
+  shift 3
+  good=1
+  [ "$code" -eq "$want" ] || good=0
+  snapshot | cmp -s "$tmp/before" - || good=0
+  if grep -Ev '^(api|issue view) ' "$tmp/gh.log" 2>/dev/null |
+    grep -q . ||
+    grep -Eq -- ' (-X|--method|-f|-F|--field|--raw-field|--input)( |=|$)' "$tmp/gh.log" 2>/dev/null; then
+    good=0
+  fi
+  for t in "$@"; do eval "$t" || good=0; done
+  expect -n "$name" test "$good" -eq 1
+}
+
+reset
+gh_says 'false\n' 0 ''
+blocked 40 '11 closed' '12 open' '13 open'
+start_is "start: open blocker names it and stops" 1 40 \
+  'grep -qw 12 "$tmp/err"' 'grep -qw 13 "$tmp/err"' '! grep -qw 11 "$tmp/err"'
+
+# Another build's issue 77 is not issue 7.
+reset 'status: working\nissue: 77 t\n'
+gh_says 'true\n' 0 ''
+start_is "start: building elsewhere asks" 3 7
+
+reset 'status: working\nissue: 7 t\n'
+gh_says 'true\n' 0 ''
+start_is "start: building here builds" 0 7
+
+reset 'status: working\nissue: 9 t\n'
+gh_says 'true\n' 0 ''
+blocked 40 '12 open'
+start_is "start: blocked and building refuses" 1 40
+
+reset
+gh_says 'false\n' 0 ''
+blocked 40 '11 closed' '12 closed'
+start_is "start: closed blockers builds" 0 40 \
+  'grep -q "issues/40/dependencies/blocked_by" "$tmp/gh.log"'
 
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"

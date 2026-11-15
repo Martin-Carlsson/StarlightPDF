@@ -1,11 +1,12 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check|next
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|next|start N
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green and a comment is recorded.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user.
 # check: refuse while another check runs; else fetch origin main, run every check, and the mods type-check if mods changed; record the results. Only this mode runs the state file's commands.
 # next: print the lowest open build-ready issue not building and blocked by no open issue; exit 1 if none.
+# start N: exit 1 naming N's open blockers; else 3 if N is building and the state does not name it.
 set -eu
 
 cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -64,12 +65,33 @@ refuse() {
   exit 2
 }
 
+# The open issues blocking issue $1, as #N lines.
+blockers() {
+  b=$(gh api --paginate "repos/{owner}/{repo}/issues/$1/dependencies/blocked_by" \
+    --jq '.[] | "\(.number) \(.state)"') || return
+  printf '%s\n' "$b" | sed -n 's/^\([0-9]*\) open$/#\1/p'
+}
+
+if [ "$1" = start ]; then
+  open=$(blockers "$2")
+  if [ -n "$open" ]; then
+    echo "build: #$2 is blocked by open $(echo "$open" | paste -sd' ' -)" >&2
+    exit 1
+  fi
+  building=$(gh issue view "$2" --json labels --jq 'any(.labels[]; .name == "building")')
+  if [ "$building" = true ] && ! grep -q "^issue: $2 " "$state" 2>/dev/null; then
+    echo "build: #$2 is labelled building; another build may be working on it" >&2
+    exit 3
+  fi
+  exit 0
+fi
+
 if [ "$1" = next ]; then
   list=$(gh issue list --label build-ready --limit 1000 --json number,labels \
     --jq '.[] | "\(.number) \(any(.labels[]; .name == "building"))"')
   for n in $(printf '%s\n' "$list" | grep ' false$' | cut -d' ' -f1 | sort -n); do
-    states=$(gh api --paginate "repos/{owner}/{repo}/issues/$n/dependencies/blocked_by" --jq '.[].state')
-    if ! printf '%s\n' "$states" | grep -qx open; then
+    open=$(blockers "$n")
+    if [ -z "$open" ]; then
       echo "$n"
       exit 0
     fi
