@@ -1,4 +1,4 @@
-name: ci
+name: Continuous integration
 on:
   pull_request:
   schedule:
@@ -13,13 +13,15 @@ env:
   URL: ${{ github.server_url }}/${{ github.repository }}
 jobs:
   changes:
+    name: Find the areas to check
     runs-on: ubuntu-latest
     outputs:
       areas: ${{ steps.areas.outputs.areas }}
       changed: ${{ steps.areas.outputs.changed }}
       date: ${{ steps.date.outputs.date }}
     steps:
-      - id: date
+      - name: Find the nightly date
+        id: date
         run: echo "date=$(date -u -d '22 hours ago' +%F)" >>"$GITHUB_OUTPUT"
       - name: Check out
         run: |
@@ -27,7 +29,8 @@ jobs:
           git config core.autocrlf false
           git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
-      - id: areas
+      - name: List changed files and their areas
+        id: areas
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             changed=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^ HEAD)
@@ -39,6 +42,7 @@ jobs:
           json=$(printf '%s' "$areas" | awk 'NR > 1 { printf "," } { printf "\"%s\"", $0 }')
           echo "areas=[$json]" >>"$GITHUB_OUTPUT"
   check:
+    name: Check ${{ matrix.area }} on ${{ matrix.os }}
     needs: changes
     if: needs.changes.outputs.areas != '[]'
     strategy:
@@ -72,12 +76,16 @@ jobs:
           git config core.autocrlf false
           git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
-      - if: contains(fromJSON('["core","python","advisories","dependencies"]'), matrix.area)
+      - name: Install Rust
+        if: contains(fromJSON('["core","python","advisories","dependencies"]'), matrix.area)
         run: rustup toolchain install --no-self-update
-      - if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
+      - name: Install cargo-deny and cargo-vet
+        if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
         run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
-      - run: sh ci/check.sh "$AREA"
+      - name: Run the checks
+        run: sh ci/check.sh "$AREA"
   ci:
+    name: All checks pass
     needs: [changes, check]
     if: always()
     runs-on: ubuntu-latest
@@ -85,12 +93,14 @@ jobs:
       CHANGES: ${{ needs.changes.result }}
       CHECK: ${{ needs.check.result }}
     steps:
-      - run: |
+      - name: Fail unless every check passed or was skipped
+        run: |
           case "$CHANGES $CHECK" in
             'success success' | 'success skipped') ;;
             *) exit 1 ;;
           esac
   tag:
+    name: Tag the nightly
     needs: [changes, check]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -100,11 +110,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       DATE: ${{ needs.changes.outputs.date }}
     steps:
-      - run: |
+      - name: Tag this commit unless it or the date is tagged
+        run: |
           tags=$(git ls-remote --tags "$URL" 'refs/tags/nightly-*')
           case $tags in *"$GITHUB_SHA"* | *"refs/tags/nightly-$DATE"*) exit 0 ;; esac
           gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/nightly-$DATE" -f sha="$GITHUB_SHA"
   issue:
+    name: Report a failed nightly
     needs: [changes, check]
     if: failure() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -115,7 +127,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
       DATE: ${{ needs.changes.outputs.date }}
     steps:
-      - run: |
+      - name: Open an issue unless a nightly one is open
+        run: |
           open=$(gh issue list --label bug --limit 1000 --json title --jq '.[] | select(.title | startswith("Nightly ")) | .title')
           if [ -z "$open" ]; then
             gh issue create --label bug --title "Nightly $DATE failed" --body "$URL/actions/runs/$GITHUB_RUN_ID"

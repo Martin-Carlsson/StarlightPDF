@@ -26,6 +26,7 @@ while IFS= read -r path || [ -n "$path" ]; do
     README.md) dependencies=1 ;;
     *.md | REUSE.toml | ci/licenses.sh | ruff.toml) ;;
     ci/dependencies.sh) dependencies=1 ;;
+    ci/workflows.sh) workflows=1 ;;
     ci/check.sh | .github/workflows/ci.yml)
       advisories=1 core=1 dependencies=1 hook=1 mods=1 python=1 ruff=1 workflows=1
       ;;

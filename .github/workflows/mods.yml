@@ -1,4 +1,4 @@
-name: mods
+name: Mod versions
 on:
   pull_request:
     paths:
@@ -11,6 +11,7 @@ defaults:
     shell: bash
 jobs:
   version:
+    name: Check changed mods bump their version
     runs-on: ubuntu-latest
     env:
       BASE: ${{ github.base_ref }}
@@ -25,5 +26,7 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic ${auth}" fetch -q --depth=1 "${URL}" \
             "+refs/heads/${BASE}:refs/remotes/origin/${BASE}" "+refs/pull/${PR}/merge:refs/remotes/pull/merge"
           git checkout -q --detach pull/merge
-      - run: sh .claude/mods/version.test.sh
-      - run: sh .claude/mods/version.sh "origin/${BASE}"
+      - name: Test the version check
+        run: sh .claude/mods/version.test.sh
+      - name: Check versions against the base branch
+        run: sh .claude/mods/version.sh "origin/${BASE}"

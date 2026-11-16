@@ -1,4 +1,4 @@
-name: building
+name: Clear the building label
 on:
   issues:
     types: [closed]
@@ -9,6 +9,7 @@ defaults:
     shell: bash
 jobs:
   unlabel:
+    name: Remove the building label from a closed issue
     if: contains(github.event.issue.labels.*.name, 'building')
     runs-on: ubuntu-latest
     permissions:
@@ -18,4 +19,5 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       NUMBER: ${{ github.event.issue.number }}
     steps:
-      - run: gh issue edit "$NUMBER" --remove-label building
+      - name: Remove the label
+        run: gh issue edit "$NUMBER" --remove-label building

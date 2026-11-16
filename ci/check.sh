@@ -49,6 +49,9 @@ case $1 in
     if covered tests/ci/test_dependencies.py ci/dependencies.sh ci/check.sh README.md Cargo.lock .github/workflows/ci.yml; then
       "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_dependencies.py
     fi
+    if covered tests/ci/test_workflows.py ci/workflows.sh ci/check.sh; then
+      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_workflows.py
+    fi
     if covered tests/ci/test_areas.py ci/areas.sh ci/check.sh; then
       "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_areas.py
     fi
@@ -121,6 +124,7 @@ case $1 in
     tar -xzf "$tmp/$archive" -C "$tmp" actionlint
     files=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
     "$tmp/actionlint" -shellcheck= -pyflakes= $files
+    sh ci/workflows.sh $files
     for f in $files; do
       awk '{ if (a == "defaults:" && b == "  run:" && $0 == "    shell: bash") ok = 1; a = b; b = $0 } END { exit !ok }' "$f" || {
         echo "$f: set top-level defaults.run.shell to bash" >&2

@@ -710,7 +710,7 @@ pr_ready() {
   sh "$hook" check >/dev/null 2>&1 || true
   head=$(git -C "$proj" rev-parse HEAD)
   echo "$head" >"$tmp/gh.head"
-  echo 'ci pass https://example.test/runs/7' >"$tmp/gh.checks"
+  echo 'All checks pass pass https://example.test/runs/7' >"$tmp/gh.checks"
   echo feature >"$tmp/gh.labels"
   printf '%s\r\n' '## Merge impact' '' '- **API:** none' '- **Dependencies:** none' '- **Affects:** docs' >"$tmp/gh.body"
   echo "verdict: safe $head docs-only-reason" >>"$state"
@@ -825,12 +825,12 @@ sed 's/^- \*\*Dependencies:\*\* none/- **Dependencies:** none yet/' "$tmp/body" 
 stops "api and dependencies"
 expect -n "merge condition api and dependencies" test "$good" -eq 1
 
-# CI: the ci check passed on the head commit.
+# CI: the gate check passed on the head commit.
 pr_docs
 good=1
-for checks in 'ci pending https://example.test/runs/7' 'ci pass https://example.test/runs/7
-ci fail https://example.test/runs/7' \
-  'ci cancel https://example.test/runs/7' 'mods pass https://example.test/runs/8' ''; do
+for checks in 'All checks pass pending https://example.test/runs/7' 'All checks pass pass https://example.test/runs/7
+All checks pass fail https://example.test/runs/7' \
+  'All checks pass cancel https://example.test/runs/7' 'mods pass https://example.test/runs/8' ''; do
   printf '%s' "$checks" >"$tmp/gh.checks"
   stops ci
 done
@@ -955,13 +955,13 @@ echo "verdict: unsafe $head doubt" >>"$state"
 behind
 stop_says 2 'origin/main'
 # CI failing too: merging main comes first.
-echo 'ci fail https://example.test/runs/7' >"$tmp/gh.checks"
+echo 'All checks pass fail https://example.test/runs/7' >"$tmp/gh.checks"
 echo fail >"$tmp/gh.out"
 echo 1 >"$tmp/gh.code"
 stops ci
 stop_says 2 'origin/main'
 rm "$tmp/gh.out" "$tmp/gh.code"
-echo 'ci pass https://example.test/runs/7' >"$tmp/gh.checks"
+echo 'All checks pass pass https://example.test/runs/7' >"$tmp/gh.checks"
 git -C "$proj" -c user.name=t -c user.email=t@t merge -q -m main origin/main
 git -C "$proj" push -q origin 81-x
 sh "$hook" check >/dev/null 2>&1 || true

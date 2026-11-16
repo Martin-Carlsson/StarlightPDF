@@ -191,8 +191,8 @@ if [ "$1" = merge ]; then
     ok 'api and dependencies' "labels: $labels; body: $api, $deps"
   fi
 
-  ci=$(gh pr checks "$pr" --json name,bucket,link --jq '.[] | "\(.name) \(.bucket) \(.link)"' | grep '^ci ') || ci=
-  if [ -n "$ci" ] && ! printf '%s\n' "$ci" | grep -qv '^ci pass '; then ok ci "$ci"; else no ci "${ci:-no ci check}"; fi
+  ci=$(gh pr checks "$pr" --json name,bucket,link --jq '.[] | "\(.name) \(.bucket) \(.link)"' | grep '^All checks pass ') || ci=
+  if [ -n "$ci" ] && ! printf '%s\n' "$ci" | grep -qv '^All checks pass pass '; then ok ci "$ci"; else no ci "${ci:-no check named All checks pass}"; fi
 
   if git merge-base --is-ancestor origin/main HEAD; then
     ok 'up to date' "head $short contains main $(git rev-parse --short=7 origin/main)"
