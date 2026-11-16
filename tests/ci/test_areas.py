@@ -41,6 +41,7 @@ class AreasTest(unittest.TestCase):
             "core/Cargo.toml": {"dependencies", "licenses"},
             "bindings/python/Cargo.toml": {"dependencies", "licenses"},
             "ci/dependencies.sh": {"dependencies", "licenses"},
+            "ci/workflows.sh": {"licenses", "workflows"},
             "core/src/lib.rs": {"core", "python", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
             "ci/licenses.sh": {"licenses", "ruff"},
