@@ -30,7 +30,7 @@ StarlightPDF will be available as a dependency in:
 | 💤 | JavaScript and TypeScript (Node.js, Deno, Bun, browser) | npm, WebAssembly |
 | 💤 | Swift and Objective-C | Swift Package Manager, CocoaPods |
 | 💤 | Dart and Flutter | pub.dev |
-| 💤 | PHP | Packagist |
+| 🔜 | PHP | Packagist |
 | 💤 | Ruby | RubyGems |
 | 💤 | R | CRAN |
 | 💤 | Julia | General registry |
