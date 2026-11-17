@@ -1,6 +1,14 @@
 //! Error codes through the public API.
 
-use starlightpdf::{ErrorCode, header_version};
+use core::error::Error;
+
+use starlightpdf::{ErrorCode, PdfError, Version, header_version};
+
+/// Fails with a boxed error, as `?` in a caller's `main` does.
+fn boxed() -> Result<(), Box<dyn Error>> {
+    let _: Version = header_version(b"")?;
+    Ok(())
+}
 
 /// Bytes without a header fail with `InvalidHeader` (ISO 32000-2:2020, 7.5.2).
 #[test]
@@ -8,6 +16,16 @@ fn invalid_header_has_its_code() {
     assert_eq!(
         header_version(b"").map_err(|error| error.code()),
         Err(ErrorCode::InvalidHeader),
+        "code"
+    );
+}
+
+/// `?` carries an error into `Box<dyn Error>` with its code intact.
+#[test]
+fn error_converts_into_a_boxed_error() {
+    assert_eq!(
+        boxed().map_err(|error| error.downcast_ref::<PdfError>().map(PdfError::code)),
+        Err(Some(ErrorCode::InvalidHeader)),
         "code"
     );
 }

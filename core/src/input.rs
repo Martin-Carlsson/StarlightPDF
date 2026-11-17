@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use std::io::{self, Read, Seek};
 use std::path::PathBuf;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Source::from_bytes`].
 #[derive(Clone, Debug, Default)]
@@ -28,14 +28,14 @@ pub trait ReadAt: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Any I/O error; its kind becomes [`Error::io_cause`](crate::Error::io_cause).
+    /// Any I/O error; its kind becomes [`PdfError::io_cause`](crate::PdfError::io_cause).
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize>;
 
     /// The size in bytes; a forward-only `ReadAt` may fail.
     ///
     /// # Errors
     ///
-    /// Any I/O error; its kind becomes [`Error::io_cause`](crate::Error::io_cause).
+    /// Any I/O error; its kind becomes [`PdfError::io_cause`](crate::PdfError::io_cause).
     fn size(&self) -> io::Result<u64>;
 }
 
@@ -67,9 +67,12 @@ impl Source {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`].
-    pub fn from_bytes(options: &BytesSourceOptions) -> Result<Self, Error> {
+    pub fn from_bytes(options: &BytesSourceOptions) -> Result<Self, PdfError> {
         let _: &BytesSourceOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Source::from_bytes"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Source::from_bytes",
+        ))
     }
 
     /// A source over a file, opened now.
@@ -79,9 +82,12 @@ impl Source {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::Io`].
-    pub fn from_file(options: &FileSourceOptions) -> Result<Self, Error> {
+    pub fn from_file(options: &FileSourceOptions) -> Result<Self, PdfError> {
         let _: &FileSourceOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Source::from_file"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Source::from_file",
+        ))
     }
 
     /// A source over a caller's `ReadAt`.
@@ -94,10 +100,10 @@ impl Source {
     pub fn from_read_at(
         read_at: &Arc<dyn ReadAt>,
         options: &ReadAtSourceOptions,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PdfError> {
         let _: &Arc<dyn ReadAt> = read_at;
         let _: &ReadAtSourceOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Source::from_read_at",
         ))
@@ -110,12 +116,15 @@ impl Source {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::Io`].
-    pub fn from_reader<R>(reader: R, options: &ReaderSourceOptions) -> Result<Self, Error>
+    pub fn from_reader<R>(reader: R, options: &ReaderSourceOptions) -> Result<Self, PdfError>
     where
         R: Read + Seek + Send + 'static,
     {
         drop(reader);
         let _: &ReaderSourceOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Source::from_reader"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Source::from_reader",
+        ))
     }
 }

@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use std::path::PathBuf;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Limits shared by the documents opened with it.
 #[derive(Clone, Debug)]
@@ -20,9 +20,12 @@ impl ResourcePolicy {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`].
-    pub fn new(options: &ResourcePolicyOptions) -> Result<Self, Error> {
+    pub fn new(options: &ResourcePolicyOptions) -> Result<Self, PdfError> {
         let _: &ResourcePolicyOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "ResourcePolicy::new"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "ResourcePolicy::new",
+        ))
     }
 }
 

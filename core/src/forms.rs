@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Page::add_field`](crate::page::Page::add_field).
 #[derive(Clone, Debug, Default)]
@@ -98,9 +98,9 @@ impl Field {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteFieldOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteFieldOptions) -> Result<(), PdfError> {
         let _: &DeleteFieldOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Field::delete"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Field::delete"))
     }
 
     /// The field's properties and value.
@@ -110,8 +110,8 @@ impl Field {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<FieldInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Field::info"))
+    pub fn info(&self) -> Result<FieldInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Field::info"))
     }
 
     /// Sets the field's properties.
@@ -121,9 +121,9 @@ impl Field {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_info(&self, options: &SetFieldInfoOptions) -> Result<(), Error> {
+    pub fn set_info(&self, options: &SetFieldInfoOptions) -> Result<(), PdfError> {
         let _: &SetFieldInfoOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Field::set_info"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Field::set_info"))
     }
 
     /// Fills the field.
@@ -133,9 +133,9 @@ impl Field {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_value(&self, options: &SetValueOptions) -> Result<(), Error> {
+    pub fn set_value(&self, options: &SetValueOptions) -> Result<(), PdfError> {
         let _: &SetValueOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Field::set_value"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Field::set_value"))
     }
 }
 
@@ -211,8 +211,8 @@ impl Fields {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Field>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Fields::next"))
+    pub fn next(&self) -> Result<Option<Field>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Fields::next"))
     }
 }
 

@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use crate::input::Source;
 use crate::layers::Layer;
 use crate::output::Sink;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Image::delete`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -27,9 +27,9 @@ impl Image {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteImageOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteImageOptions) -> Result<(), PdfError> {
         let _: &DeleteImageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Image::delete"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Image::delete"))
     }
 
     /// The image's properties.
@@ -39,8 +39,8 @@ impl Image {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<ImageInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Image::info"))
+    pub fn info(&self) -> Result<ImageInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Image::info"))
     }
 
     /// The layer it is drawn on, or `None`.
@@ -50,8 +50,8 @@ impl Image {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn layer(&self) -> Result<Option<Layer>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Image::layer"))
+    pub fn layer(&self) -> Result<Option<Layer>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Image::layer"))
     }
 
     /// Replaces the image, keeping its place.
@@ -61,10 +61,10 @@ impl Image {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
-    pub fn replace(&self, source: &Source, options: &ReplaceImageOptions) -> Result<(), Error> {
+    pub fn replace(&self, source: &Source, options: &ReplaceImageOptions) -> Result<(), PdfError> {
         let _: &Source = source;
         let _: &ReplaceImageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Image::replace"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Image::replace"))
     }
 
     /// Writes the image, in its original encoding or converted.
@@ -74,10 +74,10 @@ impl Image {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
-    pub fn write_to(&self, sink: &Sink, options: &WriteImageOptions) -> Result<(), Error> {
+    pub fn write_to(&self, sink: &Sink, options: &WriteImageOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &WriteImageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Image::write_to"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Image::write_to"))
     }
 }
 
@@ -204,8 +204,8 @@ impl Images {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Image>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Images::next"))
+    pub fn next(&self) -> Result<Option<Image>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Images::next"))
     }
 }
 

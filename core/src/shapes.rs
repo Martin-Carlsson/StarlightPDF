@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 
 use crate::drawing::{BlendMode, FillRule};
 use crate::layers::Layer;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Shape::delete`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,9 +38,9 @@ impl Shape {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteShapeOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteShapeOptions) -> Result<(), PdfError> {
         let _: &DeleteShapeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Shape::delete"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Shape::delete"))
     }
 
     /// The shape's properties.
@@ -50,8 +50,8 @@ impl Shape {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<ShapeInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Shape::info"))
+    pub fn info(&self) -> Result<ShapeInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Shape::info"))
     }
 
     /// The layer it is drawn on, or `None`.
@@ -61,8 +61,8 @@ impl Shape {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn layer(&self) -> Result<Option<Layer>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Shape::layer"))
+    pub fn layer(&self) -> Result<Option<Layer>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Shape::layer"))
     }
 
     /// Sets fill and stroke.
@@ -72,9 +72,9 @@ impl Shape {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_paint(&self, options: &SetPaintOptions) -> Result<(), Error> {
+    pub fn set_paint(&self, options: &SetPaintOptions) -> Result<(), PdfError> {
         let _: &SetPaintOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Shape::set_paint"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Shape::set_paint"))
     }
 
     /// Moves, rotates or scales the shape.
@@ -84,9 +84,12 @@ impl Shape {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn transform_by(&self, options: &TransformByOptions) -> Result<(), Error> {
+    pub fn transform_by(&self, options: &TransformByOptions) -> Result<(), PdfError> {
         let _: &TransformByOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Shape::transform_by"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Shape::transform_by",
+        ))
     }
 }
 
@@ -141,8 +144,8 @@ impl Shapes {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Shape>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Shapes::next"))
+    pub fn next(&self) -> Result<Option<Shape>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Shapes::next"))
     }
 }
 

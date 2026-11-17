@@ -42,7 +42,7 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
-use crate::{Error, ErrorCode, Version};
+use crate::{ErrorCode, PdfError, Version};
 
 /// Options for [`Document::close`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -246,9 +246,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn add_article(&self, options: &AddArticleOptions) -> Result<(), Error> {
+    pub fn add_article(&self, options: &AddArticleOptions) -> Result<(), PdfError> {
         let _: &AddArticleOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::add_article",
         ))
@@ -265,10 +265,10 @@ impl Document {
         &self,
         source: &Source,
         options: &AddAttachmentOptions,
-    ) -> Result<Attachment, Error> {
+    ) -> Result<Attachment, PdfError> {
         let _: &Source = source;
         let _: &AddAttachmentOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::add_attachment",
         ))
@@ -285,10 +285,10 @@ impl Document {
         &self,
         parent: Option<&Bookmark>,
         options: &AddBookmarkOptions,
-    ) -> Result<Bookmark, Error> {
+    ) -> Result<Bookmark, PdfError> {
         let _: Option<&Bookmark> = parent;
         let _: &AddBookmarkOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::add_bookmark",
         ))
@@ -301,10 +301,13 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
-    pub fn add_font(&self, source: &Source, options: &AddFontOptions) -> Result<Font, Error> {
+    pub fn add_font(&self, source: &Source, options: &AddFontOptions) -> Result<Font, PdfError> {
         let _: &Source = source;
         let _: &AddFontOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::add_font"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::add_font",
+        ))
     }
 
     /// Adds a layer (optional content group).
@@ -314,9 +317,12 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn add_layer(&self, options: &AddLayerOptions) -> Result<Layer, Error> {
+    pub fn add_layer(&self, options: &AddLayerOptions) -> Result<Layer, PdfError> {
         let _: &AddLayerOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::add_layer"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::add_layer",
+        ))
     }
 
     /// Adds an object from PDF syntax.
@@ -326,9 +332,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn add_object(&self, options: &AddObjectOptions) -> Result<ObjectId, Error> {
+    pub fn add_object(&self, options: &AddObjectOptions) -> Result<ObjectId, PdfError> {
         let _: &AddObjectOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::add_object",
         ))
@@ -341,9 +347,12 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn add_verification_data(&self, options: &AddVerificationDataOptions) -> Result<(), Error> {
+    pub fn add_verification_data(
+        &self,
+        options: &AddVerificationDataOptions,
+    ) -> Result<(), PdfError> {
         let _: &AddVerificationDataOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::add_verification_data",
         ))
@@ -360,10 +369,10 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &ApplyRedactionsOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &ApplyRedactionsOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::apply_redactions",
         ))
@@ -376,8 +385,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn articles(&self) -> Result<Articles, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::articles"))
+    pub fn articles(&self) -> Result<Articles, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::articles",
+        ))
     }
 
     /// The embedded files.
@@ -387,8 +399,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn attachments(&self) -> Result<Attachments, Error> {
-        Err(Error::new(
+    pub fn attachments(&self) -> Result<Attachments, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::attachments",
         ))
@@ -401,8 +413,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn bookmarks(&self) -> Result<Bookmarks, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::bookmarks"))
+    pub fn bookmarks(&self) -> Result<Bookmarks, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::bookmarks",
+        ))
     }
 
     /// The document catalog's object.
@@ -412,8 +427,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn catalog(&self) -> Result<ObjectId, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::catalog"))
+    pub fn catalog(&self) -> Result<ObjectId, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::catalog",
+        ))
     }
 
     /// Discards unsaved changes, releases the source and invalidates handles; never writes.
@@ -423,9 +441,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`].
-    pub fn close(&self, options: &CloseOptions) -> Result<(), Error> {
+    pub fn close(&self, options: &CloseOptions) -> Result<(), PdfError> {
         let _: &CloseOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::close"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::close"))
     }
 
     /// The collection settings; `view` is `None` for a plain document.
@@ -435,8 +453,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn collection(&self) -> Result<Collection, Error> {
-        Err(Error::new(
+    pub fn collection(&self) -> Result<Collection, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::collection",
         ))
@@ -454,11 +472,14 @@ impl Document {
         other: &Self,
         progress: Option<&dyn Progress>,
         options: &CompareOptions,
-    ) -> Result<Differences, Error> {
+    ) -> Result<Differences, PdfError> {
         let _: &Self = other;
         let _: Option<&dyn Progress> = progress;
         let _: &CompareOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::compare"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::compare",
+        ))
     }
 
     /// A new document laid out from HTML, Markdown, a template, Office files or images.
@@ -473,12 +494,12 @@ impl Document {
         policy: Option<&ResourcePolicy>,
         progress: Option<&dyn Progress>,
         options: &ConvertFromOptions,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PdfError> {
         let _: &[Source] = sources;
         let _: Option<&ResourcePolicy> = policy;
         let _: Option<&dyn Progress> = progress;
         let _: &ConvertFromOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::convert_from",
         ))
@@ -496,11 +517,11 @@ impl Document {
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &ConvertToOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: Option<&dyn Progress> = progress;
         let _: &ConvertToOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::convert_to",
         ))
@@ -513,10 +534,13 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::InvalidArgument`].
-    pub fn create(policy: Option<&ResourcePolicy>, options: &CreateOptions) -> Result<Self, Error> {
+    pub fn create(
+        policy: Option<&ResourcePolicy>,
+        options: &CreateOptions,
+    ) -> Result<Self, PdfError> {
         let _: Option<&ResourcePolicy> = policy;
         let _: &CreateOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::create"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::create"))
     }
 
     /// Removes the label range that begins at `start`; its pages join the range before.
@@ -526,9 +550,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn delete_label_range(&self, options: &DeleteLabelRangeOptions) -> Result<(), Error> {
+    pub fn delete_label_range(&self, options: &DeleteLabelRangeOptions) -> Result<(), PdfError> {
         let _: &DeleteLabelRangeOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::delete_label_range",
         ))
@@ -541,8 +565,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn destinations(&self) -> Result<Destinations, Error> {
-        Err(Error::new(
+    pub fn destinations(&self) -> Result<Destinations, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::destinations",
         ))
@@ -555,8 +579,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
-    pub fn dropped_warnings(&self) -> Result<u64, Error> {
-        Err(Error::new(
+    pub fn dropped_warnings(&self) -> Result<u64, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::dropped_warnings",
         ))
@@ -569,8 +593,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn elements(&self) -> Result<Elements, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::elements"))
+    pub fn elements(&self) -> Result<Elements, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::elements",
+        ))
     }
 
     /// How the document is protected.
@@ -580,8 +607,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn encryption(&self) -> Result<Encryption, Error> {
-        Err(Error::new(
+    pub fn encryption(&self) -> Result<Encryption, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::encryption",
         ))
@@ -594,10 +621,10 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn export_data(&self, sink: &Sink, options: &ExportDataOptions) -> Result<(), Error> {
+    pub fn export_data(&self, sink: &Sink, options: &ExportDataOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &ExportDataOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::export_data",
         ))
@@ -610,8 +637,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn fields(&self) -> Result<Fields, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::fields"))
+    pub fn fields(&self) -> Result<Fields, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::fields"))
     }
 
     /// Merges annotations, fields, layers or transparency into the page content.
@@ -625,10 +652,13 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &FlattenOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &FlattenOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::flatten"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::flatten",
+        ))
     }
 
     /// The fonts used.
@@ -638,8 +668,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn fonts(&self) -> Result<Fonts, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::fonts"))
+    pub fn fonts(&self) -> Result<Fonts, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::fonts"))
     }
 
     /// Generates appearance streams for annotations and fields.
@@ -653,10 +683,10 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &GenerateAppearancesOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &GenerateAppearancesOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::generate_appearances",
         ))
@@ -669,8 +699,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
-    pub fn has_changes(&self) -> Result<bool, Error> {
-        Err(Error::new(
+    pub fn has_changes(&self) -> Result<bool, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::has_changes",
         ))
@@ -683,10 +713,14 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
-    pub fn import_data(&self, source: &Source, options: &ImportDataOptions) -> Result<(), Error> {
+    pub fn import_data(
+        &self,
+        source: &Source,
+        options: &ImportDataOptions,
+    ) -> Result<(), PdfError> {
         let _: &Source = source;
         let _: &ImportDataOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::import_data",
         ))
@@ -703,10 +737,10 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &ImposeOptions,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &ImposeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::impose"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::impose"))
     }
 
     /// The document information dictionary (ISO 32000-2:2020, 14.3.3).
@@ -716,8 +750,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn info_dictionary(&self) -> Result<InfoDictionary, Error> {
-        Err(Error::new(
+    pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::info_dictionary",
         ))
@@ -730,9 +764,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn insert_blank_page(&self, options: &InsertBlankPageOptions) -> Result<Page, Error> {
+    pub fn insert_blank_page(&self, options: &InsertBlankPageOptions) -> Result<Page, PdfError> {
         let _: &InsertBlankPageOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::insert_blank_page",
         ))
@@ -745,10 +779,10 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn insert_pages(&self, from: &Self, options: &InsertPagesOptions) -> Result<(), Error> {
+    pub fn insert_pages(&self, from: &Self, options: &InsertPagesOptions) -> Result<(), PdfError> {
         let _: &Self = from;
         let _: &InsertPagesOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::insert_pages",
         ))
@@ -761,9 +795,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn insert_toc(&self, options: &InsertTocOptions) -> Result<(), Error> {
+    pub fn insert_toc(&self, options: &InsertTocOptions) -> Result<(), PdfError> {
         let _: &InsertTocOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::insert_toc",
         ))
@@ -776,8 +810,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn label_ranges(&self) -> Result<LabelRanges, Error> {
-        Err(Error::new(
+    pub fn label_ranges(&self) -> Result<LabelRanges, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::label_ranges",
         ))
@@ -790,8 +824,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn language(&self) -> Result<String, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::language"))
+    pub fn language(&self) -> Result<String, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::language",
+        ))
     }
 
     /// The layers.
@@ -801,8 +838,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn layers(&self) -> Result<Layers, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::layers"))
+    pub fn layers(&self) -> Result<Layers, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::layers"))
     }
 
     /// An object as PDF syntax; a missing object is `null`.
@@ -812,9 +849,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn object(&self, options: &ObjectOptions) -> Result<String, Error> {
+    pub fn object(&self, options: &ObjectOptions) -> Result<String, PdfError> {
         let _: &ObjectOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::object"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::object"))
     }
 
     /// Opens `source`, reading lazily and tolerating what viewers tolerate.
@@ -830,11 +867,11 @@ impl Document {
         source: &Source,
         policy: Option<&ResourcePolicy>,
         options: &OpenOptions,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PdfError> {
         let _: &Source = source;
         let _: Option<&ResourcePolicy> = policy;
         let _: &OpenOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::open"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::open"))
     }
 
     /// The output intent, when there is one.
@@ -844,8 +881,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn output_intent(&self) -> Result<Option<OutputIntent>, Error> {
-        Err(Error::new(
+    pub fn output_intent(&self) -> Result<Option<OutputIntent>, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::output_intent",
         ))
@@ -858,9 +895,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn page(&self, options: &PageOptions) -> Result<Page, Error> {
+    pub fn page(&self, options: &PageOptions) -> Result<Page, PdfError> {
         let _: &PageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::page"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::page"))
     }
 
     /// The number of pages.
@@ -870,8 +907,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn page_count(&self) -> Result<u32, Error> {
-        Err(Error::new(
+    pub fn page_count(&self) -> Result<u32, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::page_count",
         ))
@@ -889,11 +926,11 @@ impl Document {
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &PrepareSignatureOptions,
-    ) -> Result<PendingSignature, Error> {
+    ) -> Result<PendingSignature, PdfError> {
         let _: &Sink = sink;
         let _: Option<&dyn Progress> = progress;
         let _: &PrepareSignatureOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::prepare_signature",
         ))
@@ -910,10 +947,10 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &PrintOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &PrintOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::print"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::print"))
     }
 
     /// Recognizes text in scanned pages and adds it as invisible, searchable text.
@@ -927,10 +964,13 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &RecognizeOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &RecognizeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::recognize"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::recognize",
+        ))
     }
 
     /// Replaces text; returns how many matches changed.
@@ -944,10 +984,10 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &ReplaceTextOptions,
-    ) -> Result<u64, Error> {
+    ) -> Result<u64, PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &ReplaceTextOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::replace_text",
         ))
@@ -960,9 +1000,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`].
-    pub fn revert(&self, options: &RevertOptions) -> Result<(), Error> {
+    pub fn revert(&self, options: &RevertOptions) -> Result<(), PdfError> {
         let _: &RevertOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::revert"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::revert"))
     }
 
     /// Removes hidden data, scripts, metadata or attachments.
@@ -976,10 +1016,13 @@ impl Document {
         &self,
         progress: Option<&dyn Progress>,
         options: &SanitizeOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &SanitizeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::sanitize"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::sanitize",
+        ))
     }
 
     /// Writes the document; the session stays open.
@@ -996,11 +1039,11 @@ impl Document {
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &SaveOptions,
-    ) -> Result<SaveReport, Error> {
+    ) -> Result<SaveReport, PdfError> {
         let _: &Sink = sink;
         let _: Option<&dyn Progress> = progress;
         let _: &SaveOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::save"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::save"))
     }
 
     /// The document-level JavaScript; never run.
@@ -1010,8 +1053,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn scripts(&self) -> Result<Scripts, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::scripts"))
+    pub fn scripts(&self) -> Result<Scripts, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::scripts",
+        ))
     }
 
     /// Finds text or a regular expression.
@@ -1021,9 +1067,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn search(&self, options: &SearchOptions) -> Result<Hits, Error> {
+    pub fn search(&self, options: &SearchOptions) -> Result<Hits, PdfError> {
         let _: &SearchOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::search"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::search"))
     }
 
     /// Makes the document a collection (ISO 32000-2:2020, 12.3.5), or a plain document again.
@@ -1033,9 +1079,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_collection(&self, options: &SetCollectionOptions) -> Result<(), Error> {
+    pub fn set_collection(&self, options: &SetCollectionOptions) -> Result<(), PdfError> {
         let _: &SetCollectionOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_collection",
         ))
@@ -1048,9 +1094,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_destination(&self, options: &SetDestinationOptions) -> Result<(), Error> {
+    pub fn set_destination(&self, options: &SetDestinationOptions) -> Result<(), PdfError> {
         let _: &SetDestinationOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_destination",
         ))
@@ -1063,9 +1109,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_info_dictionary(&self, options: &SetInfoDictionaryOptions) -> Result<(), Error> {
+    pub fn set_info_dictionary(&self, options: &SetInfoDictionaryOptions) -> Result<(), PdfError> {
         let _: &SetInfoDictionaryOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_info_dictionary",
         ))
@@ -1078,9 +1124,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_label_range(&self, options: &SetLabelRangeOptions) -> Result<(), Error> {
+    pub fn set_label_range(&self, options: &SetLabelRangeOptions) -> Result<(), PdfError> {
         let _: &SetLabelRangeOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_label_range",
         ))
@@ -1093,9 +1139,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_language(&self, options: &SetLanguageOptions) -> Result<(), Error> {
+    pub fn set_language(&self, options: &SetLanguageOptions) -> Result<(), PdfError> {
         let _: &SetLanguageOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_language",
         ))
@@ -1108,9 +1154,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_object(&self, options: &SetObjectOptions) -> Result<(), Error> {
+    pub fn set_object(&self, options: &SetObjectOptions) -> Result<(), PdfError> {
         let _: &SetObjectOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_object",
         ))
@@ -1127,10 +1173,10 @@ impl Document {
         &self,
         profile: &Source,
         options: &SetOutputIntentOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Source = profile;
         let _: &SetOutputIntentOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_output_intent",
         ))
@@ -1143,9 +1189,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_script(&self, options: &SetScriptOptions) -> Result<(), Error> {
+    pub fn set_script(&self, options: &SetScriptOptions) -> Result<(), PdfError> {
         let _: &SetScriptOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_script",
         ))
@@ -1162,10 +1208,10 @@ impl Document {
         &self,
         source: &Source,
         options: &SetStreamDataOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Source = source;
         let _: &SetStreamDataOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_stream_data",
         ))
@@ -1178,9 +1224,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_viewer_settings(&self, options: &SetViewerSettingsOptions) -> Result<(), Error> {
+    pub fn set_viewer_settings(&self, options: &SetViewerSettingsOptions) -> Result<(), PdfError> {
         let _: &SetViewerSettingsOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::set_viewer_settings",
         ))
@@ -1193,10 +1239,17 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
-    pub fn set_xfa(&self, source: Option<&Source>, options: &SetXfaOptions) -> Result<(), Error> {
+    pub fn set_xfa(
+        &self,
+        source: Option<&Source>,
+        options: &SetXfaOptions,
+    ) -> Result<(), PdfError> {
         let _: Option<&Source> = source;
         let _: &SetXfaOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::set_xfa"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::set_xfa",
+        ))
     }
 
     /// Sets or removes the XMP metadata.
@@ -1206,9 +1259,12 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn set_xmp(&self, options: &SetXmpOptions) -> Result<(), Error> {
+    pub fn set_xmp(&self, options: &SetXmpOptions) -> Result<(), PdfError> {
         let _: &SetXmpOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::set_xmp"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::set_xmp",
+        ))
     }
 
     /// The signatures.
@@ -1218,8 +1274,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn signatures(&self) -> Result<Signatures, Error> {
-        Err(Error::new(
+    pub fn signatures(&self) -> Result<Signatures, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::signatures",
         ))
@@ -1232,9 +1288,9 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn split(&self, options: &SplitOptions) -> Result<Documents, Error> {
+    pub fn split(&self, options: &SplitOptions) -> Result<Documents, PdfError> {
         let _: &SplitOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::split"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::split"))
     }
 
     /// Stamps text or `image` on pages: watermarks, headers, footers, page and Bates numbers.
@@ -1249,11 +1305,11 @@ impl Document {
         image: Option<&Source>,
         progress: Option<&dyn Progress>,
         options: &StampOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&Source> = image;
         let _: Option<&dyn Progress> = progress;
         let _: &StampOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::stamp"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::stamp"))
     }
 
     /// Writes a stream's data; [`ErrorCode::InvalidArgument`] when `id` is missing or not a stream.
@@ -1263,10 +1319,10 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
-    pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), Error> {
+    pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &StreamDataOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::stream_data",
         ))
@@ -1279,10 +1335,14 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
-    pub fn tag(&self, progress: Option<&dyn Progress>, options: &TagOptions) -> Result<(), Error> {
+    pub fn tag(
+        &self,
+        progress: Option<&dyn Progress>,
+        options: &TagOptions,
+    ) -> Result<(), PdfError> {
         let _: Option<&dyn Progress> = progress;
         let _: &TagOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::tag"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::tag"))
     }
 
     /// Reads everything and reports each deviation from a standard.
@@ -1292,9 +1352,12 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn validate(&self, options: &ValidateOptions) -> Result<Deviations, Error> {
+    pub fn validate(&self, options: &ValidateOptions) -> Result<Deviations, PdfError> {
         let _: &ValidateOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::validate"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::validate",
+        ))
     }
 
     /// The certificates and revocation data stored for long-term validation.
@@ -1304,8 +1367,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn verification_data(&self) -> Result<VerificationItems, Error> {
-        Err(Error::new(
+    pub fn verification_data(&self) -> Result<VerificationItems, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::verification_data",
         ))
@@ -1318,8 +1381,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn version(&self) -> Result<Version, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::version"))
+    pub fn version(&self) -> Result<Version, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::version",
+        ))
     }
 
     /// How viewers open the document.
@@ -1329,8 +1395,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn viewer_settings(&self) -> Result<ViewerSettings, Error> {
-        Err(Error::new(
+    pub fn viewer_settings(&self) -> Result<ViewerSettings, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::viewer_settings",
         ))
@@ -1343,8 +1409,11 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
-    pub fn warnings(&self) -> Result<Deviations, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::warnings"))
+    pub fn warnings(&self) -> Result<Deviations, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Document::warnings",
+        ))
     }
 
     /// Writes the XFA form's XML; nothing when there is none.
@@ -1354,10 +1423,10 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn xfa(&self, sink: &Sink, options: &XfaOptions) -> Result<(), Error> {
+    pub fn xfa(&self, sink: &Sink, options: &XfaOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &XfaOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Document::xfa"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::xfa"))
     }
 
     /// The XMP metadata packet; empty when there is none.
@@ -1367,8 +1436,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn xmp(&self) -> Result<String, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Document::xmp"))
+    pub fn xmp(&self) -> Result<String, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Document::xmp"))
     }
 
     /// The cross-reference entries.
@@ -1378,8 +1447,8 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn xref_entries(&self) -> Result<XrefEntries, Error> {
-        Err(Error::new(
+    pub fn xref_entries(&self) -> Result<XrefEntries, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Document::xref_entries",
         ))
@@ -1394,7 +1463,7 @@ impl Documents {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Document>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Documents::next"))
+    pub fn next(&self) -> Result<Option<Document>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Documents::next"))
     }
 }

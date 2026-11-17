@@ -51,7 +51,7 @@ A handle that returns a large result one item at a time through `next`.
 _Avoid_: iterator
 
 **Error code**:
-The stable `ErrorCode` of the one `Error`.
+The stable `ErrorCode` of the one `PdfError`.
 _Avoid_: error kind, error type
 
 **Capability**:

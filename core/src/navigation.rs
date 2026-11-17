@@ -7,7 +7,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_article`](crate::document::Document::add_article).
 #[derive(Clone, Debug, Default)]
@@ -68,8 +68,8 @@ impl Articles {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Article>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Articles::next"))
+    pub fn next(&self) -> Result<Option<Article>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Articles::next"))
     }
 }
 
@@ -88,8 +88,11 @@ impl Bookmark {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn children(&self) -> Result<Bookmarks, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Bookmark::children"))
+    pub fn children(&self) -> Result<Bookmarks, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Bookmark::children",
+        ))
     }
 
     /// Removes the bookmark and its children.
@@ -99,9 +102,9 @@ impl Bookmark {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteBookmarkOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteBookmarkOptions) -> Result<(), PdfError> {
         let _: &DeleteBookmarkOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Bookmark::delete"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Bookmark::delete"))
     }
 
     /// The bookmark's properties.
@@ -111,8 +114,8 @@ impl Bookmark {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<BookmarkInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Bookmark::info"))
+    pub fn info(&self) -> Result<BookmarkInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Bookmark::info"))
     }
 
     /// Sets the bookmark's properties.
@@ -122,9 +125,12 @@ impl Bookmark {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_info(&self, options: &SetBookmarkInfoOptions) -> Result<(), Error> {
+    pub fn set_info(&self, options: &SetBookmarkInfoOptions) -> Result<(), PdfError> {
         let _: &SetBookmarkInfoOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Bookmark::set_info"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Bookmark::set_info",
+        ))
     }
 }
 
@@ -161,8 +167,8 @@ impl Bookmarks {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Bookmark>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Bookmarks::next"))
+    pub fn next(&self) -> Result<Option<Bookmark>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Bookmarks::next"))
     }
 }
 
@@ -204,8 +210,11 @@ impl Destinations {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Destination>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Destinations::next"))
+    pub fn next(&self) -> Result<Option<Destination>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Destinations::next",
+        ))
     }
 }
 
@@ -238,8 +247,11 @@ impl LabelRanges {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<LabelRange>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "LabelRanges::next"))
+    pub fn next(&self) -> Result<Option<LabelRange>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "LabelRanges::next",
+        ))
     }
 }
 
@@ -325,8 +337,8 @@ impl Scripts {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Script>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Scripts::next"))
+    pub fn next(&self) -> Result<Option<Script>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Scripts::next"))
     }
 }
 

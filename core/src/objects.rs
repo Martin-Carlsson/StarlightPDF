@@ -5,7 +5,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_object`](crate::document::Document::add_object).
 #[derive(Clone, Debug, Default)]
@@ -78,8 +78,11 @@ impl XrefEntries {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<XrefEntry>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "XrefEntries::next"))
+    pub fn next(&self) -> Result<Option<XrefEntry>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "XrefEntries::next",
+        ))
     }
 }
 

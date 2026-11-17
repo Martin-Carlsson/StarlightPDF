@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use std::io;
 use std::path::PathBuf;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Append-only output a caller implements.
 pub trait Append: Send + Sync {
@@ -12,7 +12,7 @@ pub trait Append: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Any I/O error; its kind becomes [`Error::io_cause`](crate::Error::io_cause).
+    /// Any I/O error; its kind becomes [`PdfError::io_cause`](crate::PdfError::io_cause).
     fn append(&self, bytes: &[u8]) -> io::Result<()>;
 }
 
@@ -52,10 +52,13 @@ impl Sink {
     pub fn from_append(
         append: &Arc<dyn Append>,
         options: &AppendSinkOptions,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, PdfError> {
         let _: &Arc<dyn Append> = append;
         let _: &AppendSinkOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Sink::from_append"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Sink::from_append",
+        ))
     }
 
     /// A sink over a file.
@@ -65,9 +68,9 @@ impl Sink {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::InvalidArgument`].
-    pub fn from_file(options: &FileSinkOptions) -> Result<Self, Error> {
+    pub fn from_file(options: &FileSinkOptions) -> Result<Self, PdfError> {
         let _: &FileSinkOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Sink::from_file"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Sink::from_file"))
     }
 
     /// A sink that holds its bytes in memory, for [`Sink::take_bytes`].
@@ -77,9 +80,9 @@ impl Sink {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`].
-    pub fn in_memory(options: &MemorySinkOptions) -> Result<Self, Error> {
+    pub fn in_memory(options: &MemorySinkOptions) -> Result<Self, PdfError> {
         let _: &MemorySinkOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Sink::in_memory"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Sink::in_memory"))
     }
 
     /// Takes the bytes appended so far, leaving the sink empty.
@@ -89,7 +92,7 @@ impl Sink {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::InvalidArgument`] unless the sink is in memory.
-    pub fn take_bytes(&self) -> Result<Vec<u8>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Sink::take_bytes"))
+    pub fn take_bytes(&self) -> Result<Vec<u8>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Sink::take_bytes"))
     }
 }

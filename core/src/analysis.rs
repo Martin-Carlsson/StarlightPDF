@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// How to compare two documents.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -76,7 +76,10 @@ impl Differences {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Difference>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Differences::next"))
+    pub fn next(&self) -> Result<Option<Difference>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Differences::next",
+        ))
     }
 }

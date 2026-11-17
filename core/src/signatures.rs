@@ -7,7 +7,7 @@
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_verification_data`](crate::document::Document::add_verification_data).
 #[derive(Clone, Debug, Default)]
@@ -82,9 +82,9 @@ impl PendingSignature {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::NotSeekable`].
-    pub fn finalize(&self, options: &FinalizeSignatureOptions) -> Result<(), Error> {
+    pub fn finalize(&self, options: &FinalizeSignatureOptions) -> Result<(), PdfError> {
         let _: &FinalizeSignatureOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "PendingSignature::finalize",
         ))
@@ -97,8 +97,8 @@ impl PendingSignature {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
-    pub fn to_sign(&self) -> Result<Vec<u8>, Error> {
-        Err(Error::new(
+    pub fn to_sign(&self) -> Result<Vec<u8>, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "PendingSignature::to_sign",
         ))
@@ -153,8 +153,8 @@ impl Signature {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<SignatureInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Signature::info"))
+    pub fn info(&self) -> Result<SignatureInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Signature::info"))
     }
 
     /// Checks the signature, its chain and revocation.
@@ -164,9 +164,12 @@ impl Signature {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
-    pub fn verify(&self, options: &VerifyOptions) -> Result<Verification, Error> {
+    pub fn verify(&self, options: &VerifyOptions) -> Result<Verification, PdfError> {
         let _: &VerifyOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Signature::verify"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Signature::verify",
+        ))
     }
 }
 
@@ -228,8 +231,8 @@ impl Signatures {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Signature>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Signatures::next"))
+    pub fn next(&self) -> Result<Option<Signature>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Signatures::next"))
     }
 }
 
@@ -270,8 +273,8 @@ impl VerificationItems {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<VerificationItem>, Error> {
-        Err(Error::new(
+    pub fn next(&self) -> Result<Option<VerificationItem>, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "VerificationItems::next",
         ))

@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_layer`](crate::document::Document::add_layer).
 #[derive(Clone, Debug)]
@@ -38,8 +38,8 @@ impl Layer {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<LayerInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Layer::info"))
+    pub fn info(&self) -> Result<LayerInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Layer::info"))
     }
 
     /// Shows or hides the layer by default.
@@ -49,9 +49,9 @@ impl Layer {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_visibility(&self, options: &SetVisibilityOptions) -> Result<(), Error> {
+    pub fn set_visibility(&self, options: &SetVisibilityOptions) -> Result<(), PdfError> {
         let _: &SetVisibilityOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Layer::set_visibility",
         ))
@@ -85,8 +85,8 @@ impl Layers {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Layer>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Layers::next"))
+    pub fn next(&self) -> Result<Option<Layer>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Layers::next"))
     }
 }
 

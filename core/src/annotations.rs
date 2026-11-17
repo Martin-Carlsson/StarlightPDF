@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::output::Sink;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Page::add_annotation`](crate::page::Page::add_annotation).
 #[derive(Clone, Debug, Default)]
@@ -58,9 +58,12 @@ impl Annotation {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteAnnotationOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteAnnotationOptions) -> Result<(), PdfError> {
         let _: &DeleteAnnotationOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Annotation::delete"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Annotation::delete",
+        ))
     }
 
     /// The annotation's properties.
@@ -70,8 +73,8 @@ impl Annotation {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<AnnotationInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Annotation::info"))
+    pub fn info(&self) -> Result<AnnotationInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Annotation::info"))
     }
 
     /// Sets the annotation's properties.
@@ -81,9 +84,9 @@ impl Annotation {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_info(&self, options: &SetAnnotationInfoOptions) -> Result<(), Error> {
+    pub fn set_info(&self, options: &SetAnnotationInfoOptions) -> Result<(), PdfError> {
         let _: &SetAnnotationInfoOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Annotation::set_info",
         ))
@@ -96,10 +99,10 @@ impl Annotation {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn write_to(&self, sink: &Sink, options: &WriteAnnotationOptions) -> Result<(), Error> {
+    pub fn write_to(&self, sink: &Sink, options: &WriteAnnotationOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &WriteAnnotationOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Annotation::write_to",
         ))
@@ -210,8 +213,11 @@ impl Annotations {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Annotation>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Annotations::next"))
+    pub fn next(&self) -> Result<Option<Annotation>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Annotations::next",
+        ))
     }
 }
 

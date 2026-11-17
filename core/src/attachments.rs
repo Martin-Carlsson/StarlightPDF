@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::output::Sink;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_attachment`](crate::document::Document::add_attachment).
 #[derive(Clone, Debug, Default)]
@@ -38,9 +38,12 @@ impl Attachment {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeleteAttachmentOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeleteAttachmentOptions) -> Result<(), PdfError> {
         let _: &DeleteAttachmentOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Attachment::delete"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Attachment::delete",
+        ))
     }
 
     /// The file's properties.
@@ -50,8 +53,8 @@ impl Attachment {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<AttachmentInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Attachment::info"))
+    pub fn info(&self) -> Result<AttachmentInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Attachment::info"))
     }
 
     /// Writes the file's contents.
@@ -61,10 +64,10 @@ impl Attachment {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn write_to(&self, sink: &Sink, options: &WriteAttachmentOptions) -> Result<(), Error> {
+    pub fn write_to(&self, sink: &Sink, options: &WriteAttachmentOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &WriteAttachmentOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Attachment::write_to",
         ))
@@ -106,8 +109,11 @@ impl Attachments {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Attachment>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Attachments::next"))
+    pub fn next(&self) -> Result<Option<Attachment>, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Attachments::next",
+        ))
     }
 }
 

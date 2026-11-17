@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::layers::Layer;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// A word, line, paragraph or column.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,8 +53,8 @@ impl Blocks {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Block>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Blocks::next"))
+    pub fn next(&self) -> Result<Option<Block>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Blocks::next"))
     }
 }
 
@@ -109,8 +109,8 @@ impl Hits {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Hit>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Hits::next"))
+    pub fn next(&self) -> Result<Option<Hit>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Hits::next"))
     }
 }
 
@@ -198,8 +198,8 @@ impl Tables {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<Table>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Tables::next"))
+    pub fn next(&self) -> Result<Option<Table>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Tables::next"))
     }
 }
 
@@ -257,7 +257,7 @@ impl TextSpans {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn next(&self) -> Result<Option<TextSpan>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "TextSpans::next"))
+    pub fn next(&self) -> Result<Option<TextSpan>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "TextSpans::next"))
     }
 }

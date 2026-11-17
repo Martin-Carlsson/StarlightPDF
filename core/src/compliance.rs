@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 
 use crate::objects::ObjectId;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// A deviation from a standard.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,8 +36,8 @@ impl Deviations {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Deviation>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Deviations::next"))
+    pub fn next(&self) -> Result<Option<Deviation>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Deviations::next"))
     }
 }
 
@@ -56,8 +56,8 @@ impl Element {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<ElementInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Element::info"))
+    pub fn info(&self) -> Result<ElementInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Element::info"))
     }
 
     /// Sets the alternate description.
@@ -67,9 +67,9 @@ impl Element {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_alt_text(&self, options: &SetAltTextOptions) -> Result<(), Error> {
+    pub fn set_alt_text(&self, options: &SetAltTextOptions) -> Result<(), PdfError> {
         let _: &SetAltTextOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Element::set_alt_text",
         ))
@@ -105,8 +105,8 @@ impl Elements {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Element>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Elements::next"))
+    pub fn next(&self) -> Result<Option<Element>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Elements::next"))
     }
 }
 

@@ -157,6 +157,7 @@ pub mod security;
 pub mod shapes;
 pub mod signatures;
 
+use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 use std::io;
 
@@ -176,80 +177,7 @@ pub enum Capability {
     Signing,
 }
 
-/// The one error every operation returns.
-#[derive(Debug)]
-pub struct Error {
-    /// The stable code.
-    code: ErrorCode,
-    /// The underlying I/O error's kind.
-    io_cause: Option<io::ErrorKind>,
-    /// What went wrong, for people.
-    message: String,
-    /// The object number.
-    object_number: Option<u32>,
-    /// The byte offset in the source.
-    offset: Option<u64>,
-    /// The operation that failed.
-    operation: &'static str,
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.operation, self.message)
-    }
-}
-
-impl Error {
-    /// The stable code.
-    #[must_use]
-    pub const fn code(&self) -> ErrorCode {
-        self.code
-    }
-
-    /// The underlying I/O error's kind, when there is one.
-    #[must_use]
-    pub const fn io_cause(&self) -> Option<io::ErrorKind> {
-        self.io_cause
-    }
-
-    /// What went wrong, for people.
-    #[must_use]
-    pub const fn message(&self) -> &str {
-        self.message.as_str()
-    }
-
-    /// An error with `code`'s summary as its message.
-    fn new(code: ErrorCode, operation: &'static str) -> Self {
-        Self {
-            code,
-            io_cause: None,
-            message: String::from(code.summary()),
-            object_number: None,
-            offset: None,
-            operation,
-        }
-    }
-
-    /// The object number, when known.
-    #[must_use]
-    pub const fn object_number(&self) -> Option<u32> {
-        self.object_number
-    }
-
-    /// The byte offset in the source, when known.
-    #[must_use]
-    pub const fn offset(&self) -> Option<u64> {
-        self.offset
-    }
-
-    /// The operation that failed.
-    #[must_use]
-    pub const fn operation(&self) -> &'static str {
-        self.operation
-    }
-}
-
-/// The stable code of an [`Error`]; bindings must accept codes they do not know.
+/// The stable code of a [`PdfError`]; bindings must accept codes they do not know.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorCode {
@@ -271,7 +199,7 @@ pub enum ErrorCode {
     InvalidHeader,
     /// The document is encrypted and the password or key is missing or wrong.
     InvalidPassword,
-    /// Reading the source or writing the sink failed; see [`Error::io_cause`].
+    /// Reading the source or writing the sink failed; see [`PdfError::io_cause`].
     Io,
     /// Input exceeded a resource policy limit: decoded data, nesting depth or object count.
     LimitExceeded,
@@ -342,6 +270,93 @@ impl ErrorCode {
     }
 }
 
+/// The one error every operation returns.
+#[derive(Debug)]
+pub struct PdfError {
+    /// The stable code.
+    code: ErrorCode,
+    /// The underlying I/O error's kind.
+    io_cause: Option<io::ErrorKind>,
+    /// What went wrong, for people.
+    message: String,
+    /// The object number.
+    object_number: Option<u32>,
+    /// The byte offset in the source.
+    offset: Option<u64>,
+    /// The operation that failed.
+    operation: &'static str,
+}
+
+impl Display for PdfError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.operation, self.message)
+    }
+}
+
+impl Error for PdfError {
+    fn cause(&self) -> Option<&dyn Error> {
+        None
+    }
+
+    fn description(&self) -> &str {
+        self.message.as_str()
+    }
+
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
+impl PdfError {
+    /// The stable code.
+    #[must_use]
+    pub const fn code(&self) -> ErrorCode {
+        self.code
+    }
+
+    /// The underlying I/O error's kind, when there is one.
+    #[must_use]
+    pub const fn io_cause(&self) -> Option<io::ErrorKind> {
+        self.io_cause
+    }
+
+    /// What went wrong, for people.
+    #[must_use]
+    pub const fn message(&self) -> &str {
+        self.message.as_str()
+    }
+
+    /// An error with `code`'s summary as its message.
+    fn new(code: ErrorCode, operation: &'static str) -> Self {
+        Self {
+            code,
+            io_cause: None,
+            message: String::from(code.summary()),
+            object_number: None,
+            offset: None,
+            operation,
+        }
+    }
+
+    /// The object number, when known.
+    #[must_use]
+    pub const fn object_number(&self) -> Option<u32> {
+        self.object_number
+    }
+
+    /// The byte offset in the source, when known.
+    #[must_use]
+    pub const fn offset(&self) -> Option<u64> {
+        self.offset
+    }
+
+    /// The operation that failed.
+    #[must_use]
+    pub const fn operation(&self) -> &'static str {
+        self.operation
+    }
+}
+
 /// A PDF version.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -359,8 +374,8 @@ pub struct Version {
 /// # Errors
 ///
 /// [`ErrorCode::NotImplemented`].
-pub fn capabilities() -> Result<Vec<Capability>, Error> {
-    Err(Error::new(ErrorCode::NotImplemented, "capabilities"))
+pub fn capabilities() -> Result<Vec<Capability>, PdfError> {
+    Err(PdfError::new(ErrorCode::NotImplemented, "capabilities"))
 }
 
 /// Reads the version from the header (ISO 32000-2:2020, 7.5.2).
@@ -368,7 +383,7 @@ pub fn capabilities() -> Result<Vec<Capability>, Error> {
 /// # Errors
 ///
 /// [`ErrorCode::InvalidHeader`] unless `bytes` begins `%PDF-1.n` or `%PDF-2.n`, n a digit, then CR or LF.
-pub fn header_version(bytes: &[u8]) -> Result<Version, Error> {
+pub fn header_version(bytes: &[u8]) -> Result<Version, PdfError> {
     match *bytes {
         [
             b'%',
@@ -385,6 +400,6 @@ pub fn header_version(bytes: &[u8]) -> Result<Version, Error> {
             major: major.wrapping_sub(b'0'),
             minor: minor.wrapping_sub(b'0'),
         }),
-        _ => Err(Error::new(ErrorCode::InvalidHeader, "header_version")),
+        _ => Err(PdfError::new(ErrorCode::InvalidHeader, "header_version")),
     }
 }

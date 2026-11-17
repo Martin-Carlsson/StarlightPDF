@@ -22,7 +22,7 @@ use crate::output::Sink;
 use crate::progress::Progress;
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// A page boundary (ISO 32000-2:2020, 14.11.2).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -91,10 +91,10 @@ impl Page {
         &self,
         data: Option<&Source>,
         options: &AddAnnotationOptions,
-    ) -> Result<Annotation, Error> {
+    ) -> Result<Annotation, PdfError> {
         let _: Option<&Source> = data;
         let _: &AddAnnotationOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Page::add_annotation",
         ))
@@ -107,9 +107,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn add_field(&self, options: &AddFieldOptions) -> Result<Field, Error> {
+    pub fn add_field(&self, options: &AddFieldOptions) -> Result<Field, PdfError> {
         let _: &AddFieldOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::add_field"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::add_field"))
     }
 
     /// The annotations, links included.
@@ -119,8 +119,11 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn annotations(&self) -> Result<Annotations, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::annotations"))
+    pub fn annotations(&self) -> Result<Annotations, PdfError> {
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::annotations",
+        ))
     }
 
     /// Words, lines, paragraphs or columns, with headings.
@@ -130,9 +133,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn blocks(&self, options: &BlocksOptions) -> Result<Blocks, Error> {
+    pub fn blocks(&self, options: &BlocksOptions) -> Result<Blocks, PdfError> {
         let _: &BlocksOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::blocks"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::blocks"))
     }
 
     /// A page boundary, in default user space.
@@ -142,9 +145,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn boundary(&self, options: &BoundaryOptions) -> Result<Rect, Error> {
+    pub fn boundary(&self, options: &BoundaryOptions) -> Result<Rect, PdfError> {
         let _: &BoundaryOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::boundary"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::boundary"))
     }
 
     /// Deletes the page.
@@ -154,9 +157,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn delete(&self, options: &DeletePageOptions) -> Result<(), Error> {
+    pub fn delete(&self, options: &DeletePageOptions) -> Result<(), PdfError> {
         let _: &DeletePageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::delete"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::delete"))
     }
 
     /// Draws a barcode or QR code.
@@ -170,10 +173,13 @@ impl Page {
         &self,
         layer: Option<&Layer>,
         options: &DrawBarcodeOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&Layer> = layer;
         let _: &DrawBarcodeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::draw_barcode"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::draw_barcode",
+        ))
     }
 
     /// Draws a chart.
@@ -187,10 +193,10 @@ impl Page {
         &self,
         layer: Option<&Layer>,
         options: &DrawChartOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: Option<&Layer> = layer;
         let _: &DrawChartOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::draw_chart"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_chart"))
     }
 
     /// Draws an image; `mask` is a soft mask.
@@ -206,12 +212,12 @@ impl Page {
         mask: Option<&Source>,
         layer: Option<&Layer>,
         options: &DrawImageOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Source = image;
         let _: Option<&Source> = mask;
         let _: Option<&Layer> = layer;
         let _: &DrawImageOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::draw_image"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_image"))
     }
 
     /// Draws lines, shapes and curves.
@@ -221,10 +227,14 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn draw_path(&self, layer: Option<&Layer>, options: &DrawPathOptions) -> Result<(), Error> {
+    pub fn draw_path(
+        &self,
+        layer: Option<&Layer>,
+        options: &DrawPathOptions,
+    ) -> Result<(), PdfError> {
         let _: Option<&Layer> = layer;
         let _: &DrawPathOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::draw_path"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_path"))
     }
 
     /// Draws text.
@@ -234,10 +244,14 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn draw_text(&self, layer: Option<&Layer>, options: &DrawTextOptions) -> Result<(), Error> {
+    pub fn draw_text(
+        &self,
+        layer: Option<&Layer>,
+        options: &DrawTextOptions,
+    ) -> Result<(), PdfError> {
         let _: Option<&Layer> = layer;
         let _: &DrawTextOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::draw_text"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_text"))
     }
 
     /// Writes the page as SVG or PostScript.
@@ -252,11 +266,14 @@ impl Page {
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &ExportVectorOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: Option<&dyn Progress> = progress;
         let _: &ExportVectorOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::export_vector"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::export_vector",
+        ))
     }
 
     /// The page's object.
@@ -266,8 +283,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn id(&self) -> Result<ObjectId, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::id"))
+    pub fn id(&self) -> Result<ObjectId, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::id"))
     }
 
     /// The images drawn on the page.
@@ -277,8 +294,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn images(&self) -> Result<Images, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::images"))
+    pub fn images(&self) -> Result<Images, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::images"))
     }
 
     /// The page's position.
@@ -288,8 +305,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn index(&self) -> Result<u32, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::index"))
+    pub fn index(&self) -> Result<u32, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::index"))
     }
 
     /// The page label a viewer shows.
@@ -299,8 +316,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn label(&self) -> Result<String, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::label"))
+    pub fn label(&self) -> Result<String, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::label"))
     }
 
     /// Rasterizes the page with its annotations and fields.
@@ -315,11 +332,11 @@ impl Page {
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &RenderOptions,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: Option<&dyn Progress> = progress;
         let _: &RenderOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::render"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::render"))
     }
 
     /// Rotates clockwise by `degrees`.
@@ -329,9 +346,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn rotate_by(&self, options: &RotateByOptions) -> Result<(), Error> {
+    pub fn rotate_by(&self, options: &RotateByOptions) -> Result<(), PdfError> {
         let _: &RotateByOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::rotate_by"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::rotate_by"))
     }
 
     /// The rotation in degrees clockwise.
@@ -341,8 +358,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn rotation(&self) -> Result<u16, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::rotation"))
+    pub fn rotation(&self) -> Result<u16, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::rotation"))
     }
 
     /// Scales the page and its content.
@@ -352,9 +369,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn scale_by(&self, options: &ScaleByOptions) -> Result<(), Error> {
+    pub fn scale_by(&self, options: &ScaleByOptions) -> Result<(), PdfError> {
         let _: &ScaleByOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::scale_by"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::scale_by"))
     }
 
     /// Sets a page boundary (crop, resize), in default user space.
@@ -364,9 +381,12 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_boundary(&self, options: &SetBoundaryOptions) -> Result<(), Error> {
+    pub fn set_boundary(&self, options: &SetBoundaryOptions) -> Result<(), PdfError> {
         let _: &SetBoundaryOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::set_boundary"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::set_boundary",
+        ))
     }
 
     /// Moves the page to `index`.
@@ -376,9 +396,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_index(&self, options: &SetIndexOptions) -> Result<(), Error> {
+    pub fn set_index(&self, options: &SetIndexOptions) -> Result<(), PdfError> {
         let _: &SetIndexOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::set_index"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::set_index"))
     }
 
     /// Sets the rotation.
@@ -388,9 +408,12 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_rotation(&self, options: &SetRotationOptions) -> Result<(), Error> {
+    pub fn set_rotation(&self, options: &SetRotationOptions) -> Result<(), PdfError> {
         let _: &SetRotationOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::set_rotation"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::set_rotation",
+        ))
     }
 
     /// Sets the transition shown when the page opens.
@@ -400,9 +423,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn set_transition(&self, options: &SetTransitionOptions) -> Result<(), Error> {
+    pub fn set_transition(&self, options: &SetTransitionOptions) -> Result<(), PdfError> {
         let _: &SetTransitionOptions = options;
-        Err(Error::new(
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Page::set_transition",
         ))
@@ -415,8 +438,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn shapes(&self) -> Result<Shapes, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::shapes"))
+    pub fn shapes(&self) -> Result<Shapes, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::shapes"))
     }
 
     /// Places `other` over or under this page.
@@ -426,10 +449,13 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn superimpose(&self, other: &Self, options: &SuperimposeOptions) -> Result<(), Error> {
+    pub fn superimpose(&self, other: &Self, options: &SuperimposeOptions) -> Result<(), PdfError> {
         let _: &Self = other;
         let _: &SuperimposeOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::superimpose"))
+        Err(PdfError::new(
+            ErrorCode::NotImplemented,
+            "Page::superimpose",
+        ))
     }
 
     /// The tables found, as rows and columns.
@@ -439,9 +465,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn tables(&self, options: &TablesOptions) -> Result<Tables, Error> {
+    pub fn tables(&self, options: &TablesOptions) -> Result<Tables, PdfError> {
         let _: &TablesOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::tables"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::tables"))
     }
 
     /// The text, with positions, fonts and colors.
@@ -451,9 +477,9 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn text(&self, options: &TextOptions) -> Result<TextSpans, Error> {
+    pub fn text(&self, options: &TextOptions) -> Result<TextSpans, PdfError> {
         let _: &TextOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Page::text"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::text"))
     }
 
     /// The transition shown when the page opens.
@@ -463,8 +489,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn transition(&self) -> Result<Transition, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Page::transition"))
+    pub fn transition(&self) -> Result<Transition, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Page::transition"))
     }
 
     /// Maps displayed coordinates to user space, with rotation, crop offset and `UserUnit`.
@@ -474,8 +500,8 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn user_space_matrix(&self) -> Result<Matrix, Error> {
-        Err(Error::new(
+    pub fn user_space_matrix(&self) -> Result<Matrix, PdfError> {
+        Err(PdfError::new(
             ErrorCode::NotImplemented,
             "Page::user_space_matrix",
         ))

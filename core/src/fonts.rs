@@ -8,7 +8,7 @@
 use alloc::sync::Arc;
 
 use crate::output::Sink;
-use crate::{Error, ErrorCode};
+use crate::{ErrorCode, PdfError};
 
 /// Options for [`Document::add_font`](crate::document::Document::add_font).
 #[derive(Clone, Debug, Default)]
@@ -33,8 +33,8 @@ impl Font {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn info(&self) -> Result<FontInfo, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Font::info"))
+    pub fn info(&self) -> Result<FontInfo, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Font::info"))
     }
 
     /// Writes the embedded font program.
@@ -44,10 +44,10 @@ impl Font {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn write_to(&self, sink: &Sink, options: &WriteFontOptions) -> Result<(), Error> {
+    pub fn write_to(&self, sink: &Sink, options: &WriteFontOptions) -> Result<(), PdfError> {
         let _: &Sink = sink;
         let _: &WriteFontOptions = options;
-        Err(Error::new(ErrorCode::NotImplemented, "Font::write_to"))
+        Err(PdfError::new(ErrorCode::NotImplemented, "Font::write_to"))
     }
 }
 
@@ -91,8 +91,8 @@ impl Fonts {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn next(&self) -> Result<Option<Font>, Error> {
-        Err(Error::new(ErrorCode::NotImplemented, "Fonts::next"))
+    pub fn next(&self) -> Result<Option<Font>, PdfError> {
+        Err(PdfError::new(ErrorCode::NotImplemented, "Fonts::next"))
     }
 }
 
