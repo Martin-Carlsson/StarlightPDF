@@ -1,7 +1,7 @@
 //! Input: sources.
 
 use alloc::sync::Arc;
-use std::io;
+use std::io::{self, Read, Seek};
 use std::path::PathBuf;
 
 use crate::{Error, ErrorCode};
@@ -46,6 +46,11 @@ pub struct ReadAtSourceOptions {
     /// The caller's `ReadAt` reads only forward from offset 0, like a pipe.
     pub forward_only: bool,
 }
+
+/// Options for [`Source::from_reader`].
+#[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
+pub struct ReaderSourceOptions;
 
 /// Input with a size and reads at an offset.
 #[derive(Clone, Debug)]
@@ -96,5 +101,21 @@ impl Source {
             ErrorCode::NotImplemented,
             "Source::from_read_at",
         ))
+    }
+
+    /// A source over a `Read + Seek`, which serves one read at a time.
+    ///
+    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Io`].
+    pub fn from_reader<R>(reader: R, options: &ReaderSourceOptions) -> Result<Self, Error>
+    where
+        R: Read + Seek + Send + 'static,
+    {
+        drop(reader);
+        let _: &ReaderSourceOptions = options;
+        Err(Error::new(ErrorCode::NotImplemented, "Source::from_reader"))
     }
 }
