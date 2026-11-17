@@ -95,11 +95,6 @@ pub struct Documents {
     _shared: Arc<()>,
 }
 
-/// Options for [`Document::fonts`].
-#[derive(Clone, Copy, Debug, Default)]
-#[non_exhaustive]
-pub struct FontsOptions;
-
 /// The format [`Document::convert_from`] reads.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
@@ -643,8 +638,7 @@ impl Document {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn fonts(&self, options: &FontsOptions) -> Result<Fonts, Error> {
-        let _: &FontsOptions = options;
+    pub fn fonts(&self) -> Result<Fonts, Error> {
         Err(Error::new(ErrorCode::NotImplemented, "Document::fonts"))
     }
 

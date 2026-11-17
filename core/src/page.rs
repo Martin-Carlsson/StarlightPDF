@@ -54,11 +54,6 @@ pub struct BoundaryOptions {
 #[non_exhaustive]
 pub struct DeletePageOptions;
 
-/// Options for [`Page::images`].
-#[derive(Clone, Copy, Debug, Default)]
-#[non_exhaustive]
-pub struct ImagesOptions;
-
 /// An affine transform: x' = m11·x + m21·y + dx, y' = m12·x + m22·y + dy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
@@ -282,8 +277,7 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn images(&self, options: &ImagesOptions) -> Result<Images, Error> {
-        let _: &ImagesOptions = options;
+    pub fn images(&self) -> Result<Images, Error> {
         Err(Error::new(ErrorCode::NotImplemented, "Page::images"))
     }
 
@@ -421,8 +415,7 @@ impl Page {
     /// # Errors
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
-    pub fn shapes(&self, options: &ShapesOptions) -> Result<Shapes, Error> {
-        let _: &ShapesOptions = options;
+    pub fn shapes(&self) -> Result<Shapes, Error> {
         Err(Error::new(ErrorCode::NotImplemented, "Page::shapes"))
     }
 
@@ -560,11 +553,6 @@ pub struct SetTransitionOptions {
     /// The effect.
     pub style: TransitionStyle,
 }
-
-/// Options for [`Page::shapes`].
-#[derive(Clone, Copy, Debug, Default)]
-#[non_exhaustive]
-pub struct ShapesOptions;
 
 /// Options for [`Page::superimpose`].
 #[derive(Clone, Copy, Debug, Default)]
