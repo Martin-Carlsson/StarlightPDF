@@ -23,3 +23,33 @@ _Avoid_: job
 **Nightly**:
 The 22:00 UTC CI run of every area; when all pass, it tags `main` as `nightly-YYYY-MM-DD`.
 _Avoid_: nightly build
+
+## Public API
+
+**Source**:
+Input with two calls: its size and "read these bytes at this offset".
+_Avoid_: input stream, reader
+
+**Sink**:
+Output that only appends.
+_Avoid_: output stream, writer
+
+**Overlay**:
+A document's changed and new objects, kept apart from its source.
+_Avoid_: change set, diff
+
+**Handle**:
+What `Document`, `Page` and the rest are: a reference-counted, thread-safe reference. It never holds decoded data.
+_Avoid_: pointer
+
+**Object layer**:
+The public API that reads and replaces raw objects and streams.
+_Avoid_: low-level API
+
+**Document layer**:
+The public API for pages and operations such as rotate and merge.
+_Avoid_: high-level API
+
+**Resource policy**:
+The limits passed at open: cache, decoded data, nesting depth, object count, concurrency and temporary storage.
+_Avoid_: configuration

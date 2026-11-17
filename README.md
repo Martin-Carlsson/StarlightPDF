@@ -54,6 +54,8 @@ StarlightPDF will be available as a dependency in:
 
 CI builds prebuilt binaries per platform and publishes them to each package registry.
 
+Design decisions are recorded in [`.architecture-decisions/`](.architecture-decisions/).
+
 ## Features
 
 ### Reading and inspecting
