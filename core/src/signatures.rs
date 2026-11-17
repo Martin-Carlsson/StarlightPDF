@@ -5,6 +5,7 @@
 //! Certificates, certificate revocation lists and OCSP responses are DER encodings, concatenated.
 
 use alloc::sync::Arc;
+use core::fmt::{self, Debug, Formatter};
 
 use crate::{Error, ErrorCode};
 
@@ -45,8 +46,8 @@ pub enum Digest {
     Sha512,
 }
 
-/// Options for [`PendingSignature::finalize`].
-#[derive(Clone, Debug, Default)]
+/// Options for [`PendingSignature::finalize`]; `Debug` leaves out the private key.
+#[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct FinalizeSignatureOptions {
     /// The signer's private key (PKCS #8, DER), used when `signature` is empty.
@@ -55,6 +56,15 @@ pub struct FinalizeSignatureOptions {
     pub signature: Vec<u8>,
     /// An RFC 3161 token over the signature; empty: none.
     pub timestamp: Vec<u8>,
+}
+
+impl Debug for FinalizeSignatureOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FinalizeSignatureOptions")
+            .field("signature", &self.signature)
+            .field("timestamp", &self.timestamp)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A prepared signature waiting for the signer.

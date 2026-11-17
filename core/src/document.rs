@@ -1,6 +1,7 @@
 //! Documents: open, inspect, change and save.
 
 use alloc::sync::Arc;
+use core::fmt::{self, Debug, Formatter};
 use std::path::PathBuf;
 
 use crate::analysis::{CompareOptions, Differences};
@@ -116,8 +117,8 @@ pub enum InputFormat {
     Template,
 }
 
-/// Options for [`Document::open`].
-#[derive(Clone, Debug, Default)]
+/// Options for [`Document::open`]; `Debug` leaves out the password and private key.
+#[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct OpenOptions {
     /// The user or owner password.
@@ -126,6 +127,14 @@ pub struct OpenOptions {
     pub private_key: Vec<u8>,
     /// Fail at the first deviation instead of tolerating it.
     pub strict: bool,
+}
+
+impl Debug for OpenOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenOptions")
+            .field("strict", &self.strict)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A whole-file optimization applied when saving.
@@ -170,8 +179,8 @@ pub enum SaveMode {
     Rewrite,
 }
 
-/// Options for [`Document::save`]; whole-file work happens here.
-#[derive(Clone, Debug, Default)]
+/// Options for [`Document::save`]; whole-file work happens here. `Debug` leaves out the passwords.
+#[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct SaveOptions {
     /// Let `standards` or `version` drop what they forbid.
@@ -203,6 +212,25 @@ pub struct SaveOptions {
     pub user_password: String,
     /// Write this PDF version.
     pub version: Option<Version>,
+}
+
+impl Debug for SaveOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SaveOptions")
+            .field("allow_loss", &self.allow_loss)
+            .field("break_signatures", &self.break_signatures)
+            .field("cipher", &self.cipher)
+            .field("color_space", &self.color_space)
+            .field("image_quality", &self.image_quality)
+            .field("image_resolution", &self.image_resolution)
+            .field("mode", &self.mode)
+            .field("optimizations", &self.optimizations)
+            .field("recipients", &self.recipients)
+            .field("restrictions", &self.restrictions)
+            .field("standards", &self.standards)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What a save did.
@@ -645,7 +673,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn import_data(&self, source: &Source, options: &ImportDataOptions) -> Result<(), Error> {
         let _: &Source = source;
         let _: &ImportDataOptions = options;
