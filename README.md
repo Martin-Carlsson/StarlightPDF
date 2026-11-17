@@ -84,7 +84,7 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 - 💤 **Arrange:** reorder, delete, duplicate, insert blank pages, insert pages from other files
 - 💤 **Transform:** rotate, crop, resize, scale, change page boxes (media, crop, bleed, trim, art)
 - 💤 **Imposition:** N-up (several pages per sheet), booklets, posters, tiling
-- 💤 **Overlay:** place one page over or under another (letterheads, backgrounds)
+- 💤 **Superimpose:** place one page over or under another (letterheads, backgrounds)
 
 ### Creating content
 

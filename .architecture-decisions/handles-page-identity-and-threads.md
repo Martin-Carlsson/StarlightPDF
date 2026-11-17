@@ -1,6 +1,6 @@
 # Handles, page identity and threads
 
-Python, JS and C cannot express Rust borrows. `Document`, `Page` and the rest are reference-counted handles, in Rust too; a handle holds a reference, never decoded data, which lives in the cache. With borrows the bindings would be a second API the conformance suite does not describe; handles also make use-after-close impossible.
+Python, JS and C cannot express Rust borrows. `Document`, `Page` and the rest are reference-counted handles, in Rust too; a handle holds a reference, never decoded data, which lives in the cache. With borrows the bindings would be a second API the conformance suite does not describe; handles also turn use after close into a returned code, not undefined behaviour.
 
 Pages move when others are inserted or deleted. A `Page` follows the page, not its position; after the page is deleted the handle fails with a stale-handle code. Inserting a page before it must not make it point at a different page.
 
