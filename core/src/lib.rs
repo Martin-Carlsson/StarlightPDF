@@ -292,6 +292,31 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// The code's number, for C and bindings; fixed forever, never reused, and never 0, which is success.
+    #[must_use]
+    pub const fn number(self) -> u16 {
+        match self {
+            Self::BudgetExceeded => 1,
+            Self::Busy => 2,
+            Self::Cancelled => 3,
+            Self::CapabilityMissing => 4,
+            Self::DocumentClosed => 5,
+            Self::IncrementalRefused => 6,
+            Self::InvalidArgument => 7,
+            Self::InvalidHeader => 8,
+            Self::InvalidPassword => 9,
+            Self::Io => 10,
+            Self::LimitExceeded => 11,
+            Self::LossRefused => 12,
+            Self::Malformed => 13,
+            Self::NotImplemented => 14,
+            Self::NotSeekable => 15,
+            Self::SignaturesWouldBreak => 16,
+            Self::StaleHandle => 17,
+            Self::Unsupported => 18,
+        }
+    }
+
     /// A short lowercase description.
     const fn summary(self) -> &'static str {
         match self {
