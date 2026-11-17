@@ -51,5 +51,5 @@ The public API for pages and operations such as rotate and merge.
 _Avoid_: high-level API
 
 **Resource policy**:
-The limits passed at open: cache, decoded data, nesting depth, object count, concurrency and temporary storage.
+The limits passed at open: cache, decoded data, nesting depth, object count, concurrency and temporary storage. Documents opened with the same policy share its budget.
 _Avoid_: configuration
