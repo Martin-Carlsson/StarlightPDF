@@ -168,7 +168,7 @@ if [ "$1" = merge ]; then
   base=origin/main...HEAD
 
   paths=$(git diff --name-only --no-renames "$base")
-  bad=$(printf '%s\n' "$paths" | awk '/\.toml$/ || !/^(README\.md|GLOSSARY\.md|(core|bindings|tests)\/.*)?$/')
+  bad=$(printf '%s\n' "$paths" | awk '/\.toml$/ || !/^(README\.md|GLOSSARY\.md|\.architecture-decisions\/[^\/]*\.md|(core|bindings|tests)\/.*)?$/')
   if [ -n "$bad" ]; then no paths "not allowed: $bad"; else ok paths "$paths"; fi
 
   t=':(glob)**/tests/**'

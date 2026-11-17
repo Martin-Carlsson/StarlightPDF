@@ -779,9 +779,9 @@ merge_runs
 grep -qF 'Head branch was modified' "$tmp/out" || good=0
 expect -n "merge removes the label when GitHub refuses" test "$good" -eq 1
 
-# Paths: README.md, GLOSSARY.md, core/, bindings/ and tests/ only, no .toml.
+# Paths: README.md, GLOSSARY.md, .architecture-decisions/*.md, core/, bindings/ and tests/ only, no .toml.
 good=1
-for p in .claude/x ci/x core/Cargo.toml; do
+for p in .claude/x ci/x core/Cargo.toml .architecture-decisions/x.sh .architecture-decisions/sub/x.md; do
   pr_base
   mkdir -p "$proj/$(dirname "$p")"
   echo x >"$proj/$p"
@@ -789,8 +789,8 @@ for p in .claude/x ci/x core/Cargo.toml; do
   stops paths
 done
 pr_base
-mkdir -p "$proj/core/src" "$proj/bindings/py"
-for p in README.md GLOSSARY.md core/src/x.rs bindings/py/x.py tests/new.txt; do echo x >>"$proj/$p"; done
+mkdir -p "$proj/core/src" "$proj/bindings/py" "$proj/.architecture-decisions"
+for p in README.md GLOSSARY.md .architecture-decisions/x.md core/src/x.rs bindings/py/x.py tests/new.txt; do echo x >>"$proj/$p"; done
 pr_ready
 merges
 expect -n "merge condition paths" test "$good" -eq 1
