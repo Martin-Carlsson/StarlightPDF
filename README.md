@@ -54,6 +54,8 @@ StarlightPDF will be available as a dependency in:
 
 CI builds prebuilt binaries per platform and publishes them to each package registry.
 
+Design decisions are recorded in [`.architecture-decisions/`](.architecture-decisions/).
+
 ## Features
 
 ### Reading and inspecting
@@ -82,7 +84,7 @@ CI builds prebuilt binaries per platform and publishes them to each package regi
 - 💤 **Arrange:** reorder, delete, duplicate, insert blank pages, insert pages from other files
 - 💤 **Transform:** rotate, crop, resize, scale, change page boxes (media, crop, bleed, trim, art)
 - 💤 **Imposition:** N-up (several pages per sheet), booklets, posters, tiling
-- 💤 **Overlay:** place one page over or under another (letterheads, backgrounds)
+- 💤 **Superimpose:** place one page over or under another (letterheads, backgrounds)
 
 ### Creating content
 
