@@ -45,8 +45,8 @@ pub struct PrintOptions {
     pub copies: Option<u32>,
     /// Sides of the paper.
     pub duplex: Duplex,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// Empty: the default printer.
     pub printer: String,
     /// How pages fit the paper.

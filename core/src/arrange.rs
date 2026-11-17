@@ -53,8 +53,8 @@ pub struct InsertBlankPageOptions {
 pub struct InsertPagesOptions {
     /// Where they go; `None`: after the last page.
     pub index: Option<u32>,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
 }
 
 /// Options for [`Document::insert_toc`](crate::document::Document::insert_toc).

@@ -68,6 +68,6 @@ pub enum Permission {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SanitizeOptions {
-    /// What to remove; empty removes all of it.
-    pub remove: Vec<HiddenData>,
+    /// What to remove; `None`: all of it.
+    pub remove: Option<Vec<HiddenData>>,
 }

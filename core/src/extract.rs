@@ -72,8 +72,8 @@ pub struct BlocksOptions {
 pub struct ConvertToOptions {
     /// The format to write.
     pub format: OutputFormat,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
 }
 
 /// A match, one per line it spans.
@@ -141,8 +141,8 @@ pub enum OutputFormat {
 pub struct RecognizeOptions {
     /// BCP 47 tags; empty: `en`.
     pub languages: Vec<String>,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// Pixels per inch to recognize at; `None`: 300.
     pub resolution: Option<u32>,
 }
@@ -153,8 +153,8 @@ pub struct RecognizeOptions {
 pub struct SearchOptions {
     /// Match case.
     pub case_sensitive: bool,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// The text to find.
     pub query: String,
     /// `query` is a regular expression.

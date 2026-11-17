@@ -226,8 +226,8 @@ pub struct DeleteAnnotationOptions;
 pub struct GenerateAppearancesOptions {
     /// Only where none exists.
     pub missing_only: bool,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
 }
 
 /// How a line ends.

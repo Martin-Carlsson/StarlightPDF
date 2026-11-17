@@ -29,18 +29,18 @@ pub enum Anchor {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct ApplyRedactionsOptions {
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
 }
 
 /// Options for [`Document::flatten`](crate::document::Document::flatten).
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct FlattenOptions {
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
-    /// What to flatten; empty: all four.
-    pub parts: Vec<Flattening>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
+    /// What to flatten; `None`: all four.
+    pub parts: Option<Vec<Flattening>>,
 }
 
 /// What to merge into the page content.
@@ -63,8 +63,8 @@ pub enum Flattening {
 pub struct ReplaceTextOptions {
     /// Match case.
     pub case_sensitive: bool,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// The text to find.
     pub query: String,
     /// `query` is a regular expression.
@@ -95,8 +95,8 @@ pub struct StampOptions {
     pub margin: f64,
     /// From 0 to 1; `None`: 1.
     pub opacity: Option<f64>,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// `{page}` and `{pages}` become numbers.
     pub text: String,
     /// Beneath the page content.

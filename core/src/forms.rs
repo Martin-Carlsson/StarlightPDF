@@ -77,8 +77,8 @@ pub enum ExchangeFormat {
 pub struct ExportDataOptions {
     /// Annotations support `Fdf` and `Xfdf`.
     pub format: ExchangeFormat,
-    /// Empty: all pages.
-    pub pages: Vec<u32>,
+    /// `None`: all pages.
+    pub pages: Option<Vec<u32>>,
     /// What to export.
     pub scope: DataScope,
 }
