@@ -42,6 +42,26 @@ _Avoid_: change set, diff
 What `Document`, `Page` and the rest are: a reference-counted, thread-safe reference. It never holds decoded data.
 _Avoid_: pointer
 
+**Option record**:
+The one struct of options an operation takes. Flat: no field names a struct other than a handle or a struct of only numbers.
+_Avoid_: config, parameters
+
+**Cursor**:
+A handle that returns a large result one item at a time through `next`.
+_Avoid_: iterator
+
+**Error code**:
+The stable `ErrorCode` of the one `Error`.
+_Avoid_: error kind, error type
+
+**Capability**:
+A heavy part a build can leave out, such as OCR or rendering.
+_Avoid_: plugin, extension
+
+**Target**:
+Where a link, bookmark or view goes.
+_Avoid_: URL
+
 **Object layer**:
 The public API that reads and replaces raw objects and streams.
 _Avoid_: low-level API
