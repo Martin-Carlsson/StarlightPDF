@@ -62,7 +62,7 @@
 //!
 //! - **Bookmarks:** [`document::Document::bookmarks`], [`document::Document::add_bookmark`], [`navigation::Bookmark`].
 //! - **Links:** [`page::Page::add_annotation`], [`document::Document::destinations`], [`document::Document::set_destination`].
-//! - **Viewer settings:** [`document::Document::viewer_settings`], [`document::Document::set_viewer_settings`], [`document::Document::label_ranges`], [`document::Document::set_label_range`], [`page::Page::label`].
+//! - **Viewer settings:** [`document::Document::viewer_settings`], [`document::Document::set_viewer_settings`], [`document::Document::label_ranges`], [`document::Document::set_label_range`], [`document::Document::delete_label_range`], [`page::Page::label`].
 //! - **Actions:** [`document::Document::scripts`], [`document::Document::set_script`], [`page::Page::set_transition`], [`document::Document::articles`], [`document::Document::add_article`].
 //! - **Rich content:** [`document::Document::layers`], [`document::Document::add_layer`], [`page::Page::add_annotation`], [`annotations::AnnotationKind`].
 //!
@@ -97,7 +97,7 @@
 //! ## Standards and compliance
 //!
 //! - **Archiving:** [`document::SaveOptions`], [`compliance::Standard`], [`document::Document::validate`].
-//! - **Accessibility:** [`document::Document::tag`], [`document::Document::language`], [`document::Document::elements`], [`compliance::Element::set_alt_text`].
+//! - **Accessibility:** [`document::Document::tag`], [`document::Document::language`], [`document::Document::set_language`], [`document::Document::elements`], [`compliance::Element::set_alt_text`].
 //! - **Print:** [`document::Document::set_output_intent`], [`document::Document::output_intent`], [`compliance::Standard`].
 //! - **Other:** [`compliance::Standard`], [`document::SaveOptions`].
 //!

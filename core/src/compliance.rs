@@ -130,6 +130,14 @@ pub struct SetAltTextOptions {
     pub alt_text: String,
 }
 
+/// Options for [`Document::set_language`](crate::document::Document::set_language).
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct SetLanguageOptions {
+    /// BCP 47; empty removes it.
+    pub language: String,
+}
+
 /// Options for [`Document::set_output_intent`](crate::document::Document::set_output_intent).
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]

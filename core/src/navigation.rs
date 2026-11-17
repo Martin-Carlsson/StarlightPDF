@@ -171,6 +171,14 @@ impl Bookmarks {
 #[non_exhaustive]
 pub struct DeleteBookmarkOptions;
 
+/// Options for [`Document::delete_label_range`](crate::document::Document::delete_label_range).
+#[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
+pub struct DeleteLabelRangeOptions {
+    /// First page of the range.
+    pub start: u32,
+}
+
 /// A named destination.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]

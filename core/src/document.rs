@@ -13,8 +13,8 @@ use crate::attachments::{
     AddAttachmentOptions, Attachment, Attachments, Collection, SetCollectionOptions,
 };
 use crate::compliance::{
-    Deviations, Elements, OutputIntent, SetOutputIntentOptions, Standard, TagOptions,
-    ValidateOptions,
+    Deviations, Elements, OutputIntent, SetLanguageOptions, SetOutputIntentOptions, Standard,
+    TagOptions, ValidateOptions,
 };
 use crate::edit::{ApplyRedactionsOptions, FlattenOptions, ReplaceTextOptions, StampOptions};
 use crate::extract::{ConvertToOptions, Hits, RecognizeOptions, SearchOptions};
@@ -25,9 +25,9 @@ use crate::layers::{AddLayerOptions, Layer, Layers};
 use crate::limits::ResourcePolicy;
 use crate::metadata::{InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions};
 use crate::navigation::{
-    AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, Destinations,
-    LabelRanges, Scripts, SetDestinationOptions, SetLabelRangeOptions, SetScriptOptions,
-    SetViewerSettingsOptions, ViewerSettings,
+    AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, DeleteLabelRangeOptions,
+    Destinations, LabelRanges, Scripts, SetDestinationOptions, SetLabelRangeOptions,
+    SetScriptOptions, SetViewerSettingsOptions, ViewerSettings,
 };
 use crate::objects::{
     AddObjectOptions, ObjectId, ObjectOptions, SetObjectOptions, SetStreamDataOptions,
@@ -522,6 +522,21 @@ impl Document {
         let _: Option<&ResourcePolicy> = policy;
         let _: &CreateOptions = options;
         Err(Error::new(ErrorCode::NotImplemented, "Document::create"))
+    }
+
+    /// Removes the label range that begins at `start`; its pages join the range before.
+    ///
+    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    pub fn delete_label_range(&self, options: &DeleteLabelRangeOptions) -> Result<(), Error> {
+        let _: &DeleteLabelRangeOptions = options;
+        Err(Error::new(
+            ErrorCode::NotImplemented,
+            "Document::delete_label_range",
+        ))
     }
 
     /// The named destinations.
@@ -1074,6 +1089,21 @@ impl Document {
         Err(Error::new(
             ErrorCode::NotImplemented,
             "Document::set_label_range",
+        ))
+    }
+
+    /// Sets or removes the document's language.
+    ///
+    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    pub fn set_language(&self, options: &SetLanguageOptions) -> Result<(), Error> {
+        let _: &SetLanguageOptions = options;
+        Err(Error::new(
+            ErrorCode::NotImplemented,
+            "Document::set_language",
         ))
     }
 
