@@ -224,24 +224,24 @@ pub struct ImportDataOptions {
     pub format: ExchangeFormat,
 }
 
-/// Options for [`Field::set_info`].
+/// Options for [`Field::set_info`]; `None` leaves a property unchanged.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetFieldInfoOptions {
     /// JavaScript that computes the value.
-    pub calculation_script: String,
+    pub calculation_script: Option<String>,
     /// The choices of a dropdown or list.
-    pub choices: Vec<String>,
+    pub choices: Option<Vec<String>>,
     /// JavaScript that formats the value.
-    pub format_script: String,
+    pub format_script: Option<String>,
     /// Not editable.
-    pub read_only: bool,
+    pub read_only: Option<bool>,
     /// Must be filled.
-    pub required: bool,
+    pub required: Option<bool>,
     /// The tooltip.
-    pub tooltip: String,
+    pub tooltip: Option<String>,
     /// JavaScript that checks a new value.
-    pub validation_script: String,
+    pub validation_script: Option<String>,
 }
 
 /// Options for [`Field::set_value`].

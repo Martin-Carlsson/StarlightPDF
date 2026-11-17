@@ -330,22 +330,22 @@ impl Scripts {
     }
 }
 
-/// Options for [`Bookmark::set_info`].
+/// Options for [`Bookmark::set_info`]; `None` leaves a property unchanged.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetBookmarkInfoOptions {
     /// Bold title.
-    pub bold: bool,
+    pub bold: Option<bool>,
     /// The title's [color](crate::drawing#colors).
-    pub color: String,
+    pub color: Option<String>,
     /// Italic title.
-    pub italic: bool,
+    pub italic: Option<bool>,
     /// Children shown.
-    pub open: bool,
-    /// Where it goes, a [target](crate::navigation#targets).
-    pub target: String,
+    pub open: Option<bool>,
+    /// Where it goes, a [target](crate::navigation#targets); empty removes it.
+    pub target: Option<String>,
     /// The title.
-    pub title: String,
+    pub title: Option<String>,
 }
 
 /// Options for [`Document::set_destination`](crate::document::Document::set_destination).
@@ -382,18 +382,19 @@ pub struct SetScriptOptions {
     pub name: String,
 }
 
-/// Options for [`Document::set_viewer_settings`](crate::document::Document::set_viewer_settings).
+/// Options for [`Document::set_viewer_settings`](crate::document::Document::set_viewer_settings); `None` leaves a
+/// property unchanged.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetViewerSettingsOptions {
     /// How pages are laid out.
-    pub layout: PageLayout,
+    pub layout: Option<PageLayout>,
     /// The panel shown.
-    pub mode: PageMode,
+    pub mode: Option<PageMode>,
     /// Opening page, layout and zoom, a [target](crate::navigation#targets).
-    pub open_target: String,
-    /// Viewer preferences to turn on.
-    pub preferences: Vec<ViewerPreference>,
+    pub open_target: Option<String>,
+    /// The viewer preferences turned on; the rest are turned off.
+    pub preferences: Option<Vec<ViewerPreference>>,
 }
 
 /// A viewer preference (ISO 32000-2:2020, 12.2).

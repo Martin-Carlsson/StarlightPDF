@@ -11,15 +11,15 @@ use crate::{Error, ErrorCode};
 #[non_exhaustive]
 pub struct DeleteShapeOptions;
 
-/// Options for [`Shape::set_paint`].
+/// Options for [`Shape::set_paint`]; `None` leaves a property unchanged.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetPaintOptions {
     /// A [paint](crate::drawing#paints); empty: none.
-    pub fill: String,
+    pub fill: Option<String>,
     /// A [paint](crate::drawing#paints); empty: none.
-    pub stroke: String,
-    /// `None`: unchanged.
+    pub stroke: Option<String>,
+    /// Line width in points.
     pub stroke_width: Option<f64>,
 }
 

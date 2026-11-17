@@ -22,27 +22,27 @@ pub struct InfoDictionary {
     pub title: String,
 }
 
-/// Options for [`Document::set_info_dictionary`](crate::document::Document::set_info_dictionary); an empty field
-/// removes the entry.
+/// Options for [`Document::set_info_dictionary`](crate::document::Document::set_info_dictionary); `None` leaves an
+/// entry unchanged, empty removes it.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetInfoDictionaryOptions {
     /// The author.
-    pub author: String,
+    pub author: Option<String>,
     /// The creation [date](crate#dates).
-    pub created: String,
+    pub created: Option<String>,
     /// The application that created the original.
-    pub creator: String,
+    pub creator: Option<String>,
     /// Keywords.
-    pub keywords: String,
+    pub keywords: Option<String>,
     /// The last modification [date](crate#dates).
-    pub modified: String,
+    pub modified: Option<String>,
     /// The application that wrote the PDF.
-    pub producer: String,
+    pub producer: Option<String>,
     /// The subject.
-    pub subject: String,
+    pub subject: Option<String>,
     /// The title.
-    pub title: String,
+    pub title: Option<String>,
 }
 
 /// Options for [`Document::set_xmp`](crate::document::Document::set_xmp).

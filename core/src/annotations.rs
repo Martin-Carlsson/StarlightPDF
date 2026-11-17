@@ -243,28 +243,28 @@ pub enum LineEnding {
     Plain,
 }
 
-/// Options for [`Annotation::set_info`].
+/// Options for [`Annotation::set_info`]; `None` leaves a property unchanged.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SetAnnotationInfoOptions {
     /// The author.
-    pub author: String,
+    pub author: Option<String>,
     /// A [color](crate::drawing#colors).
-    pub color: String,
+    pub color: Option<String>,
     /// The note or text.
-    pub contents: String,
+    pub contents: Option<String>,
     /// The height.
-    pub height: f64,
-    /// The opacity; `None`: 1.
+    pub height: Option<f64>,
+    /// The opacity.
     pub opacity: Option<f64>,
     /// For a link, a [target](crate::navigation#targets).
-    pub target: String,
+    pub target: Option<String>,
     /// The width.
-    pub width: f64,
+    pub width: Option<f64>,
     /// The left edge.
-    pub x: f64,
+    pub x: Option<f64>,
     /// The top edge.
-    pub y: f64,
+    pub y: Option<f64>,
 }
 
 /// Options for [`Annotation::write_to`].
