@@ -1,10 +1,16 @@
 //! Input: sources.
 
 use alloc::sync::Arc;
-use std::io::{self, Read, Seek};
+use core::fmt::{self, Debug, Formatter};
+use std::fs::File;
+use std::io::{self, ErrorKind, Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use crate::{ErrorCode, PdfError};
+
+/// Bytes in memory.
+struct Bytes(BytesSourceOptions);
 
 /// Options for [`Source::from_bytes`].
 #[derive(Clone, Debug, Default)]
@@ -13,6 +19,9 @@ pub struct BytesSourceOptions {
     /// The bytes, shared, not copied.
     pub bytes: Arc<Vec<u8>>,
 }
+
+/// A file; seeks before each read.
+struct FileReadAt(Mutex<File>);
 
 /// Options for [`Source::from_file`].
 #[derive(Clone, Debug, Default)]
@@ -53,60 +62,103 @@ pub struct ReadAtSourceOptions {
 pub struct ReaderSourceOptions;
 
 /// Input with a size and reads at an offset.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Source {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// Reads only forward.
+    forward_only: bool,
+    /// The input.
+    read_at: Arc<dyn ReadAt>,
+}
+
+impl ReadAt for Bytes {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
+        let rest = usize::try_from(offset)
+            .ok()
+            .and_then(|start| self.0.bytes.get(start..))
+            .unwrap_or_default();
+        let count = rest.len().min(buffer.len());
+        buffer
+            .iter_mut()
+            .zip(rest)
+            .for_each(|(byte, source)| *byte = *source);
+        Ok(count)
+    }
+
+    fn size(&self) -> io::Result<u64> {
+        u64::try_from(self.0.bytes.len()).map_err(io::Error::other)
+    }
+}
+
+impl ReadAt for FileReadAt {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
+        let mut file = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let _position = file.seek(SeekFrom::Start(offset))?;
+        file.read(buffer)
+    }
+
+    fn size(&self) -> io::Result<u64> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .metadata()?
+            .len())
+    }
+}
+
+impl Debug for Source {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Source")
+            .field("forward_only", &self.forward_only)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Source {
+    /// Whether the source reads only forward.
+    pub(crate) const fn forward_only(&self) -> bool {
+        self.forward_only
+    }
+
     /// A source over bytes in memory.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`].
+    /// None.
     pub fn from_bytes(options: &BytesSourceOptions) -> Result<Self, PdfError> {
-        let _: &BytesSourceOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Source::from_bytes",
-        ))
+        Ok(Self {
+            forward_only: false,
+            read_at: Arc::new(Bytes(options.clone())),
+        })
     }
 
     /// A source over a file, opened now.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Io`].
+    /// [`ErrorCode::Io`].
     pub fn from_file(options: &FileSourceOptions) -> Result<Self, PdfError> {
-        let _: &FileSourceOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Source::from_file",
-        ))
+        File::open(&options.file)
+            .map(|file| Self {
+                forward_only: false,
+                read_at: Arc::new(FileReadAt(Mutex::new(file))),
+            })
+            .map_err(|error| PdfError::io(&error, "Source::from_file"))
     }
 
     /// A source over a caller's `ReadAt`.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`].
+    /// None.
     pub fn from_read_at(
         read_at: &Arc<dyn ReadAt>,
         options: &ReadAtSourceOptions,
     ) -> Result<Self, PdfError> {
-        let _: &Arc<dyn ReadAt> = read_at;
-        let _: &ReadAtSourceOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Source::from_read_at",
-        ))
+        Ok(Self {
+            forward_only: options.forward_only,
+            read_at: Arc::clone(read_at),
+        })
     }
 
     /// A source over a `Read + Seek`, which serves one read at a time.
@@ -126,5 +178,26 @@ impl Source {
             ErrorCode::NotImplemented,
             "Source::from_reader",
         ))
+    }
+
+    /// Fills `buffer` from offset 0, stopping early at the end; returns the count read.
+    pub(crate) fn read_start(
+        &self,
+        buffer: &mut [u8],
+        operation: &'static str,
+    ) -> Result<usize, PdfError> {
+        let mut filled = 0;
+        while let Some(rest) = buffer.get_mut(filled..).filter(|rest| !rest.is_empty()) {
+            match self
+                .read_at
+                .read_at(u64::try_from(filled).unwrap_or(u64::MAX), rest)
+            {
+                Ok(0) => break,
+                Ok(count) => filled = filled.saturating_add(count),
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(PdfError::io(&error, operation)),
+            }
+        }
+        Ok(filled.min(buffer.len()))
     }
 }
