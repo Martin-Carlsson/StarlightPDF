@@ -33,6 +33,16 @@ fn call(operation: &str, args: &[&str]) -> Result<String, String> {
             options.file = PathBuf::from(path(operation, args)?);
             Ok(open(Source::from_file(&options)))
         }
+        "page_count_bytes" => {
+            let mut options = BytesSourceOptions::default();
+            options.bytes = Arc::new(read(operation, args)?);
+            Ok(page_count(Source::from_bytes(&options)))
+        }
+        "page_count_file" => {
+            let mut options = FileSourceOptions::default();
+            options.file = PathBuf::from(path(operation, args)?);
+            Ok(page_count(Source::from_file(&options)))
+        }
         _ => Err(format!("unknown operation '{operation}'")),
     }
 }
@@ -43,6 +53,16 @@ fn open(made: Result<Source, PdfError>) -> String {
         .map_or_else(
             |error| String::from(error.code().name()),
             |_| String::from("ok"),
+        )
+}
+
+/// Opens a made source without a policy and counts its pages: the count, or the error code's name.
+fn page_count(made: Result<Source, PdfError>) -> String {
+    made.and_then(|source| Document::open(&source, None, &OpenOptions::default()))
+        .and_then(|document| document.page_count())
+        .map_or_else(
+            |error| String::from(error.code().name()),
+            |count| count.to_string(),
         )
 }
 

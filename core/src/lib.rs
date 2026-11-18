@@ -156,6 +156,8 @@ pub mod rendering;
 pub mod security;
 pub mod shapes;
 pub mod signatures;
+mod syntax;
+mod xref;
 
 use core::error::Error;
 use core::fmt::{self, Display, Formatter};

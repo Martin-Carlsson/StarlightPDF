@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use crate::{ErrorCode, PdfError};
 
+/// Nesting depth of arrays and dictionaries when a policy sets none.
+pub(crate) const DEFAULT_DEPTH_LIMIT: u32 = 256;
+
 /// Limits shared by the documents opened with it.
 #[derive(Clone, Debug)]
 pub struct ResourcePolicy {
