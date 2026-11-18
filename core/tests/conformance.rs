@@ -1,7 +1,15 @@
 //! Runs the conformance suite in `tests/conformance/*.tsv` through the core crate.
 
+extern crate alloc;
+
+use alloc::sync::Arc;
 use std::ffi::OsStr;
 use std::fs;
+use std::path::PathBuf;
+
+use starlightpdf::PdfError;
+use starlightpdf::document::{Document, OpenOptions};
+use starlightpdf::input::{BytesSourceOptions, FileSourceOptions, Source};
 
 /// The repository root, against which case paths resolve.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
@@ -9,22 +17,47 @@ const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 /// Calls `operation`; only operations listed here are known.
 fn call(operation: &str, args: &[&str]) -> Result<String, String> {
     match operation {
-        "header_version" => {
-            let [path] = *args else {
-                return Err(format!(
-                    "header_version takes 1 argument, got {}",
-                    args.len()
-                ));
-            };
-            let file = format!("{ROOT}/{path}");
-            let bytes = fs::read(&file).map_err(|err| format!("{file}: {err}"))?;
-            Ok(starlightpdf::header_version(&bytes).map_or_else(
+        "header_version" => Ok(
+            starlightpdf::header_version(&read(operation, args)?).map_or_else(
                 |_| String::from("error"),
                 |version| format!("{}.{}", version.major, version.minor),
-            ))
+            ),
+        ),
+        "open_bytes" => {
+            let mut options = BytesSourceOptions::default();
+            options.bytes = Arc::new(read(operation, args)?);
+            Ok(open(Source::from_bytes(&options)))
+        }
+        "open_file" => {
+            let mut options = FileSourceOptions::default();
+            options.file = PathBuf::from(path(operation, args)?);
+            Ok(open(Source::from_file(&options)))
         }
         _ => Err(format!("unknown operation '{operation}'")),
     }
+}
+
+/// Opens a made source without a policy: `ok`, or the error code's name.
+fn open(made: Result<Source, PdfError>) -> String {
+    made.and_then(|source| Document::open(&source, None, &OpenOptions::default()))
+        .map_or_else(
+            |error| String::from(error.code().name()),
+            |_| String::from("ok"),
+        )
+}
+
+/// The one argument, a path from the repository root, resolved.
+fn path(operation: &str, args: &[&str]) -> Result<String, String> {
+    let [relative] = *args else {
+        return Err(format!("{operation} takes 1 argument, got {}", args.len()));
+    };
+    Ok(format!("{ROOT}/{relative}"))
+}
+
+/// The bytes of the file the one argument names.
+fn read(operation: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let file = path(operation, args)?;
+    fs::read(&file).map_err(|err| format!("{file}: {err}"))
 }
 
 /// Runs one case: operation, arguments, expected value, tab-separated.

@@ -42,7 +42,7 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
-use crate::{ErrorCode, PdfError, Version};
+use crate::{ErrorCode, HEADER_LEN, PdfError, Version, parse_header};
 
 /// Options for [`Document::close`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -854,24 +854,30 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::object"))
     }
 
-    /// Opens `source`, reading lazily and tolerating what viewers tolerate.
+    /// Opens `source`, checking only its header (ISO 32000-2:2020, 7.5.2); `policy` and `options` are not used yet.
     ///
-    /// A forward-only source spools to temporary storage, or fails with [`ErrorCode::NotSeekable`].
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// A forward-only source fails with [`ErrorCode::NotSeekable`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::InvalidArgument`], [`ErrorCode::InvalidHeader`], [`ErrorCode::InvalidPassword`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::InvalidHeader`], [`ErrorCode::Io`], [`ErrorCode::NotSeekable`].
     pub fn open(
         source: &Source,
         policy: Option<&ResourcePolicy>,
         options: &OpenOptions,
     ) -> Result<Self, PdfError> {
-        let _: &Source = source;
+        /// The operation.
+        const OPEN: &str = "Document::open";
         let _: Option<&ResourcePolicy> = policy;
         let _: &OpenOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::open"))
+        if source.forward_only() {
+            return Err(PdfError::new(ErrorCode::NotSeekable, OPEN));
+        }
+        let mut header = [0; HEADER_LEN];
+        let count = source.read_start(&mut header, OPEN)?;
+        parse_header(header.get(..count).unwrap_or_default(), OPEN).map(|_| Self {
+            _shared: Arc::new(()),
+        })
     }
 
     /// The output intent, when there is one.

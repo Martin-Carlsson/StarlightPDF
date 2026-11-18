@@ -13,12 +13,35 @@ def header_version(path: str) -> str:
     """Render the header version of the file at `path`, or `error`."""
     try:
         major, minor = starlightpdf.header_version((ROOT / path).read_bytes())
-    except ValueError:
+    except starlightpdf.PdfError:
         return "error"
     return f"{major}.{minor}"
 
 
-OPERATIONS = {"header_version": header_version}
+def open_bytes(path: str) -> str:
+    """Open the file at `path` from its bytes: `ok` or the error code's name."""
+    try:
+        source = starlightpdf.Source.from_bytes(bytes=(ROOT / path).read_bytes())
+        starlightpdf.Document.open(source)
+    except starlightpdf.PdfError as error:
+        return error.code
+    return "ok"
+
+
+def open_file(path: str) -> str:
+    """Open the file at `path` from the file: `ok` or the error code's name."""
+    try:
+        starlightpdf.Document.open(starlightpdf.Source.from_file(file=ROOT / path))
+    except starlightpdf.PdfError as error:
+        return error.code
+    return "ok"
+
+
+OPERATIONS = {
+    "header_version": header_version,
+    "open_bytes": open_bytes,
+    "open_file": open_file,
+}
 
 
 class SuiteError(Exception):

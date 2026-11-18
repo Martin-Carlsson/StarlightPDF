@@ -1,0 +1,29 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.5.2 (header) and 7.2.3 (EOL markers)
+open_bytes	tests/corpus/header/version-1.7.pdf	ok
+open_bytes	tests/corpus/header/version-2.9.pdf	ok
+open_bytes	tests/corpus/header/version-2.0-trailing.pdf	ok
+open_bytes	tests/corpus/header/eol-cr.pdf	ok
+open_bytes	tests/corpus/header/eol-crlf.pdf	ok
+open_bytes	tests/corpus/header/empty.pdf	InvalidHeader
+open_bytes	tests/corpus/header/not-pdf.pdf	InvalidHeader
+open_bytes	tests/corpus/header/truncated-magic.pdf	InvalidHeader
+open_bytes	tests/corpus/header/version-3.0.pdf	InvalidHeader
+open_bytes	tests/corpus/header/version-1.x.pdf	InvalidHeader
+open_bytes	tests/corpus/header/version-1-dot.pdf	InvalidHeader
+open_bytes	tests/corpus/header/version-1.10.pdf	InvalidHeader
+open_bytes	tests/corpus/header/no-eol.pdf	InvalidHeader
+open_file	tests/corpus/header/version-1.7.pdf	ok
+open_file	tests/corpus/header/version-2.9.pdf	ok
+open_file	tests/corpus/header/version-2.0-trailing.pdf	ok
+open_file	tests/corpus/header/eol-cr.pdf	ok
+open_file	tests/corpus/header/eol-crlf.pdf	ok
+open_file	tests/corpus/header/empty.pdf	InvalidHeader
+open_file	tests/corpus/header/not-pdf.pdf	InvalidHeader
+open_file	tests/corpus/header/truncated-magic.pdf	InvalidHeader
+open_file	tests/corpus/header/version-3.0.pdf	InvalidHeader
+open_file	tests/corpus/header/version-1.x.pdf	InvalidHeader
+open_file	tests/corpus/header/version-1-dot.pdf	InvalidHeader
+open_file	tests/corpus/header/version-1.10.pdf	InvalidHeader
+open_file	tests/corpus/header/no-eol.pdf	InvalidHeader
+open_file	tests/corpus/header/missing.pdf	Io

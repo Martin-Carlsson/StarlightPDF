@@ -60,7 +60,7 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 
 ### Reading and inspecting
 
-- 🔜 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
+- 👨‍💻 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
 - 👨‍💻 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
 - 💤 **Metadata:** read title, author, subject, keywords, dates; XMP metadata
 - 💤 **Structure access:** raw objects, streams, cross-reference table, document catalog

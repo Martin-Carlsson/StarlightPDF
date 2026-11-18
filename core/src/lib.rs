@@ -161,6 +161,9 @@ use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 use std::io;
 
+/// The bytes the header check needs.
+const HEADER_LEN: usize = 9;
+
 /// A part of the library a build can leave out.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -220,6 +223,31 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// The variant's name, such as `InvalidHeader`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BudgetExceeded => "BudgetExceeded",
+            Self::Busy => "Busy",
+            Self::Cancelled => "Cancelled",
+            Self::CapabilityMissing => "CapabilityMissing",
+            Self::DocumentClosed => "DocumentClosed",
+            Self::IncrementalRefused => "IncrementalRefused",
+            Self::InvalidArgument => "InvalidArgument",
+            Self::InvalidHeader => "InvalidHeader",
+            Self::InvalidPassword => "InvalidPassword",
+            Self::Io => "Io",
+            Self::LimitExceeded => "LimitExceeded",
+            Self::LossRefused => "LossRefused",
+            Self::Malformed => "Malformed",
+            Self::NotImplemented => "NotImplemented",
+            Self::NotSeekable => "NotSeekable",
+            Self::SignaturesWouldBreak => "SignaturesWouldBreak",
+            Self::StaleHandle => "StaleHandle",
+            Self::Unsupported => "Unsupported",
+        }
+    }
+
     /// The code's number, for C and bindings; fixed forever, never reused, and never 0, which is success.
     #[must_use]
     pub const fn number(self) -> u16 {
@@ -314,6 +342,15 @@ impl PdfError {
         self.code
     }
 
+    /// An [`ErrorCode::Io`] error caused by `error`.
+    fn io(error: &io::Error, operation: &'static str) -> Self {
+        Self {
+            io_cause: Some(error.kind()),
+            message: error.to_string(),
+            ..Self::new(ErrorCode::Io, operation)
+        }
+    }
+
     /// The underlying I/O error's kind, when there is one.
     #[must_use]
     pub const fn io_cause(&self) -> Option<io::ErrorKind> {
@@ -384,6 +421,11 @@ pub fn capabilities() -> Result<Vec<Capability>, PdfError> {
 ///
 /// [`ErrorCode::InvalidHeader`] unless `bytes` begins `%PDF-1.n` or `%PDF-2.n`, n a digit, then CR or LF.
 pub fn header_version(bytes: &[u8]) -> Result<Version, PdfError> {
+    parse_header(bytes, "header_version")
+}
+
+/// [`header_version`], failing as `operation`; needs at most [`HEADER_LEN`] bytes.
+fn parse_header(bytes: &[u8], operation: &'static str) -> Result<Version, PdfError> {
     match *bytes {
         [
             b'%',
@@ -400,6 +442,6 @@ pub fn header_version(bytes: &[u8]) -> Result<Version, PdfError> {
             major: major.wrapping_sub(b'0'),
             minor: minor.wrapping_sub(b'0'),
         }),
-        _ => Err(PdfError::new(ErrorCode::InvalidHeader, "header_version")),
+        _ => Err(PdfError::new(ErrorCode::InvalidHeader, operation)),
     }
 }
