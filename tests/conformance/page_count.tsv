@@ -66,6 +66,12 @@ page_count_bytes	tests/corpus/page-count/count-over-u32.pdf	Malformed
 page_count_file	tests/corpus/page-count/count-over-u32.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/prev-loop.pdf	Malformed
 page_count_file	tests/corpus/page-count/prev-loop.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-63.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	Malformed
 # 7.5.8 (cross-reference stream)
 page_count_bytes	tests/corpus/page-count/xref-stream.pdf	Unsupported
 page_count_file	tests/corpus/page-count/xref-stream.pdf	Unsupported
