@@ -5,7 +5,7 @@ set -eu
 
 bad=0
 for f; do
-  awk -v f="$f" '
+  awk -v f="${f}" '
     function value(v) {
       v = $0
       sub(/^ *(- )?name: */, "", v)
@@ -62,6 +62,6 @@ for f; do
       if (!named_wf) fail("give the workflow a name other than its file name")
       exit bad
     }
-  ' "$f" || bad=1
+  ' "${f}" || bad=1
 done
-exit "$bad"
+exit "${bad}"

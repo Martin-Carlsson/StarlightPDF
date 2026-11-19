@@ -46,7 +46,7 @@ class AreasTest(unittest.TestCase):
             "tests/corpus/header/empty.pdf": {"core", "fuzz", "python", "licenses"},
             "fuzz/fuzz_targets/page_count.rs": {"fuzz", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
-            "ci/licenses.sh": {"licenses", "ruff"},
+            "ci/licenses.sh": {"licenses", "ruff", "shell"},
             "tests/ci/test_areas.py": {"licenses", "ruff"},
         }
         for path, expected in cases.items():
