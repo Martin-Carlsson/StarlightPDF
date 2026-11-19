@@ -44,7 +44,7 @@ class AreasTest(unittest.TestCase):
             "ci/workflows.sh": {"licenses", "workflows"},
             "core/src/lib.rs": {"core", "python", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
-            "ci/licenses.sh": {"licenses", "ruff"},
+            "ci/licenses.sh": {"licenses", "ruff", "shell"},
             "tests/ci/test_areas.py": {"licenses", "ruff"},
             "bindings/python/starlightpdf/__init__.pyi": {"licenses", "python", "ruff"},
         }
