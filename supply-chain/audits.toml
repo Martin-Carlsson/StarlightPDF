@@ -1,11 +1,53 @@
 
 # cargo-vet audits file
 
+[[audits.arbitrary]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "1.4.2 -> 1.5.0"
+notes = "Delta from imported 1.4.2: array creation rewritten with per-element pointer writes and a drop guard, read and sound; SAFETY comments added; nonzero fix; no fs, net or process use."
+
+[[audits.cc]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "1.11.2"
+notes = "Build-time crate; runs the C compiler, archiver and rustc it finds from env and PATH, writes only to OUT_DIR and temp files, as advertised; no net; read the unsafe in parallel/ (pipes, fcntl, pidfd, kqueue, poll, jobserver fds) and utilities.rs OnceLock: sound."
+
+[[audits.cfg-if]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.4 -> 1.0.5"
+notes = "Delta from imported 1.0.4: only a deprecation note in docs and CI action bumps; no code change."
+
+[[audits.find-msvc-tools]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.1.15"
+notes = "Windows-only build-time helper split from cc: reads the registry, queries COM setup config and runs vswhere and cl.exe to find MSVC, as advertised; read the unsafe FFI wrappers (COM, registry, LoadLibrary): sound; no net, no writes."
+
+[[audits.getrandom]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.4.3"
+notes = "build.rs only sets a msan cfg; read the lib, util and the Windows (ProcessPrng), macOS (getentropy) and Linux (getrandom, /dev/urandom fallback) backends: sound FFI and MaybeUninit handling; other backends grepped; no net or process use."
+
+[[audits.jobserver]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.1.35"
+notes = "No build.rs; reads MAKEFLAGS-style env and opens the fifo or fds it names, as advertised; read the unix unsafe (pipe, fcntl, poll, ioctl, sigaction, pthread_kill, pre_exec): sound; Windows uses named semaphores; no net."
+
 [[audits.libc]]
 who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"
 version = "0.2.191"
 notes = "Read build.rs (cfg and env probes, runs RUSTC --version); grepped src: extern C declarations and type definitions linking only system libraries (c, m, rt, pthread, util); no fs, net or process use."
+
+[[audits.libfuzzer-sys]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.4.13"
+notes = "build.rs compiles libfuzzer/*.cpp with cc or links CUSTOM_LIBFUZZER_PATH, nothing else; those sources match LLVM compiler-rt/lib/fuzzer except upstream changes since the snapshot; libFuzzer writes artifacts and re-runs its own binary via popen/system only for -fork, -jobs, -merge and minimize, as documented; no net; read src/lib.rs unsafe: sound."
 
 [[audits.once_cell]]
 who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
@@ -54,6 +96,12 @@ who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"
 version = "0.30.1"
 notes = "Read build.rs (only sets a cfg from PYO3_WIP_NO_STD); grepped src: no fs, net or process use; unsafe appears only inside generated code, which calls pyo3 helpers with a documented trusted-receiver policy."
+
+[[audits.r-efi]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "6.0.0"
+notes = "No build.rs; no_std UEFI type and protocol definitions; only unsafe is Guid byte transmutes (all-u8 repr(C) struct) and test code; no fs, net or process use; reaches the build only for the UEFI target."
 
 [[audits.syn]]
 who = "Claude Sonnet 5.5 <noreply@anthropic.com>"

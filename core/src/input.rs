@@ -3,9 +3,12 @@
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::fs::File;
-use std::io::{self, ErrorKind, Read, Seek, SeekFrom};
+use std::io::{self, ErrorKind, Read, Seek};
+#[cfg(unix)]
+use std::os::unix::fs::FileExt as _;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt as _;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
 
 use crate::{ErrorCode, PdfError};
 
@@ -20,8 +23,8 @@ pub struct BytesSourceOptions {
     pub bytes: Arc<Vec<u8>>,
 }
 
-/// A file; seeks before each read.
-struct FileReadAt(Mutex<File>);
+/// A file.
+struct FileReadAt(File);
 
 /// Options for [`Source::from_file`].
 #[derive(Clone, Debug, Default)]
@@ -91,22 +94,30 @@ impl ReadAt for Bytes {
 
 impl ReadAt for FileReadAt {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
-        let mut file = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        // The OS may reject a seek far past the end.
-        if offset >= file.metadata()?.len() {
+        // No OS reads past `i64::MAX`; no file is that large.
+        let len = buffer.len();
+        let Some(capped) = i64::MAX
+            .cast_unsigned()
+            .checked_sub(offset)
+            .map(|room| usize::try_from(room).unwrap_or(usize::MAX).min(len))
+            .and_then(|end| buffer.get_mut(..end))
+        else {
             return Ok(0);
-        }
-        let _position = file.seek(SeekFrom::Start(offset))?;
-        file.read(buffer)
+        };
+        #[cfg(unix)]
+        let count = self.0.read_at(capped, offset);
+        #[cfg(windows)]
+        let count = self.0.seek_read(capped, offset);
+        #[cfg(not(any(unix, windows)))]
+        let count = {
+            let _: &mut [u8] = capped;
+            Err(io::Error::from(ErrorKind::Unsupported))
+        };
+        count
     }
 
     fn size(&self) -> io::Result<u64> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .metadata()?
-            .len())
+        Ok(self.0.metadata()?.len())
     }
 }
 
@@ -145,7 +156,7 @@ impl Source {
         File::open(&options.file)
             .map(|file| Self {
                 forward_only: false,
-                read_at: Arc::new(FileReadAt(Mutex::new(file))),
+                read_at: Arc::new(FileReadAt(file)),
             })
             .map_err(|error| PdfError::io(&error, "Source::from_file"))
     }

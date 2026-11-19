@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "bindings/python", "tests/memory"]
+members = ["core", "bindings/python", "fuzz", "tests/memory"]
 resolver = "3"
 
 [workspace.package]
