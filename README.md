@@ -206,6 +206,8 @@ claude plugin install build-voyage --marketplace Martin-Carlsson/StarlightPDF
 
 StarlightPDF is just getting started, and contributions are welcome. Open an issue to discuss a feature from the list above before starting work on it, so effort isn't duplicated.
 
+Before pushing, run `sh ci/setup.sh` once, then `sh ci/check.sh <area>` for each area CI runs.
+
 ## Legal
 
 ### License
@@ -234,8 +236,8 @@ Danish law. Copenhagen City Court.
 | syn | [MIT](https://github.com/dtolnay/syn/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/dtolnay/syn/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/dtolnay/syn), [crates.io](https://crates.io/crates/syn) | Parses Rust source; needed by pyo3-macros. |
 | heck | [MIT](https://github.com/withoutboats/heck/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/withoutboats/heck/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/withoutboats/heck), [crates.io](https://crates.io/crates/heck) | Case conversion; needed by pyo3-macros-backend. |
 | unicode-ident | ([MIT](https://github.com/dtolnay/unicode-ident/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/dtolnay/unicode-ident/blob/HEAD/LICENSE-APACHE)) AND [Unicode-3.0](https://github.com/dtolnay/unicode-ident/blob/HEAD/LICENSE-UNICODE) | [Repository](https://github.com/dtolnay/unicode-ident), [crates.io](https://crates.io/crates/unicode-ident) | Identifier character tables; needed by proc-macro2 and syn. |
-| cargo-deny | [MIT](https://github.com/EmbarkStudios/cargo-deny/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/EmbarkStudios/cargo-deny/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/EmbarkStudios/cargo-deny), [crates.io](https://crates.io/crates/cargo-deny) | CI tool; checks licenses and advisories. |
-| cargo-vet | [Apache-2.0](https://github.com/mozilla/cargo-vet/blob/HEAD/LICENSE-APACHE) OR [MIT](https://github.com/mozilla/cargo-vet/blob/HEAD/LICENSE-MIT) | [Repository](https://github.com/mozilla/cargo-vet), [crates.io](https://crates.io/crates/cargo-vet), [Homepage](https://mozilla.github.io/cargo-vet/) | CI tool; records and imports source audits. |
+| cargo-deny | [MIT](https://github.com/EmbarkStudios/cargo-deny/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/EmbarkStudios/cargo-deny/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/EmbarkStudios/cargo-deny), [crates.io](https://crates.io/crates/cargo-deny/0.20.2) | CI tool; checks licenses and advisories. |
+| cargo-vet | [Apache-2.0](https://github.com/mozilla/cargo-vet/blob/HEAD/LICENSE-APACHE) OR [MIT](https://github.com/mozilla/cargo-vet/blob/HEAD/LICENSE-MIT) | [Repository](https://github.com/mozilla/cargo-vet), [crates.io](https://crates.io/crates/cargo-vet/0.10.3), [Homepage](https://mozilla.github.io/cargo-vet/) | CI tool; records and imports source audits. |
 | actionlint | [MIT](https://github.com/rhysd/actionlint/blob/HEAD/LICENSE.txt) | [Repository](https://github.com/rhysd/actionlint), [pkg.go.dev](https://pkg.go.dev/github.com/rhysd/actionlint), [Homepage](https://rhysd.github.io/actionlint/) | CI tool; lints workflows. The standard tool, and large to write here. |
 | shellcheck | [GPL-3.0](https://github.com/koalaman/shellcheck/blob/HEAD/LICENSE) | [Repository](https://github.com/koalaman/shellcheck), [Homepage](https://www.shellcheck.net) | CI tool; lints the shell scripts and workflow run: scripts. The standard tool. CI only runs it. |
 | prettier | [MIT](https://github.com/prettier/prettier/blob/HEAD/LICENSE) | [Repository](https://github.com/prettier/prettier), [npm](https://www.npmjs.com/package/prettier), [Homepage](https://prettier.io) | CI tool; formats the mods. The standard tool. |

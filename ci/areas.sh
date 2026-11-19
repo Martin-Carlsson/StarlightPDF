@@ -37,7 +37,7 @@ while IFS= read -r path || [ -n "${path}" ]; do
     ci/check.sh | .github/workflows/ci.yml)
       advisories=1 core=1 dependencies=1 hook=1 mods=1 python=1 ruff=1 shell=1 workflows=1
       ;;
-    Cargo.lock)
+    Cargo.lock | ci/setup.sh)
       advisories=1
       core=1
       dependencies=1

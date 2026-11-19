@@ -34,11 +34,13 @@ if [ -n "${bad}" ]; then
   exit 1
 fi
 
+# name version of each CI tool, one per line
+tools=$(sed -n 's/.*cargo install .*--locked \(.*\)$/\1/p' ci/setup.sh | tr ' ' '\n' | grep @ | tr @ ' ')
 # name version license, one per line
 lic=$(
   {
     echo "${lock}" | awk '$1 == "P" && $4 != "-" { print $2, $3 }'
-    sed -n 's/.*cargo install .*--locked \(.*\)$/\1/p' .github/workflows/ci.yml | tr ' ' '\n' | grep @ | tr @ ' '
+    echo "${tools}"
   } | sort -u | while IFS=' ' read -r name version; do
     info=$(cargo info "${name}@${version}" </dev/null) || exit 1
     declared=$(echo "${info}" | sed -n 's/^license: //p' | sed 's|/| OR |g')
@@ -70,6 +72,13 @@ echo "${rows}" | while IFS="${t}" read -r name slug row _; do
   [ "${name%% *}" = "${slug}" ] || { echo "README.md Dependencies: ${name}: links crates.io/crates/${slug}" >&2; exit 1; }
   declared=$(echo "${keys}" | awk -F"${t}" -v k="${name}" '$1 == k { print $2 }')
   [ "${row}" = "${declared}" ] || { echo "README.md Dependencies: ${name}: row has '${row}', declared '${declared}'" >&2; exit 1; }
+done
+
+echo "${tools}" | while IFS=' ' read -r name version; do
+  grep -F "| ${name} | " README.md | grep -qF "(https://crates.io/crates/${name}/${version})" || {
+    echo "README.md Dependencies: ${name}: link crates.io/crates/${name}/${version}, as ci/setup.sh installs" >&2
+    exit 1
+  }
 done
 
 c='#[[:space:]]*[^[:space:]]'

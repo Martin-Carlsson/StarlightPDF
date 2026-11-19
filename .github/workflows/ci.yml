@@ -84,7 +84,7 @@ jobs:
         run: rustup toolchain install --no-self-update
       - name: Install cargo-deny and cargo-vet
         if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
-        run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
+        run: sh ci/setup.sh
       - name: Run the checks
         run: sh ci/check.sh "${AREA}"
   ci:
