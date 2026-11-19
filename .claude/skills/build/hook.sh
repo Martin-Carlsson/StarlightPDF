@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hooks for the build skill. Usage: hook.sh stop|tool|check|ready|next|start N|merge
+# Hooks for the build skill. Usage: hook.sh stop|tool|check|ready|next|start N|merge|unneeded CMD
 # stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head and, for the first three heads behind main, found it up to date.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
@@ -9,6 +9,7 @@
 # next: as ready, one at a time across worktrees; label it building.
 # start N: exit 1 naming N's open blockers; else 3 if N is building and the state does not name it.
 # merge: label and squash-merge the PR if every condition holds; else name each failed one and exit 1.
+# unneeded CMD: print each code line the branch adds outside tests and Markdown that sh -c CMD passes without; exit 1 if any.
 set -eu
 
 root=${CLAUDE_PROJECT_DIR:-}
@@ -225,6 +226,53 @@ if [ "$1" = merge ]; then
   fi
   printf 'merged %s\n%s' "${pr}" "${found}"
   exit 0
+fi
+
+if [ "$1" = unneeded ]; then
+  if [ $# -ne 2 ]; then
+    echo "build: usage: hook.sh unneeded 'CMD'" >&2
+    exit 2
+  fi
+  tmp=$(mktemp -d)
+  file=
+  pid=
+  # On exit: restore the file under test, then end the test command; a second signal may cut the wait.
+  trap 'if [ -n "${file}" ]; then cat "${tmp}/b" >"${file}"; fi
+    rm -rf "${tmp}"
+    if [ -n "${pid}" ]; then kill "${pid}" 2>/dev/null || true; wait "${pid}" || true; fi' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 141' PIPE
+  git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --merge-base origin/main >"${tmp}/diff"
+  awk '
+    /^diff --git / { h = 1; f = ""; next }
+    h && /^\+\+\+ b\// { f = substr($0, 7); sub(/\t$/, "", f); next }
+    /^@@ / { h = 0; split($3, a, ","); n = substr(a[1], 2); next }
+    !h && /^\+/ {
+      t = substr($0, 2)
+      sub(/^[[:space:]]+/, "", t)
+      if (t != "" && t !~ /^\/[\/*]/ && (t !~ /^#/ || t ~ /^#!?\[/) && f !~ /(^|\/)(tests\/|test_[^\/]*$)|\.test\.[^\/]*$|\.md$/) print f "\t" n
+      n++
+    }' "${tmp}/diff" >"${tmp}/lines"
+  found=
+  while IFS="$(printf '\t')" read -r f n; do
+    if [ ! -f "${f}" ] || [ -L "${f}" ]; then continue; fi
+    cp "${f}" "${tmp}/b"
+    file=${f}
+    sed "${n}d" "${tmp}/b" >"${f}"
+    sh -c "$2" </dev/null >/dev/null 2>&1 &
+    pid=$!
+    if wait "${pid}"; then
+      line=$(sed -n "${n}p" "${tmp}/b")
+      printf '%s:%s: %s\n' "${f}" "${n}" "${line}"
+      found=1
+    fi
+    pid=
+    cat "${tmp}/b" >"${f}"
+    file=
+  done <"${tmp}/lines"
+  exit "${found:-0}"
 fi
 
 if [ "$1" = check ]; then

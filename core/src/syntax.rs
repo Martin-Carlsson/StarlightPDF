@@ -4,7 +4,6 @@ use core::mem;
 use core::str::from_utf8;
 
 use crate::input::Source;
-use crate::limits::DEFAULT_DEPTH_LIMIT;
 use crate::objects::ObjectId;
 use crate::{ErrorCode, PdfError};
 
@@ -270,10 +269,10 @@ impl<'source> Reader<'source> {
         Ok(byte)
     }
 
-    /// An object (ISO 32000-2:2020, 7.3); nesting deeper than the depth limit fails with
+    /// An object (ISO 32000-2:2020, 7.3); nesting deeper than `depth_limit` fails with
     /// [`ErrorCode::LimitExceeded`].
-    pub(crate) fn object(&mut self) -> Result<Object, PdfError> {
-        let limit = usize::try_from(DEFAULT_DEPTH_LIMIT).unwrap_or(usize::MAX);
+    pub(crate) fn object(&mut self, depth_limit: u32) -> Result<Object, PdfError> {
+        let limit = usize::try_from(depth_limit).unwrap_or(usize::MAX);
         let mut stack = Vec::new();
         let mut outermost = Dictionary::default();
         loop {
