@@ -1,5 +1,7 @@
 #!/bin/sh
-# Fails when a stable rustc, clippy or rustdoc lint is neither denied nor allowed with a reason.
+# Fails when a stable rustc, clippy or rustdoc lint is neither denied nor allowed with a reason, a
+# member does not inherit the workspace lints, the core or Python root does not forbid unsafe code,
+# or a file other than tests/memory/src/lib.rs names it except to forbid it or as the root deny.
 set -eu
 cd "$(dirname "$0")/.."
 t=$(mktemp -d)
@@ -72,3 +74,21 @@ if [ -s "${t}/problems" ]; then
   cat "${t}/problems" >&2
   exit 1
 fi
+
+for f in core/src/lib.rs bindings/python/src/lib.rs; do
+  grep -qxF '#![forbid(unsafe_code)]' "$f" || { echo "$f: add #![forbid(unsafe_code)]" >&2; exit 1; }
+done
+hits=$(git grep -nE --untracked 'unsafe[_-]code' -- ':!ci/lints.sh' ':!tests/memory/src/lib.rs') || [ $? -eq 1 ]
+bad=$(printf '%s\n' "$hits" | grep -vxE '[^:]+:[0-9]+:#!\[forbid\(unsafe_code\)\]|Cargo\.toml:[0-9]+:unsafe_code = "deny"') ||
+  [ $? -eq 1 ]
+if [ -n "$bad" ]; then
+  printf '%s\n%s\n' "$bad" 'lints.sh: outside tests/memory/src/lib.rs, name unsafe code only to forbid it' >&2
+  exit 1
+fi
+
+members=$(sed -n 's/^members = \[\(.*\)\]$/\1/p' Cargo.toml | tr -d '",')
+[ -n "$members" ] || { echo "lints.sh: cannot parse the workspace members" >&2; exit 2; }
+for m in $members; do
+  awk '/^\[/ { s = $0 } s == "[lints]" && $0 == "workspace = true" { ok = 1 } END { exit !ok }' "$m/Cargo.toml" ||
+    { echo "$m/Cargo.toml: add [lints] workspace = true" >&2; exit 1; }
+done
