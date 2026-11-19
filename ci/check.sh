@@ -84,7 +84,8 @@ case $1 in
     ;;
   ruff)
     # ruff (MIT): the standard Python linter and formatter; large to write here.
-    tmp=$(mktemp -d)
+    mkdir -p target
+    tmp=$(mktemp -d target/ruff.XXXXXX)
     trap 'rm -rf "$tmp"' EXIT
     py=$tmp/licenses.py
     awk '/<<.PY.$/ { f = 1; next } /^PY$/ { f = 0 } f' ci/licenses.sh >"$py"
@@ -112,8 +113,9 @@ case $1 in
       archive=ruff-$target.tar.gz
       curl -fsSL -o "$tmp/$archive" "https://github.com/astral-sh/ruff/releases/download/$version/$archive"
       printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
+      tar -xzf "$tmp/$archive" -C "$tmp" --strip-components=1
       mkdir -p "$(dirname "$ruff")"
-      tar -xzf "$tmp/$archive" -C "$(dirname "$ruff")" --strip-components=1
+      mv "$tmp/ruff" "$ruff"
     fi
     "$ruff" check --no-cache --config ruff.toml $files
     "$ruff" format --no-cache --config ruff.toml --check $files
