@@ -6,6 +6,11 @@ __all__ = ["Document", "PdfError", "Source", "header_version"]
 class PdfError(Exception):
     code: str
     number: int
+    message: str
+    operation: str
+    offset: int | None
+    object_number: int | None
+    io_cause: OSError | None
 
 @final
 class Source:
