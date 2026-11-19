@@ -2,25 +2,51 @@
 # Runs every check of an area.
 set -eu
 
-areas='core python advisories licenses dependencies workflows hook mods ruff'
+areas='core python advisories licenses dependencies workflows hook mods ruff shell'
 ok=
-for a in $areas; do
-  case $a in "$*") ok=1 ;; esac
+for a in ${areas}; do
+  case ${a} in
+    "$*") ok=1 ;;
+    *) ;;
+  esac
 done
-if [ -z "$ok" ]; then
-  echo "usage: sh ci/check.sh $(echo $areas | tr ' ' '|')" >&2
+if [ -z "${ok}" ]; then
+  usage=$(printf '%s' "${areas}" | tr ' ' '|')
+  echo "usage: sh ci/check.sh ${usage}" >&2
   exit 2
 fi
 cd "$(dirname "$0")/.."
+os=$(uname -s)
+machine=$(uname -m)
+
+# Sets shellcheck to the pinned one, in tmp. The standard shell linter (GPL-3.0); CI only runs it.
+get_shellcheck() {
+  case "${os}-${machine}" in
+    Linux-x86_64) sc_target=linux.x86_64 sc_sum=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198 ;;
+    Darwin-arm64) sc_target=darwin.aarch64 sc_sum=56affdd8de5527894dca6dc3d7e0a99a873b0f004d7aabc30ae407d3f48b0a79 ;;
+    *)
+      echo "no shellcheck for ${os} ${machine}" >&2
+      exit 1
+      ;;
+  esac
+  sc_dir='shellcheck-v0.11.0'
+  sc_archive=${sc_dir}.${sc_target}.tar.xz
+  curl -fsSL -o "${tmp}/${sc_archive}" "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/${sc_archive}"
+  printf '%s  %s\n' "${sc_sum}" "${tmp}/${sc_archive}" | shasum -a 256 -c -
+  tar -xJf "${tmp}/${sc_archive}" -C "${tmp}" "${sc_dir}/shellcheck"
+  shellcheck=${tmp}/${sc_dir}/shellcheck
+  # Every check on, and no rc file to turn one off.
+  export SHELLCHECK_OPTS='--norc --enable=all --severity=style'
+}
 
 case $1 in
   core | python) tools='cargo-deny cargo-vet' ;;
   advisories) tools=cargo-deny ;;
   *) tools= ;;
 esac
-for t in $tools; do
-  command -v "$t" >/dev/null 2>&1 || [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/$t" ] || {
-    echo "$t is missing: run sh ci/setup.sh" >&2
+for t in ${tools}; do
+  command -v "${t}" >/dev/null 2>&1 || [ -x "${CARGO_HOME:-${HOME}/.cargo}/bin/${t}" ] || {
+    echo "${t} is missing: run sh ci/setup.sh" >&2
     exit 1
   }
 done
@@ -29,17 +55,18 @@ case $1 in
   licenses | python)
     PY=
     for candidate in python3 python; do
-      if "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
-        PY=$candidate
+      if "${candidate}" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+        PY=${candidate}
         break
       fi
     done
-    if [ -z "$PY" ]; then
+    if [ -z "${PY}" ]; then
       echo 'Python 3.11 or newer not found' >&2
       exit 1
     fi
     export PY
     ;;
+  *) ;;
 esac
 
 case $1 in
@@ -49,23 +76,20 @@ case $1 in
     ;;
   licenses)
     sh ci/licenses.sh
-    # covered FILE...: CHANGED (changed paths, one per line) is unset or names a FILE.
-    covered() {
-      [ -z "${CHANGED+x}" ] && return
-      for f; do printf '%s\n' "$CHANGED" | grep -qxF -- "$f" && return; done
-      return 1
-    }
-    if covered tests/ci/test_licenses.py ci/licenses.sh ci/check.sh REUSE.toml || printf '%s\n' "$CHANGED" | grep -q '^LICENSES/'; then
-      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_licenses.py
+    # Changed paths; unset stands for ci/check.sh, which every test below covers.
+    changed=${CHANGED-ci/check.sh}
+    if printf '%s\n' "${changed}" | grep -qxF -e tests/ci/test_licenses.py -e ci/licenses.sh -e ci/check.sh -e REUSE.toml ||
+      printf '%s\n' "${changed}" | grep -q '^LICENSES/'; then
+      "${PY}" -W error -X dev -bb -m unittest discover -s tests/ci -p test_licenses.py
     fi
-    if covered tests/ci/test_dependencies.py ci/dependencies.sh ci/check.sh README.md Cargo.lock ci/setup.sh; then
-      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_dependencies.py
+    if printf '%s\n' "${changed}" | grep -qxF -e tests/ci/test_dependencies.py -e ci/dependencies.sh -e ci/check.sh -e README.md -e Cargo.lock -e ci/setup.sh; then
+      "${PY}" -W error -X dev -bb -m unittest discover -s tests/ci -p test_dependencies.py
     fi
-    if covered tests/ci/test_workflows.py ci/workflows.sh ci/check.sh; then
-      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_workflows.py
+    if printf '%s\n' "${changed}" | grep -qxF -e tests/ci/test_workflows.py -e ci/workflows.sh -e ci/check.sh; then
+      "${PY}" -W error -X dev -bb -m unittest discover -s tests/ci -p test_workflows.py
     fi
-    if covered tests/ci/test_areas.py ci/areas.sh ci/check.sh; then
-      "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_areas.py
+    if printf '%s\n' "${changed}" | grep -qxF -e tests/ci/test_areas.py -e ci/areas.sh -e ci/check.sh; then
+      "${PY}" -W error -X dev -bb -m unittest discover -s tests/ci -p test_areas.py
     fi
     exit 0
     ;;
@@ -86,71 +110,92 @@ case $1 in
     # ruff (MIT): the standard Python linter and formatter; large to write here.
     mkdir -p target
     tmp=$(mktemp -d target/ruff.XXXXXX)
-    trap 'rm -rf "$tmp"' EXIT
-    py=$tmp/licenses.py
-    awk '/<<.PY.$/ { f = 1; next } /^PY$/ { f = 0 } f' ci/licenses.sh >"$py"
+    trap 'rm -rf "${tmp}"' EXIT
+    py=${tmp}/licenses.py
+    awk '/<<.PY.$/ { f = 1; next } /^PY$/ { f = 0 } f' ci/licenses.sh >"${py}"
     files=$(git ls-files -co --exclude-standard '*.py')
+    set --
+    for f in ${files}; do set -- "$@" "${f}"; done
     if ! grep -qxF 'select = ["ALL"]' ruff.toml || grep -vxE -e 'target-version = "py311"' -e '\[lint\]' -e 'select = \["ALL"\]' \
       -e 'ignore = \[' -e '  "[A-Z]+[0-9]+", # .*[[:alnum:]].*' -e '\]' -e '' ruff.toml; then
       echo 'ruff.toml: only select = ["ALL"] and ignore entries "CODE", # reason' >&2
       exit 1
     fi
-    if grep -En '#[[:space:]]*((ruff|flake8):[[:space:]]*)?[Nn][Oo][Qq][Aa][[:space:]]*:?[[:space:]]*([A-Z]+[0-9]+[[:space:],]*)*[^[:alnum:]]*$' "$py" $files; then
+    if grep -En '#[[:space:]]*((ruff|flake8):[[:space:]]*)?[Nn][Oo][Qq][Aa][[:space:]]*:?[[:space:]]*([A-Z]+[0-9]+[[:space:],]*)*[^[:alnum:]]*$' "${py}" "$@"; then
       echo 'give each noqa a reason after its codes' >&2
       exit 1
     fi
-    case "$(uname -s)-$(uname -m)" in
+    case "${os}-${machine}" in
       Linux-x86_64) target=x86_64-unknown-linux-gnu sum=7d261fc981a784668e19e9fa6ad437bfd95b67f2dc263fc1eab87d54d72fcc90 ;;
       Darwin-arm64) target=aarch64-apple-darwin sum=4ffadabec5c5fee1ddb2eecac0787ffe6fa18c665b73da9258b84211f40c5829 ;;
       *)
-        echo "no ruff for $(uname -s) $(uname -m)" >&2
+        echo "no ruff for ${os} ${machine}" >&2
         exit 1
         ;;
     esac
     version=0.17.5
-    ruff=target/ruff-$version-$target/ruff
-    if [ ! -x "$ruff" ]; then
-      archive=ruff-$target.tar.gz
-      curl -fsSL -o "$tmp/$archive" "https://github.com/astral-sh/ruff/releases/download/$version/$archive"
-      printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
-      tar -xzf "$tmp/$archive" -C "$tmp" --strip-components=1
-      mkdir -p "$(dirname "$ruff")"
-      mv "$tmp/ruff" "$ruff"
+    ruff=target/ruff-${version}-${target}/ruff
+    if [ ! -x "${ruff}" ]; then
+      archive=ruff-${target}.tar.gz
+      curl -fsSL -o "${tmp}/${archive}" "https://github.com/astral-sh/ruff/releases/download/${version}/${archive}"
+      printf '%s  %s\n' "${sum}" "${tmp}/${archive}" | shasum -a 256 -c -
+      tar -xzf "${tmp}/${archive}" -C "${tmp}" --strip-components=1
+      mkdir -p "$(dirname "${ruff}")"
+      mv "${tmp}/ruff" "${ruff}"
     fi
-    "$ruff" check --no-cache --config ruff.toml $files
-    "$ruff" format --no-cache --config ruff.toml --check $files
-    "$ruff" check --no-cache --config ruff.toml --stdin-filename ci/licenses.py - <"$py"
-    "$ruff" format --no-cache --config ruff.toml --diff --stdin-filename ci/licenses.py - <"$py"
+    "${ruff}" check --no-cache --config ruff.toml "$@"
+    "${ruff}" format --no-cache --config ruff.toml --check "$@"
+    "${ruff}" check --no-cache --config ruff.toml --stdin-filename ci/licenses.py - <"${py}"
+    "${ruff}" format --no-cache --config ruff.toml --diff --stdin-filename ci/licenses.py - <"${py}"
+    exit 0
+    ;;
+  shell)
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp}"' EXIT
+    files=$(git ls-files -co --exclude-standard '*.sh')
+    set --
+    for f in ${files}; do set -- "$@" "${f}"; done
+    if grep -En '#[[:space:]]*shellcheck[[:space:]][^#]*disable=[^#]*(#[^[:alnum:]]*)?$' "$@"; then
+      echo 'give each shellcheck disable a reason after it' >&2
+      exit 1
+    fi
+    get_shellcheck
+    "${shellcheck}" "$@"
     exit 0
     ;;
   workflows)
-    # actionlint (MIT): the standard workflow linter; large to write here. shellcheck (GPL) stays off.
-    case "$(uname -s)-$(uname -m)" in
+    # actionlint (MIT): the standard workflow linter; large to write here. It runs shellcheck on run: scripts,
+    # with 7 checks off: missing sourced files, and false positives from its ${{ }} placeholders and env:.
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp}"' EXIT
+    get_shellcheck
+    case "${os}-${machine}" in
       Linux-x86_64) target=linux_amd64 sum=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;;
       Darwin-arm64) target=darwin_arm64 sum=aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f ;;
       *)
-        echo "no actionlint for $(uname -s) $(uname -m)" >&2
+        echo "no actionlint for ${os} ${machine}" >&2
         exit 1
         ;;
     esac
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
     version=1.7.12
-    archive=actionlint_${version}_$target.tar.gz
-    curl -fsSL -o "$tmp/$archive" "https://github.com/rhysd/actionlint/releases/download/v$version/$archive"
-    printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
-    tar -xzf "$tmp/$archive" -C "$tmp" actionlint
+    archive=actionlint_${version}_${target}.tar.gz
+    curl -fsSL -o "${tmp}/${archive}" "https://github.com/rhysd/actionlint/releases/download/v${version}/${archive}"
+    printf '%s  %s\n' "${sum}" "${tmp}/${archive}" | shasum -a 256 -c -
+    tar -xzf "${tmp}/${archive}" -C "${tmp}" actionlint
     files=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | sort)
-    "$tmp/actionlint" -shellcheck= -pyflakes= $files
-    sh ci/workflows.sh $files
-    for f in $files; do
-      awk '{ if (a == "defaults:" && b == "  run:" && $0 == "    shell: bash") ok = 1; a = b; b = $0 } END { exit !ok }' "$f" || {
-        echo "$f: set top-level defaults.run.shell to bash" >&2
+    set --
+    for f in ${files}; do set -- "$@" "${f}"; done
+    "${tmp}/actionlint" -shellcheck="${shellcheck}" -pyflakes= "$@"
+    sh ci/workflows.sh "$@"
+    for f; do
+      awk '{ if (a == "defaults:" && b == "  run:" && $0 == "    shell: bash") ok = 1; a = b; b = $0 } END { exit !ok }' "${f}" || {
+        echo "${f}: set top-level defaults.run.shell to bash" >&2
         exit 1
       }
     done
     exit 0
     ;;
+  *) ;;
 esac
 
 if [ "$1" = core ]; then
@@ -169,12 +214,12 @@ cargo fmt --check -p starlightpdf-python
 cargo clippy --all-targets --locked -p starlightpdf-python
 RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked -p starlightpdf-python
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-"$PY" -m venv "$tmp/venv"
-if [ -x "$tmp/venv/bin/python" ]; then
-  venv=$tmp/venv/bin/python
+trap 'rm -rf "${tmp}"' EXIT
+"${PY}" -m venv "${tmp}/venv"
+if [ -x "${tmp}/venv/bin/python" ]; then
+  venv=${tmp}/venv/bin/python
 else
-  venv=$tmp/venv/Scripts/python.exe
+  venv=${tmp}/venv/Scripts/python.exe
 fi
-"$venv" -m pip install --no-index ./bindings/python
-"$venv" -W error -X dev -bb -m unittest discover -s bindings/python/tests
+"${venv}" -m pip install --no-index ./bindings/python
+"${venv}" -W error -X dev -bb -m unittest discover -s bindings/python/tests
