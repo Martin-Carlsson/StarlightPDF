@@ -1,5 +1,7 @@
 //! Python binding.
 
+#![forbid(unsafe_code)]
+
 extern crate alloc;
 
 use alloc::sync::Arc;
