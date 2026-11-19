@@ -20,7 +20,7 @@ while IFS= read -r path || [ -n "$path" ]; do
     Cargo.toml | */Cargo.toml) dependencies=1 ;;
   esac
   case $path in
-    *.py | ci/licenses.sh | ruff.toml) ruff=1 ;;
+    *.py | *.pyi | ci/licenses.sh | ruff.toml) ruff=1 ;;
   esac
   case $path in
     README.md) dependencies=1 ;;
