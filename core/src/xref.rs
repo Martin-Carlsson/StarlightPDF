@@ -37,6 +37,8 @@ enum Lookup {
 
 /// The cross-reference sections of a source, read on demand.
 pub(crate) struct Xref<'source> {
+    /// Nesting depth of arrays and dictionaries.
+    depth_limit: u32,
     /// The newest section's offset.
     newest: u64,
     /// The operation errors name.
@@ -117,13 +119,14 @@ impl<'source> Xref<'source> {
         {
             return Err(self.malformed());
         }
-        reader.object()
+        reader.object(self.depth_limit)
     }
 
     /// The newest section through `startxref`, and its trailer, after checking the `Prev` chain
-    /// (ISO 32000-2:2020, 7.5.5 and 7.5.6).
+    /// (ISO 32000-2:2020, 7.5.5 and 7.5.6); objects nest at most `depth_limit` deep.
     pub(crate) fn open(
         source: &'source Source,
+        depth_limit: u32,
         operation: &'static str,
     ) -> Result<(Self, Dictionary), PdfError> {
         let malformed = || PdfError::new(ErrorCode::Malformed, operation);
@@ -145,6 +148,7 @@ impl<'source> Xref<'source> {
             return Err(malformed());
         };
         let xref = Self {
+            depth_limit,
             newest: u64::try_from(newest).ok().ok_or_else(malformed)?,
             operation,
             source,
@@ -236,7 +240,7 @@ impl<'source> Xref<'source> {
             let mut reader = Reader::new(self.source, offset, self.operation);
             let stream = object_header(&mut reader, self.operation)?.is_some()
                 && reader
-                    .object()
+                    .object(self.depth_limit)
                     .map_err(|error| malformed_unless_io(error, self.operation))?
                     .dictionary()
                     .is_some_and(|dictionary| {
@@ -257,7 +261,7 @@ impl<'source> Xref<'source> {
             let first = match reader.token()? {
                 Token::Keyword(Keyword::Trailer) => {
                     return reader
-                        .object()?
+                        .object(self.depth_limit)?
                         .dictionary()
                         .map(Lookup::Trailer)
                         .ok_or_else(|| self.malformed());
