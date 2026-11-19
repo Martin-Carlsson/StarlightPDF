@@ -2,7 +2,7 @@
 # Runs every check of an area.
 set -eu
 
-areas='core python advisories licenses dependencies workflows hook mods ruff shell'
+areas='core python advisories licenses dependencies fuzz workflows hook mods ruff shell'
 ok=
 for a in ${areas}; do
   case ${a} in
@@ -42,6 +42,7 @@ get_shellcheck() {
 case $1 in
   core | python) tools='cargo-deny cargo-vet' ;;
   advisories) tools=cargo-deny ;;
+  fuzz) tools=cargo-fuzz ;;
   *) tools= ;;
 esac
 for t in ${tools}; do
@@ -95,6 +96,23 @@ case $1 in
     ;;
   dependencies)
     sh ci/dependencies.sh
+    exit 0
+    ;;
+  fuzz)
+    # Nightly for cargo-fuzz only, pinned by date; fetch locks deps as cargo fuzz has no --locked.
+    nightly='nightly-2026-11-12'
+    rustup toolchain install --no-self-update --profile minimal "${nightly}"
+    cargo fetch --locked
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp}"' EXIT
+    # Corpus, then seeded runs, before lints so a planted fault is a finding; new inputs go to the first dir; cmp and reload off: nondeterministic.
+    for target in header-version page-count; do
+      mkdir "${tmp}/${target}"
+      cargo "+${nightly}" fuzz run "${target}" "${tmp}/${target}" tests/corpus -- \
+        -seed=1 -runs=1000000 -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256
+    done
+    cargo fmt --check -p starlightpdf-fuzz
+    cargo clippy --all-targets --locked -p starlightpdf-fuzz
     exit 0
     ;;
   hook)

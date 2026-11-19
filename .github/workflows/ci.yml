@@ -62,6 +62,8 @@ jobs:
           - { os: windows-latest, area: hook }
           - { os: macos-latest, area: mods }
           - { os: windows-latest, area: mods }
+          - { os: macos-latest, area: fuzz }
+          - { os: windows-latest, area: fuzz }
           - os: macos-latest
             area: ruff
           - os: windows-latest
@@ -80,11 +82,10 @@ jobs:
           git fetch -q --depth=2 "${URL}" "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
       - name: Install Rust
-        if: contains(fromJSON('["core","python","advisories","dependencies"]'), matrix.area)
+        if: contains(fromJSON('["core","python","advisories","dependencies","fuzz"]'), matrix.area)
         run: rustup toolchain install --no-self-update
-      - name: Install cargo-deny and cargo-vet
-        if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
-        run: sh ci/setup.sh
+      - name: Install the area's tools
+        run: sh ci/setup.sh "${AREA}"
       - name: Run the checks
         run: sh ci/check.sh "${AREA}"
   ci:
