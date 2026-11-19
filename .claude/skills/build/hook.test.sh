@@ -1070,5 +1070,123 @@ good=1
 check "check: passes when main shares no file or is merged" 0 'pass true'
 expect -n "check: passes when main shares no file or is merged" test "${good}" -eq 1
 
+# Unneeded: lines the branch adds that the tests pass without.
+u=${tmp}/u
+mkdir "${u}"
+# unneeded ARG...: run unneeded with ARGs; stdout in out; sets code.
+unneeded() {
+  code=0
+  sh "${hook}" unneeded "$@" </dev/null >"${tmp}/out" 2>/dev/null || code=$?
+}
+# printed WANT_PRINTF: good=0 unless stdout holds exactly those lines, in any order.
+printed() {
+  printf %b "$1" >"${tmp}/want"
+  LC_ALL=C sort "${tmp}/out" | cmp -s "${tmp}/want" - || good=0
+}
+# worktree: index, status, every file and its content and execute bit.
+worktree() {
+  git -C "${proj}" ls-files -s
+  git -C "${proj}" status --porcelain -uall
+  (
+    cd "${proj}"
+    find . -path ./.git -prune -o -type f -exec cksum {} + | LC_ALL=C sort
+    find . -path ./.git -prune -o -type f -perm -100 -print | LC_ALL=C sort
+  )
+}
+
+# Committed and uncommitted lines count; untracked files do not.
+pr_base
+printf 'keep1\nextra1\n' >"${proj}/lib.txt"
+commit lib
+printf 'keep2\nextra2\n' >>"${proj}/lib.txt"
+echo extra >"${proj}/new.txt"
+unneeded 'grep -qx keep1 lib.txt && grep -qx keep2 lib.txt'
+good=1
+[ "${code}" -ne 0 ] || good=0
+printed 'lib.txt:2: extra1\nlib.txt:4: extra2\n'
+expect -n "unneeded prints each line the tests pass without and fails" test "${good}" -eq 1
+
+pr_base
+printf 'keep1\nkeep2\n' >"${proj}/lib.txt"
+commit lib
+: >"${u}/runs"
+unneeded "echo >>\"${u}/runs\"; grep -qx keep1 lib.txt && grep -qx keep2 lib.txt" x
+good=1
+[ "${code}" -ne 0 ] || good=0
+unneeded "echo >>\"${u}/runs\"; grep -qx keep1 lib.txt && grep -qx keep2 lib.txt"
+[ "${code}" -eq 0 ] || good=0
+[ ! -s "${tmp}/out" ] || good=0
+printf '\n\n' | cmp -s - "${u}/runs" || good=0
+git -C "${proj}" update-ref -d refs/remotes/origin/main
+unneeded true
+[ "${code}" -ne 0 ] || good=0
+expect -n "unneeded passes when every line is needed" test "${good}" -eq 1
+
+# Every added line is unneeded; only the code ones outside test files are tried.
+pr_base
+printf 'keep\n\n \t\n#c\n  # c\n\t// c\n /* c\nv=1 # set\n#[x]\n' >"${proj}/lib.txt"
+mkdir -p "${proj}/src" "${proj}/contests"
+echo x >"${proj}/src/test_x.py"
+echo x >"${proj}/src/a.test.js"
+echo x >>"${proj}/core/tests/a.rs"
+echo x >>"${proj}/tests/b.txt"
+echo x >>"${proj}/README.md"
+echo x >"${proj}/a b.md"
+echo x >"${proj}/contests/c.txt"
+ln -s contests/c.txt "${proj}/link"
+commit skip
+unneeded 'grep -qx keep lib.txt'
+good=1
+[ "${code}" -ne 0 ] || good=0
+printed 'contests/c.txt:1: x\nlib.txt:8: v=1 # set\nlib.txt:9: #[x]\n'
+expect -n "unneeded skips blank, comment, test and Markdown lines" test "${good}" -eq 1
+
+# An executable file, staged and unstaged edits to one file, and an untracked file.
+pr_base
+printf 'keep\n' >"${proj}/lib.txt"
+printf 'a\n' >"${proj}/run.sh"
+chmod +x "${proj}/run.sh"
+commit lib
+echo b >>"${proj}/run.sh"
+echo s >"${proj}/staged.txt"
+git -C "${proj}" add staged.txt
+echo t >>"${proj}/staged.txt"
+echo u >"${proj}/u.txt"
+worktree >"${tmp}/before"
+unneeded 'grep -qx keep lib.txt'
+good=1
+[ "${code}" -ne 0 ] || good=0
+grep -qxF 'run.sh:2: b' "${tmp}/out" || good=0
+worktree >"${tmp}/after"
+cmp -s "${tmp}/before" "${tmp}/after" || good=0
+expect -n "unneeded restores the tree" test "${good}" -eq 1
+
+# Once extra is removed, the test command signals the hook, its parent, and fails after 5 seconds.
+pr_base
+printf 'keep\nextra\n' >"${proj}/lib.txt"
+commit lib
+worktree >"${tmp}/before"
+# perl -e "${dfl}" CMD...: run CMD with the signals at their default action. A shell cannot trap one ignored at its start (POSIX trap), as CI ignores INT.
+dfl='@SIG{qw(HUP INT PIPE TERM)} = ("DEFAULT") x 4; exec @ARGV or die'
+good=1
+for sig in HUP INT PIPE TERM; do
+  rm -f "${u}/pid"
+  code=0
+  perl -e "${dfl}" sh "${hook}" unneeded "if ! grep -qx extra lib.txt; then echo \$\$ >\"${u}/pid\"; kill -s ${sig} \$PPID; sleep 5; exit 1; fi" \
+    </dev/null >/dev/null 2>&1 || code=$?
+  [ "${code}" -gt 128 ] || good=0
+  [ -s "${u}/pid" ] && ! xargs kill -0 <"${u}/pid" 2>/dev/null || good=0
+  worktree >"${tmp}/after"
+  cmp -s "${tmp}/before" "${tmp}/after" || good=0
+  # The hook's TERM to the test command answers with a second signal.
+  code=0
+  perl -e "${dfl}" sh "${hook}" unneeded "if ! grep -qx extra lib.txt; then trap 'kill -s ${sig} \$PPID; exit 1' TERM; kill -s ${sig} \$PPID; sleep 5 & wait; fi; exit 1" \
+    </dev/null >/dev/null 2>&1 || code=$?
+  [ "${code}" -gt 128 ] || good=0
+  worktree >"${tmp}/after"
+  cmp -s "${tmp}/before" "${tmp}/after" || good=0
+done
+expect -n "unneeded restores the tree when interrupted" test "${good}" -eq 1
+
 [ "${failed}" -eq 0 ] && echo PASS
 exit "${failed}"
