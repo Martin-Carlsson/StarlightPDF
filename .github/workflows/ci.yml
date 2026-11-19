@@ -22,25 +22,27 @@ jobs:
     steps:
       - name: Find the nightly date
         id: date
-        run: echo "date=$(date -u -d '22 hours ago' +%F)" >>"$GITHUB_OUTPUT"
+        run: |
+          date=$(date -u -d '22 hours ago' +%F)
+          echo "date=${date}" >>"${GITHUB_OUTPUT}"
       - name: Check out
         run: |
           git init -q .
           git config core.autocrlf false
-          git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
+          git fetch -q --depth=2 "${URL}" "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
       - name: List changed files and their areas
         id: areas
         run: |
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+          if [[ "${GITHUB_EVENT_NAME}" = pull_request ]]; then
             changed=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^ HEAD)
           else
             changed=$(git -c core.quotePath=false ls-files)
           fi
-          areas=$(printf '%s' "$changed" | sh ci/areas.sh)
-          printf 'changed<<END-%s\n%s\nEND-%s\n' "$GITHUB_RUN_ID" "$changed" "$GITHUB_RUN_ID" >>"$GITHUB_OUTPUT"
-          json=$(printf '%s' "$areas" | awk 'NR > 1 { printf "," } { printf "\"%s\"", $0 }')
-          echo "areas=[$json]" >>"$GITHUB_OUTPUT"
+          areas=$(printf '%s' "${changed}" | sh ci/areas.sh)
+          printf 'changed<<END-%s\n%s\nEND-%s\n' "${GITHUB_RUN_ID}" "${changed}" "${GITHUB_RUN_ID}" >>"${GITHUB_OUTPUT}"
+          json=$(printf '%s' "${areas}" | awk 'NR > 1 { printf "," } { printf "\"%s\"", $0 }')
+          echo "areas=[${json}]" >>"${GITHUB_OUTPUT}"
   check:
     name: Check ${{ matrix.area }} on ${{ matrix.os }}
     needs: changes
@@ -57,7 +59,6 @@ jobs:
           - { os: windows-latest, area: dependencies }
           - { os: macos-latest, area: workflows }
           - { os: windows-latest, area: workflows }
-          - { os: macos-latest, area: hook }
           - { os: windows-latest, area: hook }
           - { os: macos-latest, area: mods }
           - { os: windows-latest, area: mods }
@@ -65,6 +66,8 @@ jobs:
             area: ruff
           - os: windows-latest
             area: ruff
+          - { os: macos-latest, area: shell }
+          - { os: windows-latest, area: shell }
     runs-on: ${{ matrix.os }}
     env:
       AREA: ${{ matrix.area }}
@@ -74,16 +77,16 @@ jobs:
         run: |
           git init -q .
           git config core.autocrlf false
-          git fetch -q --depth=2 "$URL" "$GITHUB_SHA"
+          git fetch -q --depth=2 "${URL}" "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
       - name: Install Rust
         if: contains(fromJSON('["core","python","advisories","dependencies"]'), matrix.area)
         run: rustup toolchain install --no-self-update
       - name: Install cargo-deny and cargo-vet
         if: contains(fromJSON('["core","python","advisories"]'), matrix.area)
-        run: cargo install --locked cargo-deny@0.20.2 cargo-vet@0.10.3
+        run: sh ci/setup.sh
       - name: Run the checks
-        run: sh ci/check.sh "$AREA"
+        run: sh ci/check.sh "${AREA}"
   ci:
     name: All checks pass
     needs: [changes, check]
@@ -95,7 +98,7 @@ jobs:
     steps:
       - name: Fail unless every check passed or was skipped
         run: |
-          case "$CHANGES $CHECK" in
+          case "${CHANGES} ${CHECK}" in
             'success success' | 'success skipped') ;;
             *) exit 1 ;;
           esac
@@ -112,9 +115,12 @@ jobs:
     steps:
       - name: Tag this commit unless it or the date is tagged
         run: |
-          tags=$(git ls-remote --tags "$URL" 'refs/tags/nightly-*')
-          case $tags in *"$GITHUB_SHA"* | *"refs/tags/nightly-$DATE"*) exit 0 ;; esac
-          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/nightly-$DATE" -f sha="$GITHUB_SHA"
+          tags=$(git ls-remote --tags "${URL}" 'refs/tags/nightly-*')
+          case ${tags} in
+            *"${GITHUB_SHA}"* | *"refs/tags/nightly-${DATE}"*) exit 0 ;;
+            *) ;;
+          esac
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/nightly-${DATE}" -f sha="${GITHUB_SHA}"
   issue:
     name: Report a failed nightly
     needs: [changes, check]
@@ -130,6 +136,6 @@ jobs:
       - name: Open an issue unless a nightly one is open
         run: |
           open=$(gh issue list --label bug --limit 1000 --json title --jq '.[] | select(.title | startswith("Nightly ")) | .title')
-          if [ -z "$open" ]; then
-            gh issue create --label bug --title "Nightly $DATE failed" --body "$URL/actions/runs/$GITHUB_RUN_ID"
+          if [[ -z "${open}" ]]; then
+            gh issue create --label bug --title "Nightly ${DATE} failed" --body "${URL}/actions/runs/${GITHUB_RUN_ID}"
           fi
