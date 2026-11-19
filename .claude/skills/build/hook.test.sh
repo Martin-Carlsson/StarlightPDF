@@ -713,10 +713,12 @@ commit() {
   git -C "${proj}" add -A
   git -C "${proj}" -c user.name=t -c user.email=t@t commit -qm "$1"
 }
-# pr_base: origin main holds README.md, core/tests/a.rs, tests/b.txt and an empty tests/e; branch 81-x starts from it.
+# pr_base: origin main holds README.md, core/tests/a.rs, tests/b.txt, an empty tests/e and a passing
+# .claude/mods/typecheck.sh; branch 81-x starts from it.
 pr_base() {
   reset "status: working\ncheck: true\npr: ${url}\ncomment: ${url}#c\n"
-  mkdir -p "${proj}/core/tests" "${proj}/tests"
+  mkdir -p "${proj}/core/tests" "${proj}/tests" "${proj}/.claude/mods"
+  echo : >"${proj}/.claude/mods/typecheck.sh"
   printf 'a\nb\n' >"${proj}/core/tests/a.rs"
   printf 'a\nb\n' >"${proj}/tests/b.txt"
   : >"${proj}/tests/e"
@@ -773,6 +775,13 @@ stops() {
   got=$(calls)
   if [ "${code}" -eq 0 ] || [ -n "${got}" ] || ! grep -q "^$1: " "${tmp}/out"; then good=0; fi
 }
+# names CONDITION PATHS: good=0 unless the output's CONDITION line has each of the space-separated PATHS as a whole word.
+names() {
+  line=$(grep "^$1: " "${tmp}/out") || line=
+  for p in $2; do
+    case " ${line} " in *" ${p} "*) ;; *) good=0 ;; esac
+  done
+}
 # unset_verdict: drop the state's verdict lines.
 unset_verdict() {
   grep -v '^verdict:' "${state}" >"${tmp}/state" || true
@@ -808,36 +817,47 @@ got=$(calls)
 grep -qF 'Head branch was modified' "${tmp}/out" || good=0
 expect -n "merge removes the label when GitHub refuses" test "${good}" -eq 1
 
-# Paths: README.md, GLOSSARY.md, core/, bindings/ and tests/ only, no .toml.
-good=1
-for p in .claude/x ci/x core/Cargo.toml; do
-  pr_base
-  mkdir -p "${proj}/$(dirname "${p}")"
-  echo x >"${proj}/${p}"
-  pr_ready
-  stops paths
-done
+# Paths: the gate and .claude/ are refused, each named; all else merges.
+# changes PATHS: create or append to each of the space-separated PATHS on the branch.
+changes() {
+  for p in $1; do
+    mkdir -p "${proj}/$(dirname "${p}")"
+    echo "# x" >>"${proj}/${p}"
+  done
+}
+refused='CLAUDE.md Cargo.lock LICENSE core/Cargo.toml .github/é.yml ci/x supply-chain/x LICENSES/x
+  .claude/skills/build/hook.sh .claude/settings.json .claude/mods/typecheck.sh .claude/skills/x/sub/SKILL.md'
 pr_base
-mkdir -p "${proj}/core/src" "${proj}/bindings/py"
-for p in README.md GLOSSARY.md core/src/x.rs bindings/py/x.py tests/new.txt; do echo x >>"${proj}/${p}"; done
+changes "${refused} a\"b"
+pr_ready
+good=1
+stops paths
+names paths "${refused} \"a\\\"b\""
+pr_base
+changes '.claude/skills/x/SKILL.md .claude/mods/a/b.js .architecture-decisions/x.md fuzz/x.rs .gitignore NEW'
 pr_ready
 merges
-expect -n "merge condition paths" test "${good}" -eq 1
+expect -n "merge paths refuses the gate and names each" test "${good}" -eq 1
+expect -n "merge paths refuses .claude but skills SKILL.md and mods" test "${good}" -eq 1
+expect -n "merge paths holds for other paths" test "${good}" -eq 1
 
-# Tests: no file main has under a tests/ directory is deleted, renamed or loses a line.
+# Tests: only a deleted or renamed file fails.
 good=1
-for change in 'rm tests/e' 'mv tests/b.txt tests/c.txt' 'echo a >core/tests/a.rs'; do
+for change in 'rm tests/e' 'mv tests/b.txt tests/c.txt'; do
   pr_base
   (cd "${proj}" && eval "${change}")
   pr_ready
   stops tests
 done
 pr_base
-echo c >>"${proj}/core/tests/a.rs"
-echo c >>"${proj}/tests/b.txt"
+echo a >"${proj}/core/tests/a.rs"
+printf 'a\nc\n' >"${proj}/tests/b.txt"
+changes tests/new.txt
 pr_ready
 merges
-expect -n "merge condition tests" test "${good}" -eq 1
+names tests core/tests/a.rs
+expect -n "merge tests fails only on a deleted or renamed file" test "${good}" -eq 1
+expect -n "merge tests names a file losing a line" test "${good}" -eq 1
 
 # API and dependencies: no such label, and the body's exact none lines.
 pr_docs

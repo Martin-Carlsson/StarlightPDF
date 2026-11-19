@@ -158,16 +158,20 @@ if [ "$1" = merge ]; then
   short=$(git rev-parse --short=7 HEAD)
   base=origin/main...HEAD
 
-  paths=$(git diff --name-only --no-renames "${base}")
-  bad=$(printf '%s\n' "${paths}" | awk '/\.toml$/ || !/^(README\.md|GLOSSARY\.md|(core|bindings|tests)\/.*)?$/')
+  paths=$(git -c core.quotePath=false diff --name-only --no-renames "${base}")
+  # Refused: the gate, .claude/ but skills/NAME/SKILL.md and mods/ but typecheck.sh, and quoted paths.
+  bad=$(printf '%s\n' "${paths}" | awk '/^(CLAUDE\.md|Cargo\.lock|LICENSE|(\.github|ci|supply-chain|LICENSES)\/.*|.*\.toml|\.claude\/mods\/typecheck\.sh|".*)$/ ||
+    /^\.claude\// && !/^\.claude\/(skills\/[^\/]+\/SKILL\.md|mods\/.*)$/')
   if [ -n "${bad}" ]; then no paths "not allowed: ${bad}"; else ok paths "${paths}"; fi
 
   t=':(glob)**/tests/**'
-  lost=$({
-    git diff --name-only --no-renames --diff-filter=D "${base}" -- "${t}"
-    git diff --numstat --no-renames --diff-filter=a "${base}" -- "${t}" | awk -F '\t' '$2 != 0 { print $3 }'
-  } | sort -u)
-  if [ -n "${lost}" ]; then no tests "deleted, renamed or losing lines: ${lost}"; else ok tests 'no file under tests/ deleted, renamed or losing a line'; fi
+  gone=$(git diff --name-only --no-renames --diff-filter=D "${base}" -- "${t}")
+  less=$(git diff --numstat --no-renames --diff-filter=a "${base}" -- "${t}" | awk -F '\t' '$2 != 0 { print $3 }')
+  if [ -n "${gone}" ]; then
+    no tests "deleted or renamed: ${gone}"
+  else
+    ok tests "no file under tests/ deleted or renamed${less:+; losing lines: ${less}}"
+  fi
 
   api='- **API:** none'
   deps='- **Dependencies:** none'
