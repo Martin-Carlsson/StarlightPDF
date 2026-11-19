@@ -81,6 +81,22 @@ impl Image {
     }
 }
 
+/// How an image is stored (ISO 32000-2:2020, 7.4.6 to 7.4.9).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ImageEncoding {
+    /// `CCITTFaxDecode` (7.4.6).
+    Ccitt,
+    /// `JBIG2Decode` (7.4.7).
+    Jbig2,
+    /// `DCTDecode` (7.4.8).
+    Jpeg,
+    /// `JPXDecode` (7.4.9).
+    Jpeg2000,
+    /// No image-specific filter.
+    Raw,
+}
+
 /// An image file format to draw.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -169,8 +185,8 @@ pub struct ImageInfo {
     pub bits: u8,
     /// The PDF color space name.
     pub color_space: String,
-    /// The stored encoding: `jpeg`, `jpeg2000`, `jbig2`, `ccitt` or `raw`.
-    pub encoding: String,
+    /// The stored encoding.
+    pub encoding: ImageEncoding,
     /// The displayed height in points.
     pub height: f64,
     /// Has a soft mask; [`WriteImageOptions::mask`] writes it.
