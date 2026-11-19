@@ -3,3 +3,6 @@
 .claude/build/
 /target
 __pycache__/
+/fuzz/artifacts
+/fuzz/corpus
+/fuzz/coverage

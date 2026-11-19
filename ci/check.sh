@@ -2,7 +2,7 @@
 # Runs every check of an area.
 set -eu
 
-areas='core python advisories licenses dependencies workflows hook mods ruff'
+areas='core python advisories licenses dependencies fuzz workflows hook mods ruff'
 ok=
 for a in $areas; do
   case $a in "$*") ok=1 ;; esac
@@ -59,6 +59,23 @@ case $1 in
     ;;
   dependencies)
     sh ci/dependencies.sh
+    exit 0
+    ;;
+  fuzz)
+    # cargo-fuzz needs unstable compiler flags: a nightly pinned by date, for this area only.
+    nightly=nightly-2026-11-12
+    rustup toolchain install --profile minimal "$nightly"
+    cargo fmt --check -p starlightpdf-fuzz
+    cargo clippy --all-targets --locked -p starlightpdf-fuzz
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    # Every corpus file, then fixed runs from a fixed seed; libFuzzer writes only to the first directory.
+    # A panic, a run over 10 s, an allocation over 256 MB or 1 GB resident fails.
+    for target in header-version page-count; do
+      mkdir "$tmp/$target"
+      cargo "+$nightly" fuzz run "$target" "$tmp/$target" tests/corpus -- \
+        -seed=1 -runs=1000000 -timeout=10 -malloc_limit_mb=256 -rss_limit_mb=1024
+    done
     exit 0
     ;;
   hook)
