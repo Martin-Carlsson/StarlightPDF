@@ -75,19 +75,17 @@ case $1 in
     exit 0
     ;;
   fuzz)
-    # cargo-fuzz needs unstable compiler flags: a nightly pinned by date, for this area only.
+    # Nightly for cargo-fuzz only, pinned by date; fetch locks deps as cargo fuzz has no --locked.
     nightly=nightly-2026-11-12
     rustup toolchain install --no-self-update --profile minimal "$nightly"
-    # cargo fuzz has no --locked.
     cargo fetch --locked
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    # Every corpus file, then fixed runs from a fixed seed; libFuzzer writes only to the first directory.
-    # Deterministic: comparison operands hold addresses, corpus reloads follow the clock.
+    # Corpus, then seeded runs, before lints so a planted fault is a finding; new inputs go to the first dir; cmp and reload off: nondeterministic.
     for target in header-version page-count; do
       mkdir "$tmp/$target"
       cargo "+$nightly" fuzz run "$target" "$tmp/$target" tests/corpus -- \
-        -seed=1 -runs=1000000 -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256 -rss_limit_mb=2048
+        -seed=1 -runs=1000000 -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256
     done
     cargo fmt --check -p starlightpdf-fuzz
     cargo clippy --all-targets --locked -p starlightpdf-fuzz
