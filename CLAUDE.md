@@ -1,6 +1,6 @@
 # Rules
 
-1. **Dependencies only for a strong reason.** Any crate, the core included, and build, test and CI tooling may use a dependency when writing it here would be large or risky to get wrong, or it is the standard tool for the job. It must have a permissive license and pass the checks: license allow list in `deny.toml`, a reason comment in the manifest, a source audit in `supply-chain/`, no advisories. Otherwise write it or ask.
+1. **Dependencies only for a strong reason.** Any crate, the core included, and build, test and CI tooling may use a dependency when writing it here would be large or risky to get wrong, or it is the standard tool for the job. It must have a permissive license (except shellcheck, GPL-3.0, which CI only runs) and pass the checks: license allow list in `deny.toml`, a reason comment in the manifest, a source audit in `supply-chain/`, no advisories. Otherwise write it or ask.
 2. **Strictest settings, always.** Enable every compiler and linter check at its strictest level. Warnings are errors. Never disable, suppress or weaken a check to make code pass.
 3. **Shortest text, always.** Answer the user with as little text as possible. The same goes for code comments and documentation.
 

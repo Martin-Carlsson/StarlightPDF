@@ -70,10 +70,24 @@ pub struct FontInfo {
     pub base_font: String,
     /// The program is embedded.
     pub embedded: bool,
-    /// `Type1`, `TrueType`, `Type0` or `Type3`.
-    pub kind: String,
+    /// The kind.
+    pub kind: FontKind,
     /// Only the glyphs used are embedded.
     pub subset: bool,
+}
+
+/// The kind of a font (ISO 32000-2:2020, 9.5).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FontKind {
+    /// TrueType.
+    TrueType,
+    /// Composite.
+    Type0,
+    /// Type 1, including multiple master.
+    Type1,
+    /// Glyphs defined by content streams.
+    Type3,
 }
 
 /// The fonts a document uses, one at a time.
