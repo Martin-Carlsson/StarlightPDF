@@ -37,6 +37,12 @@ criteria = "safe-to-deploy"
 version = "0.1.35"
 notes = "No build.rs; reads MAKEFLAGS-style env and opens the fifo or fds it names, as advertised; read the unix unsafe (pipe, fcntl, poll, ioctl, sigaction, pthread_kill, pre_exec): sound; Windows uses named semaphores; no net."
 
+[[audits.js-sys]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.3.107"
+notes = "No build.rs; grepped src: no fs, net or process use; mostly #[wasm_bindgen] extern declarations of JS built-ins; read the unsafe: typed-array view and copy helpers (documented unsafe fns; copy_to_uninit casts write-only MaybeUninit ints) and the futures single-thread Rc waker (sound without atomics); jspi and multithread task code sampled."
+
 [[audits.libc]]
 who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"
@@ -103,6 +109,12 @@ criteria = "safe-to-deploy"
 version = "6.0.0"
 notes = "No build.rs; no_std UEFI type and protocol definitions; only unsafe is Guid byte transmutes (all-u8 repr(C) struct) and test code; no fs, net or process use; reaches the build only for the UEFI target."
 
+[[audits.rustversion]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.20 -> 1.0.23"
+notes = "Delta from imported 1.0.20: build.rs sets RUSTVERSION=1 when running rustc --version and prints the version via a Display shim; macro output gains #[allow(clippy::incompatible_msrv)]; CI bumps; no unsafe, fs, net or new process use."
+
 [[audits.syn]]
 who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"
@@ -120,3 +132,27 @@ who = "Claude Sonnet 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"
 delta = "1.0.18 -> 1.0.27"
 notes = "Delta from Mozilla-audited 1.0.18: new generated tables; the two get_unchecked lookups stay in bounds (max index 8063 of 8064 LEAF bytes, checked from table maxima); no fs/net/process."
+
+[[audits.wasm-bindgen]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.2.130"
+notes = "Read build.rs (rustversion probe, cfg and link-arg output only); grepped src: no fs, net or process use beyond abort; read the unsafe in rt/mod.rs (malloc/realloc/free exports, WasmRefCell), externref.rs (slab heap) and convert/slices.rs (Vec::from_raw_parts on JS-provided ptr/len, sound given the same-version CLI glue); the rest of convert/ and closure.rs sampled, not read in full."
+
+[[audits.wasm-bindgen-macro]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.2.130"
+notes = "Read src/lib.rs in full (75 lines): proc-macro entry points delegating to wasm-bindgen-macro-support; prints generated code only under a debug cfg; no build.rs, unsafe, fs, net or process use."
+
+[[audits.wasm-bindgen-macro-support]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.2.130"
+notes = "No build.rs; grepped src: reads env (CARGO_MANIFEST_DIR, CARGO_PKG_NAME/VERSION, WASM_BINDGEN_USE_JS_SYS) and, in encode.rs, only the JS snippet files a #[wasm_bindgen(module = ...)] attribute names, as documented; no net or process use; unsafe appears only in generated FFI shims (sampled the export, import and class shims in codegen.rs), not executed by the macro itself."
+
+[[audits.wasm-bindgen-shared]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.83 -> 0.2.130"
+notes = "Delta from imported 0.2.83: no_std; schema structs grown; new identifier.rs (JS identifier and keyword checks via unicode-ident) and tys.rs (descriptor opcodes); build.rs now hashes src/tys.rs too (its existing git rev-parse is unchanged); no unsafe, net or new process use."

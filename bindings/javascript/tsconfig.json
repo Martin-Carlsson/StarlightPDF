@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "declaration": true,
+    "erasableSyntaxOnly": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "lib": ["es2024", "esnext.disposable", "dom"],
+    "module": "nodenext",
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "outDir": "../../target/javascript/package",
+    "rootDir": "lib",
+    "rootDirs": ["lib", "../../target/javascript/package"],
+    "skipLibCheck": false,
+    "strict": true,
+    "target": "es2024",
+    "types": [],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["lib", "node.d.ts"]
+}

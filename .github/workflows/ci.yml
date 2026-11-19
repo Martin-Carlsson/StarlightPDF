@@ -82,7 +82,7 @@ jobs:
           git fetch -q --depth=2 "${URL}" "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
       - name: Install Rust
-        if: contains(fromJSON('["core","python","advisories","dependencies","fuzz"]'), matrix.area)
+        if: contains(fromJSON('["core","python","javascript","advisories","dependencies","fuzz"]'), matrix.area)
         run: rustup toolchain install --no-self-update
       - name: Install the area's tools
         run: sh ci/setup.sh "${AREA}"
