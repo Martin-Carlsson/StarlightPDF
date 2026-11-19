@@ -1,4 +1,4 @@
-"""PEP 517 backend: cargo builds the abi3 extension, which goes into a PEP 427 wheel."""
+"""PEP 517 backend: a PEP 427 wheel of the abi3 extension and its PEP 561 stub."""
 
 import base64
 import hashlib
@@ -14,7 +14,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LIBRARY = {"darwin": ".dylib", "win32": ".dll"}.get(sys.platform, ".so")
-MODULE = "starlightpdf.pyd" if sys.platform == "win32" else "starlightpdf.abi3.so"
+EXTENSION = "__init__.pyd" if sys.platform == "win32" else "__init__.abi3.so"
 TAG = "cp311-abi3-" + re.sub(r"[-.]", "_", sysconfig.get_platform())
 
 
@@ -72,7 +72,9 @@ def build_wheel(
     version = package["version"]
     info = f"starlightpdf-{version}.dist-info"
     files = {
-        MODULE: _library().read_bytes(),
+        f"starlightpdf/{EXTENSION}": _library().read_bytes(),
+        "starlightpdf/__init__.pyi": (HERE / "starlightpdf/__init__.pyi").read_bytes(),
+        "starlightpdf/py.typed": (HERE / "starlightpdf/py.typed").read_bytes(),
         f"{info}/WHEEL": (
             f"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: {TAG}\n"
         ).encode(),

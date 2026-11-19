@@ -48,6 +48,7 @@ class AreasTest(unittest.TestCase):
             "bindings/python/src/lib.rs": {"python", "licenses"},
             "ci/licenses.sh": {"licenses", "ruff", "shell"},
             "tests/ci/test_areas.py": {"licenses", "ruff"},
+            "bindings/python/starlightpdf/__init__.pyi": {"licenses", "python", "ruff"},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

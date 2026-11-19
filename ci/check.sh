@@ -131,7 +131,7 @@ case $1 in
     trap 'rm -rf "${tmp}"' EXIT
     py=${tmp}/licenses.py
     awk '/<<.PY.$/ { f = 1; next } /^PY$/ { f = 0 } f' ci/licenses.sh >"${py}"
-    files=$(git ls-files -co --exclude-standard '*.py')
+    files=$(git ls-files -co --exclude-standard '*.py' '*.pyi')
     set --
     for f in ${files}; do set -- "$@" "${f}"; done
     if ! grep -qxF 'select = ["ALL"]' ruff.toml || grep -vxE -e 'target-version = "py311"' -e '\[lint\]' -e 'select = \["ALL"\]' \
@@ -241,3 +241,15 @@ else
 fi
 "${venv}" -m pip install --no-index ./bindings/python
 "${venv}" -W error -X dev -bb -m unittest discover -s bindings/python/tests
+"${venv}" -m pip install --require-hashes --only-binary :all: -r bindings/python/requirements-dev.txt
+# stubtest caches in the working directory.
+(cd "${tmp}" && "${venv}" -m mypy.stubtest --strict-type-check-only starlightpdf)
+# Every check; the stub as a source so its own errors show.
+set --
+for c in deprecated exhaustive-match explicit-override ignore-without-code mutable-override possibly-undefined \
+  redundant-expr redundant-self truthy-bool truthy-iterable unimported-reveal unused-awaitable unused-ignore; do
+  set -- "$@" --enable-error-code "${c}"
+done
+"${venv}" -m mypy --config-file= --cache-dir "${tmp}/mypy" --strict --warn-unreachable --strict-equality-for-none \
+  --disallow-any-expr --disallow-any-decorated --disallow-any-explicit --disallow-any-unimported --warn-incomplete-stub "$@" \
+  bindings/python/tests bindings/python/starlightpdf/__init__.pyi
