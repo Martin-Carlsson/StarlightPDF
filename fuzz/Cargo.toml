@@ -4,10 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Fuzz targets for the StarlightPDF parsers."
-repository.workspace = true
-keywords.workspace = true
-categories.workspace = true
 publish = false
 
 [package.metadata]
@@ -21,15 +17,11 @@ starlightpdf = { path = "../core" }
 name = "header-version"
 path = "fuzz_targets/header_version.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
 name = "page-count"
 path = "fuzz_targets/page_count.rs"
 test = false
-doc = false
-bench = false
 
 [lints]
 workspace = true

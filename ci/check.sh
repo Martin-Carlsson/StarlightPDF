@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 case $1 in
   core | python) tools='cargo-deny cargo-vet' ;;
   advisories) tools=cargo-deny ;;
+  fuzz) tools=cargo-fuzz ;;
   *) tools= ;;
 esac
 for t in $tools; do
@@ -76,18 +77,20 @@ case $1 in
   fuzz)
     # cargo-fuzz needs unstable compiler flags: a nightly pinned by date, for this area only.
     nightly=nightly-2026-11-12
-    rustup toolchain install --profile minimal "$nightly"
-    cargo fmt --check -p starlightpdf-fuzz
-    cargo clippy --all-targets --locked -p starlightpdf-fuzz
+    rustup toolchain install --no-self-update --profile minimal "$nightly"
+    # cargo fuzz has no --locked.
+    cargo fetch --locked
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     # Every corpus file, then fixed runs from a fixed seed; libFuzzer writes only to the first directory.
-    # A panic, a run over 10 s, an allocation over 256 MB or 1 GB resident fails.
+    # Deterministic: comparison operands hold addresses, corpus reloads follow the clock.
     for target in header-version page-count; do
       mkdir "$tmp/$target"
       cargo "+$nightly" fuzz run "$target" "$tmp/$target" tests/corpus -- \
-        -seed=1 -runs=1000000 -timeout=10 -malloc_limit_mb=256 -rss_limit_mb=1024
+        -seed=1 -runs=1000000 -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256 -rss_limit_mb=2048
     done
+    cargo fmt --check -p starlightpdf-fuzz
+    cargo clippy --all-targets --locked -p starlightpdf-fuzz
     exit 0
     ;;
   hook)

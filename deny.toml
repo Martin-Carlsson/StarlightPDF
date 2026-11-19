@@ -21,5 +21,6 @@ allow = [
   "Zlib",
   "0BSD",
   "BSL-1.0",
+  "NCSA",
   "Unicode-3.0",
 ]

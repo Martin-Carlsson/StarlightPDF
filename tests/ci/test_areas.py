@@ -42,7 +42,9 @@ class AreasTest(unittest.TestCase):
             "bindings/python/Cargo.toml": {"dependencies", "licenses"},
             "ci/dependencies.sh": {"dependencies", "licenses"},
             "ci/workflows.sh": {"licenses", "workflows"},
-            "core/src/lib.rs": {"core", "python", "licenses"},
+            "core/src/lib.rs": {"core", "fuzz", "python", "licenses"},
+            "tests/corpus/header/empty.pdf": {"core", "fuzz", "python", "licenses"},
+            "fuzz/fuzz_targets/page_count.rs": {"fuzz", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
             "ci/licenses.sh": {"licenses", "ruff"},
             "tests/ci/test_areas.py": {"licenses", "ruff"},
@@ -70,8 +72,8 @@ class AreasTest(unittest.TestCase):
         self.assertEqual({"licenses"}, areas("GLOSSARY.md"))
 
     def test_python_without_core(self) -> None:
-        """The binding alone skips core."""
-        self.assertNotIn("core", areas("bindings/python/src/lib.rs"))
+        """The binding alone skips core and fuzz."""
+        self.assertEqual(set(), {"core", "fuzz"} & areas("bindings/python/src/lib.rs"))
 
     def test_no_paths(self) -> None:
         """No paths select nothing."""
