@@ -428,6 +428,12 @@ pub fn header_version(bytes: &[u8]) -> Result<Version, PdfError> {
     parse_header(bytes, "header_version")
 }
 
+/// The library's version.
+#[must_use]
+pub const fn library_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 /// [`header_version`], failing as `operation`; needs at most [`HEADER_LEN`] bytes.
 fn parse_header(bytes: &[u8], operation: &'static str) -> Result<Version, PdfError> {
     match *bytes {
