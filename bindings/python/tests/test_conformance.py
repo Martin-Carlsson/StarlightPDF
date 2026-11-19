@@ -36,7 +36,7 @@ def page_count(kind: str, path: str) -> str:
     return str(starlightpdf.Document.open(source(kind, path)).page_count)
 
 
-OPERATIONS: dict[str, Callable[..., str]] = {
+OPERATIONS: dict[str, Callable[[str], str]] = {
     "header_version": header_version,
     "open_bytes": functools.partial(open_document, "bytes"),
     "open_file": functools.partial(open_document, "file"),
@@ -104,7 +104,8 @@ def failures(suites: list[tuple[str, str]]) -> set[str]:
     try:
         run(suites)
     except SuiteError as error:
-        return set(re.findall(r"[\w.-]+\.tsv:\d+", str(error)))
+        words = (word.rstrip(":,") for word in str(error).split())
+        return {word for word in words if re.fullmatch(r"[\w.-]+\.tsv:\d+", word)}
     msg = "the run passed"
     raise AssertionError(msg)
 
@@ -139,7 +140,9 @@ class Conformance(unittest.TestCase):
             "header_version\ttests/corpus/header/version-2.9.pdf\t1.7\n"
         )
         b = "open_bytes\ttests/corpus/header/empty.pdf\tok\n"
-        self.assertEqual(failures([("a.tsv", a), ("b.tsv", b)]), {"a.tsv:3", "b.tsv:1"})
+        self.assertSetEqual(
+            failures([("a.tsv", a), ("b.tsv", b)]), {"a.tsv:3", "b.tsv:1"}
+        )
 
     def test_rejects_expectations_that_differ_by_source(self) -> None:
         """Bytes and file expectations for one corpus file must agree."""
@@ -151,7 +154,7 @@ class Conformance(unittest.TestCase):
             "page_count_bytes\ttests/corpus/page-count/one-page.pdf\t1\n"
             "page_count_file\ttests/corpus/page-count/one-page.pdf\t2\n"
         )
-        self.assertEqual(
+        self.assertSetEqual(
             failures([("open.tsv", opened), ("page_count.tsv", counted)]),
             {"open.tsv:1", "open.tsv:2", "page_count.tsv:1", "page_count.tsv:2"},
         )
