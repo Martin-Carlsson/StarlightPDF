@@ -1,7 +1,10 @@
 """Runs the conformance suite in tests/conformance/*.tsv through the binding."""
 
+import functools
 import pathlib
+import re
 import unittest
+from collections.abc import Callable
 
 import starlightpdf
 
@@ -9,60 +12,36 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 SUITE_DIR = ROOT / "tests" / "conformance"
 
 
+def source(kind: str, path: str) -> starlightpdf.Source:
+    """Make the file at `path` a `bytes` or `file` source."""
+    if kind == "bytes":
+        return starlightpdf.Source.from_bytes(bytes=(ROOT / path).read_bytes())
+    return starlightpdf.Source.from_file(file=ROOT / path)
+
+
 def header_version(path: str) -> str:
-    """Render the header version of the file at `path`, or `error`."""
-    try:
-        major, minor = starlightpdf.header_version((ROOT / path).read_bytes())
-    except starlightpdf.PdfError:
-        return "error"
+    """Header version of the file at `path`."""
+    major, minor = starlightpdf.header_version((ROOT / path).read_bytes())
     return f"{major}.{minor}"
 
 
-def open_bytes(path: str) -> str:
-    """Open the file at `path` from its bytes: `ok` or the error code's name."""
-    try:
-        source = starlightpdf.Source.from_bytes(bytes=(ROOT / path).read_bytes())
-        starlightpdf.Document.open(source)
-    except starlightpdf.PdfError as error:
-        return error.code
+def open_document(kind: str, path: str) -> str:
+    """Open the file at `path`: `ok`."""
+    starlightpdf.Document.open(source(kind, path))
     return "ok"
 
 
-def open_file(path: str) -> str:
-    """Open the file at `path` from the file: `ok` or the error code's name."""
-    try:
-        starlightpdf.Document.open(starlightpdf.Source.from_file(file=ROOT / path))
-    except starlightpdf.PdfError as error:
-        return error.code
-    return "ok"
+def page_count(kind: str, path: str) -> str:
+    """Page count of the file at `path`."""
+    return str(starlightpdf.Document.open(source(kind, path)).page_count)
 
 
-def page_count_bytes(path: str) -> str:
-    """Page count of the file at `path` from its bytes, or the error code's name."""
-    try:
-        source = starlightpdf.Source.from_bytes(bytes=(ROOT / path).read_bytes())
-        count = starlightpdf.Document.open(source).page_count
-    except starlightpdf.PdfError as error:
-        return error.code
-    return str(count)
-
-
-def page_count_file(path: str) -> str:
-    """Page count of the file at `path` from the file, or the error code's name."""
-    try:
-        source = starlightpdf.Source.from_file(file=ROOT / path)
-        count = starlightpdf.Document.open(source).page_count
-    except starlightpdf.PdfError as error:
-        return error.code
-    return str(count)
-
-
-OPERATIONS = {
+OPERATIONS: dict[str, Callable[..., str]] = {
     "header_version": header_version,
-    "open_bytes": open_bytes,
-    "open_file": open_file,
-    "page_count_bytes": page_count_bytes,
-    "page_count_file": page_count_file,
+    "open_bytes": functools.partial(open_document, "bytes"),
+    "open_file": functools.partial(open_document, "file"),
+    "page_count_bytes": functools.partial(page_count, "bytes"),
+    "page_count_file": functools.partial(page_count, "file"),
 }
 
 
@@ -70,34 +49,64 @@ class SuiteError(Exception):
     """A case failed."""
 
 
-def run_case(line: str) -> None:
-    """Run one case: operation, arguments and expected result, tab-separated."""
-    *head, expected = line.split("\t")
-    if not head:
-        msg = f"malformed line {line!r}"
-        raise SuiteError(msg)
-    operation, *args = head
+def check(operation: str, args: list[str], expected: str) -> str | None:
+    """Return why `operation` on `args` does not give `expected`, or None."""
     if operation not in OPERATIONS:
-        msg = f"unknown operation {operation!r}"
-        raise SuiteError(msg)
-    actual = OPERATIONS[operation](*args)
+        return f"unknown operation {operation!r}"
+    try:
+        actual = OPERATIONS[operation](*args)
+    except starlightpdf.PdfError as error:
+        actual = error.code
+    except (OSError, TypeError, ValueError) as error:
+        return f"{operation}: {error}"
     if actual != expected:
-        msg = f"{operation}: expected {expected!r}, got {actual!r}"
-        raise SuiteError(msg)
+        return f"{operation}: expected {expected!r}, got {actual!r}"
+    return None
 
 
-def run(suite: str) -> None:
-    """Run every case of `suite`, skipping `#` lines."""
-    cases = [
-        line
-        for line in suite.removesuffix("\n").split("\n")
-        if not line.startswith("#")
-    ]
-    if not cases:
-        msg = "no cases"
-        raise SuiteError(msg)
-    for case in cases:
-        run_case(case)
+def run(suites: list[tuple[str, str]]) -> None:
+    """Run every case; fail naming each bad case and disagreeing pair by `file:line`."""
+    errors = []
+    first: dict[tuple[str, ...], tuple[str, str]] = {}
+    found = False
+    for name, text in suites:
+        lines = text.split("\n")
+        if lines[-1] == "":
+            lines.pop()
+        for number, raw in enumerate(lines, 1):
+            line = raw.removesuffix("\r")
+            if line.startswith("#"):
+                continue
+            found = True
+            position = f"{name}:{number}"
+            *head, expected = line.split("\t")
+            if not head:
+                errors.append(f"{position}: malformed line {line!r}")
+                continue
+            operation, *args = head
+            family = re.sub(r"_(?:bytes|file)\Z", "", operation)
+            earlier, wanted = first.setdefault((family, *args), (position, expected))
+            if wanted != expected:
+                errors.append(
+                    f"{position}: expects {expected!r}, {earlier} expects {wanted!r}"
+                )
+            error = check(operation, args, expected)
+            if error:
+                errors.append(f"{position}: {error}")
+    if not found:
+        errors.append("no cases")
+    if errors:
+        raise SuiteError("\n".join(errors))
+
+
+def failures(suites: list[tuple[str, str]]) -> set[str]:
+    """Return the `file:line` positions a failing run names."""
+    try:
+        run(suites)
+    except SuiteError as error:
+        return set(re.findall(r"[\w.-]+\.tsv:\d+", str(error)))
+    msg = "the run passed"
+    raise AssertionError(msg)
 
 
 class Conformance(unittest.TestCase):
@@ -105,17 +114,49 @@ class Conformance(unittest.TestCase):
 
     def test_suite_passes(self) -> None:
         """Every case passes."""
-        texts = [
-            path.read_text(encoding="utf-8") for path in sorted(SUITE_DIR.glob("*.tsv"))
-        ]
-        run("".join(text if text.endswith("\n") else text + "\n" for text in texts))
+        run(
+            [
+                (path.name, path.read_bytes().decode())
+                for path in sorted(SUITE_DIR.glob("*.tsv"))
+            ]
+        )
 
     def test_unknown_operation_fails(self) -> None:
         """An unknown operation fails."""
         with self.assertRaises(SuiteError):
-            run("nope\tx\ty\n")
+            run([("s.tsv", "nope\tx\ty\n")])
 
     def test_suite_without_cases_fails(self) -> None:
         """A suite with no cases fails."""
         with self.assertRaises(SuiteError):
-            run("# operation\targuments\texpected\n")
+            run([("s.tsv", "# operation\targuments\texpected\n")])
+
+    def test_names_every_failing_case(self) -> None:
+        """A run names each failing case by file and line."""
+        a = (
+            "# c\n"
+            "header_version\ttests/corpus/header/version-1.7.pdf\t1.7\n"
+            "header_version\ttests/corpus/header/version-2.9.pdf\t1.7\n"
+        )
+        b = "open_bytes\ttests/corpus/header/empty.pdf\tok\n"
+        self.assertEqual(failures([("a.tsv", a), ("b.tsv", b)]), {"a.tsv:3", "b.tsv:1"})
+
+    def test_rejects_expectations_that_differ_by_source(self) -> None:
+        """Bytes and file expectations for one corpus file must agree."""
+        opened = (
+            "open_bytes\ttests/corpus/header/version-1.7.pdf\tok\n"
+            "open_file\ttests/corpus/header/version-1.7.pdf\tInvalidHeader\n"
+        )
+        counted = (
+            "page_count_bytes\ttests/corpus/page-count/one-page.pdf\t1\n"
+            "page_count_file\ttests/corpus/page-count/one-page.pdf\t2\n"
+        )
+        self.assertEqual(
+            failures([("open.tsv", opened), ("page_count.tsv", counted)]),
+            {"open.tsv:1", "open.tsv:2", "page_count.tsv:1", "page_count.tsv:2"},
+        )
+
+    def test_crlf_suite_matches_lf(self) -> None:
+        """A CR LF suite passes as its LF form does."""
+        text = "# c\r\nheader_version\ttests/corpus/header/version-1.7.pdf\t1.7\r\n"
+        run([("s.tsv", text)])
