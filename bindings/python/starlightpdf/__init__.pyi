@@ -1,7 +1,7 @@
 import os
 from typing import final
 
-__all__ = ["Document", "PdfError", "Source", "header_version"]
+__all__ = ["Document", "PdfError", "Source", "header_version", "library_version"]
 
 class PdfError(Exception):
     code: str
@@ -27,3 +27,4 @@ class Document:
     def page_count(self) -> int: ...
 
 def header_version(data: bytes) -> tuple[int, int]: ...
+def library_version() -> str: ...

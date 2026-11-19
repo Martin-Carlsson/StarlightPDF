@@ -104,6 +104,12 @@ fn header_version(data: &[u8]) -> PyResult<(u8, u8)> {
         .map_err(|error| to_py(&error))
 }
 
+/// Calls `starlightpdf::library_version`.
+#[pyfunction]
+const fn library_version() -> &'static str {
+    starlightpdf::library_version()
+}
+
 /// A `PdfError` carrying `error`'s details, its operation spelled as in Python.
 fn to_py(error: &starlightpdf::PdfError) -> PyErr {
     let operation = error.operation().replace("::", ".");
@@ -131,5 +137,6 @@ fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("PdfError", module.py().get_type::<PdfError>())?;
     module.add_class::<Source>()?;
     module.add_class::<Document>()?;
-    module.add_function(wrap_pyfunction!(header_version, module)?)
+    module.add_function(wrap_pyfunction!(header_version, module)?)?;
+    module.add_function(wrap_pyfunction!(library_version, module)?)
 }
