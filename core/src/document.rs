@@ -22,7 +22,7 @@ use crate::fonts::{AddFontOptions, Font, Fonts};
 use crate::forms::{ExportDataOptions, Fields, ImportDataOptions, SetXfaOptions, XfaOptions};
 use crate::input::Source;
 use crate::layers::{AddLayerOptions, Layer, Layers};
-use crate::limits::ResourcePolicy;
+use crate::limits::{DEFAULT_DEPTH_LIMIT, ResourcePolicy};
 use crate::metadata::{InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions};
 use crate::navigation::{
     AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, DeleteLabelRangeOptions,
@@ -86,6 +86,8 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// Nesting depth of arrays and dictionaries.
+    depth_limit: u32,
     /// The source.
     source: Source,
 }
@@ -856,7 +858,7 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::object"))
     }
 
-    /// Opens `source`, checking only its header (ISO 32000-2:2020, 7.5.2); `policy` and `options` are not used yet.
+    /// Opens `source`, checking only its header (ISO 32000-2:2020, 7.5.2); `options` are not used yet.
     ///
     /// A forward-only source fails with [`ErrorCode::NotSeekable`].
     ///
@@ -870,7 +872,6 @@ impl Document {
     ) -> Result<Self, PdfError> {
         /// The operation.
         const OPEN: &str = "Document::open";
-        let _: Option<&ResourcePolicy> = policy;
         let _: &OpenOptions = options;
         if source.forward_only() {
             return Err(PdfError::new(ErrorCode::NotSeekable, OPEN));
@@ -878,6 +879,7 @@ impl Document {
         let mut header = [0; HEADER_LEN];
         let count = source.read(0, &mut header, OPEN)?;
         parse_header(header.get(..count).unwrap_or_default(), OPEN).map(|_| Self {
+            depth_limit: policy.map_or(DEFAULT_DEPTH_LIMIT, ResourcePolicy::depth_limit),
             source: source.clone(),
         })
     }
@@ -916,7 +918,7 @@ impl Document {
     pub fn page_count(&self) -> Result<u32, PdfError> {
         /// The operation.
         const PAGE_COUNT: &str = "Document::page_count";
-        let (xref, trailer) = Xref::open(&self.source, PAGE_COUNT)?;
+        let (xref, trailer) = Xref::open(&self.source, self.depth_limit, PAGE_COUNT)?;
         let catalog = xref.dictionary(trailer.get(b"Root"))?;
         let pages = xref.dictionary(catalog.get(b"Pages"))?;
         let count = pages.get(b"Count");
