@@ -92,6 +92,10 @@ impl ReadAt for Bytes {
 impl ReadAt for FileReadAt {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
         let mut file = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        // The OS may reject a seek far past the end.
+        if offset >= file.metadata()?.len() {
+            return Ok(0);
+        }
         let _position = file.seek(SeekFrom::Start(offset))?;
         file.read(buffer)
     }
@@ -180,18 +184,20 @@ impl Source {
         ))
     }
 
-    /// Fills `buffer` from offset 0, stopping early at the end; returns the count read.
-    pub(crate) fn read_start(
+    /// Fills `buffer` from `offset`, stopping early at the end; returns the count read.
+    pub(crate) fn read(
         &self,
+        offset: u64,
         buffer: &mut [u8],
         operation: &'static str,
     ) -> Result<usize, PdfError> {
         let mut filled = 0;
-        while let Some(rest) = buffer.get_mut(filled..).filter(|rest| !rest.is_empty()) {
-            match self
-                .read_at
-                .read_at(u64::try_from(filled).unwrap_or(u64::MAX), rest)
-            {
+        while let Some(rest) = buffer.get_mut(filled..).filter(|rest| !rest.is_empty())
+            && let Some(position) = u64::try_from(filled)
+                .ok()
+                .and_then(|count| offset.checked_add(count))
+        {
+            match self.read_at.read_at(position, rest) {
                 Ok(0) => break,
                 Ok(count) => filled = filled.saturating_add(count),
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
@@ -199,5 +205,12 @@ impl Source {
             }
         }
         Ok(filled.min(buffer.len()))
+    }
+
+    /// The size in bytes.
+    pub(crate) fn size(&self, operation: &'static str) -> Result<u64, PdfError> {
+        self.read_at
+            .size()
+            .map_err(|error| PdfError::io(&error, operation))
     }
 }

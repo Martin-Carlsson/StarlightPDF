@@ -37,10 +37,32 @@ def open_file(path: str) -> str:
     return "ok"
 
 
+def page_count_bytes(path: str) -> str:
+    """Page count of the file at `path` from its bytes, or the error code's name."""
+    try:
+        source = starlightpdf.Source.from_bytes(bytes=(ROOT / path).read_bytes())
+        count = starlightpdf.Document.open(source).page_count
+    except starlightpdf.PdfError as error:
+        return error.code
+    return str(count)
+
+
+def page_count_file(path: str) -> str:
+    """Page count of the file at `path` from the file, or the error code's name."""
+    try:
+        source = starlightpdf.Source.from_file(file=ROOT / path)
+        count = starlightpdf.Document.open(source).page_count
+    except starlightpdf.PdfError as error:
+        return error.code
+    return str(count)
+
+
 OPERATIONS = {
     "header_version": header_version,
     "open_bytes": open_bytes,
     "open_file": open_file,
+    "page_count_bytes": page_count_bytes,
+    "page_count_file": page_count_file,
 }
 
 

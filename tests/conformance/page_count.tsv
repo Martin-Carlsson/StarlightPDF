@@ -1,0 +1,74 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.5.5 and 7.7.2 (trailer, catalog), 7.7.3.2 (Count)
+page_count_bytes	tests/corpus/page-count/empty-tree.pdf	0
+page_count_file	tests/corpus/page-count/empty-tree.pdf	0
+page_count_bytes	tests/corpus/page-count/one-page.pdf	1
+page_count_file	tests/corpus/page-count/one-page.pdf	1
+page_count_bytes	tests/corpus/page-count/nested-tree.pdf	3
+page_count_file	tests/corpus/page-count/nested-tree.pdf	3
+# 7.5.4 (subsections, free entries, SP CR, SP LF and CR LF entry ends)
+page_count_bytes	tests/corpus/page-count/xref-subsections.pdf	1
+page_count_file	tests/corpus/page-count/xref-subsections.pdf	1
+# 7.5.6 (incremental update, Prev)
+page_count_bytes	tests/corpus/page-count/incremental-update.pdf	2
+page_count_file	tests/corpus/page-count/incremental-update.pdf	2
+# 7.3.10 (indirect Count), 7.2.4 and 7.3.4 (comments and strings)
+page_count_bytes	tests/corpus/page-count/count-indirect.pdf	1
+page_count_file	tests/corpus/page-count/count-indirect.pdf	1
+page_count_bytes	tests/corpus/page-count/catalog-comments-strings.pdf	1
+page_count_file	tests/corpus/page-count/catalog-comments-strings.pdf	1
+# 7.3.7: a nested dictionary's keys are not the catalog's
+page_count_bytes	tests/corpus/page-count/catalog-nested-pages.pdf	1
+page_count_file	tests/corpus/page-count/catalog-nested-pages.pdf	1
+# 7.7.3.2: Count up to 4,294,967,295
+page_count_bytes	tests/corpus/page-count/count-u32-max.pdf	4294967295
+page_count_file	tests/corpus/page-count/count-u32-max.pdf	4294967295
+# 7.5.4, 7.5.5, 7.5.6, 7.7.2, 7.7.3.2: malformed
+page_count_bytes	tests/corpus/page-count/startxref-before-last-kib.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-before-last-kib.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-beyond-eof.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-beyond-eof.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-not-at-xref.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-not-at-xref.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-before-xref.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-before-xref.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/entry-before-object.pdf	Malformed
+page_count_file	tests/corpus/page-count/entry-before-object.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-at-object.pdf	Malformed
+page_count_file	tests/corpus/page-count/startxref-at-object.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/xref-truncated.pdf	Malformed
+page_count_file	tests/corpus/page-count/xref-truncated.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/xref-count-past-i64.pdf	Malformed
+page_count_file	tests/corpus/page-count/xref-count-past-i64.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/trailer-no-root.pdf	Malformed
+page_count_file	tests/corpus/page-count/trailer-no-root.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/root-not-in-xref.pdf	Malformed
+page_count_file	tests/corpus/page-count/root-not-in-xref.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/root-free.pdf	Malformed
+page_count_file	tests/corpus/page-count/root-free.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
+page_count_file	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/pages-not-in-xref.pdf	Malformed
+page_count_file	tests/corpus/page-count/pages-not-in-xref.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/pages-free.pdf	Malformed
+page_count_file	tests/corpus/page-count/pages-free.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/pages-not-dictionary.pdf	Malformed
+page_count_file	tests/corpus/page-count/pages-not-dictionary.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/object-number-mismatch.pdf	Malformed
+page_count_file	tests/corpus/page-count/object-number-mismatch.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/count-missing.pdf	Malformed
+page_count_file	tests/corpus/page-count/count-missing.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/count-not-integer.pdf	Malformed
+page_count_file	tests/corpus/page-count/count-not-integer.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/count-negative.pdf	Malformed
+page_count_file	tests/corpus/page-count/count-negative.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/count-over-u32.pdf	Malformed
+page_count_file	tests/corpus/page-count/count-over-u32.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/prev-loop.pdf	Malformed
+page_count_file	tests/corpus/page-count/prev-loop.pdf	Malformed
+# 7.5.8 (cross-reference stream)
+page_count_bytes	tests/corpus/page-count/xref-stream.pdf	Unsupported
+page_count_file	tests/corpus/page-count/xref-stream.pdf	Unsupported
+# Arrays nested 100,000 deep
+page_count_bytes	tests/corpus/page-count/deep-arrays.pdf	LimitExceeded
+page_count_file	tests/corpus/page-count/deep-arrays.pdf	LimitExceeded

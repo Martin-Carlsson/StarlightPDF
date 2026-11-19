@@ -42,6 +42,8 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
+use crate::syntax::Object;
+use crate::xref::Xref;
 use crate::{ErrorCode, HEADER_LEN, PdfError, Version, parse_header};
 
 /// Options for [`Document::close`].
@@ -84,8 +86,8 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// The source.
+    source: Source,
 }
 
 /// Documents, one at a time.
@@ -874,9 +876,9 @@ impl Document {
             return Err(PdfError::new(ErrorCode::NotSeekable, OPEN));
         }
         let mut header = [0; HEADER_LEN];
-        let count = source.read_start(&mut header, OPEN)?;
+        let count = source.read(0, &mut header, OPEN)?;
         parse_header(header.get(..count).unwrap_or_default(), OPEN).map(|_| Self {
-            _shared: Arc::new(()),
+            source: source.clone(),
         })
     }
 
@@ -906,18 +908,24 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::page"))
     }
 
-    /// The number of pages.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The number of pages: the root page tree node's `Count` (ISO 32000-2:2020, 7.7.3.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn page_count(&self) -> Result<u32, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::page_count",
-        ))
+        /// The operation.
+        const PAGE_COUNT: &str = "Document::page_count";
+        let (xref, trailer) = Xref::open(&self.source, PAGE_COUNT)?;
+        let catalog = xref.dictionary(trailer.get(b"Root"))?;
+        let pages = xref.dictionary(catalog.get(b"Pages"))?;
+        let count = pages.get(b"Count");
+        match count.and_then(Object::reference) {
+            Some(id) => xref.object(id)?.integer(),
+            None => count.and_then(Object::integer),
+        }
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| PdfError::new(ErrorCode::Malformed, PAGE_COUNT))
     }
 
     /// Saves incrementally with room for a signature, for the caller to sign.

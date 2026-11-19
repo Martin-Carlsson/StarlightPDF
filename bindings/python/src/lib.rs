@@ -74,7 +74,7 @@ impl Source {
 #[pyclass(frozen, module = "starlightpdf")]
 struct Document {
     /// The open document.
-    _document: document::Document,
+    document: document::Document,
 }
 
 #[pymethods]
@@ -83,8 +83,14 @@ impl Document {
     #[staticmethod]
     fn open(source: &Source) -> PyResult<Self> {
         document::Document::open(&source.0, None, &OpenOptions::default())
-            .map(|opened| Self { _document: opened })
+            .map(|document| Self { document })
             .map_err(|error| to_py(&error))
+    }
+
+    /// The number of pages.
+    #[getter]
+    fn page_count(&self) -> PyResult<u32> {
+        self.document.page_count().map_err(|error| to_py(&error))
     }
 }
 
