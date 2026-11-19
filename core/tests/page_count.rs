@@ -5,9 +5,11 @@ extern crate alloc;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::{self, ErrorKind};
+use std::path::PathBuf;
+use std::thread;
 
 use starlightpdf::document::{Document, OpenOptions};
-use starlightpdf::input::{ReadAt, ReadAtSourceOptions, Source};
+use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::{ErrorCode, PdfError};
 
 /// The catalog's object number, mid-file; the page tree root and pages follow it.
@@ -18,6 +20,12 @@ const ENTRY: u64 = 20;
 
 /// A valid header (ISO 32000-2:2020, 7.5.2).
 const HEADER: &[u8] = b"%PDF-2.0\n";
+
+/// Three pages.
+const NESTED_TREE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../tests/corpus/page-count/nested-tree.pdf"
+);
 
 /// Objects, numbered from 1.
 const OBJECTS: u64 = 1_000_000;
@@ -200,6 +208,30 @@ fn generated() -> Arc<Generated> {
         failing: AtomicBool::new(false),
         served: AtomicUsize::new(0),
     })
+}
+
+#[test]
+fn eight_threads_count_pages_through_one_file_source() {
+    let mut options = FileSourceOptions::default();
+    options.file = PathBuf::from(NESTED_TREE);
+    let opened = Source::from_file(&options)
+        .and_then(|source| Document::open(&source, None, &OpenOptions::default()))
+        .map_err(|error| error.code());
+    assert!(opened.is_ok(), "open: {opened:?}");
+    let Ok(document) = opened else { return };
+    thread::scope(|scope| {
+        for _ in 0..8_u8 {
+            let _thread = scope.spawn(|| {
+                for _ in 0..1_000_u16 {
+                    assert_eq!(
+                        document.page_count().map_err(|error| error.code()),
+                        Ok(3),
+                        "page count"
+                    );
+                }
+            });
+        }
+    });
 }
 
 #[test]
