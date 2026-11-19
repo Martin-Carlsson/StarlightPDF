@@ -75,6 +75,11 @@ CASES = {
     "row license differs from the declared one": lambda r: edit(
         r / "README.md", f"| {NAME} | ", f"| {NAME} | MIT AND "
     ),
+    "tool link version differs from ci/setup.sh": lambda r: edit(
+        r / "README.md",
+        "crates.io/crates/cargo-deny/",
+        "crates.io/crates/cargo-deny/0.",
+    ),
 }
 
 
