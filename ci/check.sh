@@ -14,6 +14,18 @@ fi
 cd "$(dirname "$0")/.."
 
 case $1 in
+  core | python) tools='cargo-deny cargo-vet' ;;
+  advisories) tools=cargo-deny ;;
+  *) tools= ;;
+esac
+for t in $tools; do
+  command -v "$t" >/dev/null 2>&1 || [ -x "${CARGO_HOME:-$HOME/.cargo}/bin/$t" ] || {
+    echo "$t is missing: run sh ci/setup.sh" >&2
+    exit 1
+  }
+done
+
+case $1 in
   licenses | python)
     PY=
     for candidate in python3 python; do
@@ -46,7 +58,7 @@ case $1 in
     if covered tests/ci/test_licenses.py ci/licenses.sh ci/check.sh REUSE.toml || printf '%s\n' "$CHANGED" | grep -q '^LICENSES/'; then
       "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_licenses.py
     fi
-    if covered tests/ci/test_dependencies.py ci/dependencies.sh ci/check.sh README.md Cargo.lock .github/workflows/ci.yml; then
+    if covered tests/ci/test_dependencies.py ci/dependencies.sh ci/check.sh README.md Cargo.lock ci/setup.sh; then
       "$PY" -W error -X dev -bb -m unittest discover -s tests/ci -p test_dependencies.py
     fi
     if covered tests/ci/test_workflows.py ci/workflows.sh ci/check.sh; then
@@ -94,11 +106,15 @@ case $1 in
         exit 1
         ;;
     esac
-    archive=ruff-$target.tar.gz
-    curl -fsSL -o "$tmp/$archive" "https://github.com/astral-sh/ruff/releases/download/0.17.5/$archive"
-    printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
-    tar -xzf "$tmp/$archive" -C "$tmp"
-    ruff=$tmp/ruff-$target/ruff
+    version=0.17.5
+    ruff=target/ruff-$version-$target/ruff
+    if [ ! -x "$ruff" ]; then
+      archive=ruff-$target.tar.gz
+      curl -fsSL -o "$tmp/$archive" "https://github.com/astral-sh/ruff/releases/download/$version/$archive"
+      printf '%s  %s\n' "$sum" "$tmp/$archive" | shasum -a 256 -c -
+      mkdir -p "$(dirname "$ruff")"
+      tar -xzf "$tmp/$archive" -C "$(dirname "$ruff")" --strip-components=1
+    fi
     "$ruff" check --no-cache --config ruff.toml $files
     "$ruff" format --no-cache --config ruff.toml --check $files
     "$ruff" check --no-cache --config ruff.toml --stdin-filename ci/licenses.py - <"$py"
