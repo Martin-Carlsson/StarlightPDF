@@ -20,4 +20,4 @@ jobs:
       NUMBER: ${{ github.event.issue.number }}
     steps:
       - name: Remove the label
-        run: gh issue edit "$NUMBER" --remove-label building
+        run: gh issue edit "${NUMBER}" --remove-label building

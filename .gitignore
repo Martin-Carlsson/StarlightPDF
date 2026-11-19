@@ -3,3 +3,4 @@
 .claude/build/
 /target
 __pycache__/
+/fuzz/artifacts

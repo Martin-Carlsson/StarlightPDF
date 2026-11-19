@@ -1,0 +1,27 @@
+[package]
+name = "starlightpdf-fuzz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13" # libFuzzer runtime: the standard coverage-guided fuzzer for Rust; large to write here.
+starlightpdf = { path = "../core" }
+
+[[bin]]
+name = "header-version"
+path = "fuzz_targets/header_version.rs"
+test = false
+
+[[bin]]
+name = "page-count"
+path = "fuzz_targets/page_count.rs"
+test = false
+
+[lints]
+workspace = true
