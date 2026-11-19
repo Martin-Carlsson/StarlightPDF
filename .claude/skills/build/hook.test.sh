@@ -1040,5 +1040,131 @@ good=1
 check "check: passes when main shares no file or is merged" 0 'pass true'
 expect -n "check: passes when main shares no file or is merged" test "$good" -eq 1
 
+# Unneeded: lines the branch adds that the tests pass without.
+u=$tmp/u
+# unneeded_base: pr_base with no build state, and an empty scratch dir u outside the repository.
+unneeded_base() {
+  pr_base
+  rm -f "$state"
+  rm -rf "$u"
+  mkdir "$u"
+}
+# unneeded CMD: run unneeded with test command CMD; stdout in out; sets code.
+unneeded() {
+  code=0
+  sh "$hook" unneeded "$1" </dev/null >"$tmp/out" 2>"$tmp/err" || code=$?
+}
+# printed WANT_PRINTF: good=0 unless stdout holds exactly those lines, in any order.
+printed() {
+  printf %b "$1" >"$tmp/want"
+  LC_ALL=C sort "$tmp/out" | cmp -s "$tmp/want" - || good=0
+}
+# worktree: refs, HEAD, index, status, every path and its content and execute bit.
+worktree() {
+  git -C "$proj" for-each-ref
+  git -C "$proj" symbolic-ref HEAD
+  git -C "$proj" ls-files -s
+  git -C "$proj" status --porcelain -uall
+  (
+    cd "$proj"
+    find . -path ./.git -prune -o -print | LC_ALL=C sort
+    find . -path ./.git -prune -o -type f -exec cksum {} + | LC_ALL=C sort
+    find . -path ./.git -prune -o -type f -perm -100 -print | LC_ALL=C sort
+  )
+}
+
+# Committed and uncommitted lines count; untracked files do not.
+unneeded_base
+printf 'keep1\nextra1\n' >"$proj/lib.txt"
+commit lib
+printf 'keep2\nextra2\n' >>"$proj/lib.txt"
+echo extra >"$proj/new.txt"
+unneeded 'grep -qx keep1 lib.txt && grep -qx keep2 lib.txt'
+good=1
+[ "$code" -ne 0 ] || good=0
+printed 'lib.txt:2: extra1\nlib.txt:4: extra2\n'
+expect -n "unneeded prints each line the tests pass without and fails" test "$good" -eq 1
+
+unneeded_base
+printf 'keep1\nkeep2\n' >"$proj/lib.txt"
+commit lib
+: >"$u/runs"
+unneeded "echo >>\"$u/runs\"; grep -qx keep1 lib.txt && grep -qx keep2 lib.txt"
+good=1
+[ "$code" -eq 0 ] || good=0
+[ ! -s "$tmp/out" ] || good=0
+[ "$(wc -l <"$u/runs")" -ge 2 ] || good=0
+expect -n "unneeded passes when every line is needed" test "$good" -eq 1
+
+# Every added line is unneeded; only the code ones outside test files are tried.
+unneeded_base
+printf 'keep\n\n \t\n#c\n  # c\n\t// c\nv=1 # set\n' >"$proj/lib.txt"
+mkdir -p "$proj/src" "$proj/contests"
+echo x >"$proj/src/test_x.py"
+echo x >"$proj/src/a.test.js"
+echo x >>"$proj/core/tests/a.rs"
+echo x >>"$proj/tests/b.txt"
+echo x >>"$proj/README.md"
+echo x >"$proj/contests/c.txt"
+commit skip
+unneeded 'grep -qx keep lib.txt'
+good=1
+[ "$code" -ne 0 ] || good=0
+printed 'contests/c.txt:1: x\nlib.txt:7: v=1 # set\n'
+expect -n "unneeded skips blank, comment, test and Markdown lines" test "$good" -eq 1
+
+# An executable file, staged and unstaged edits to one file, and an untracked file.
+unneeded_base
+printf 'keep\n' >"$proj/lib.txt"
+printf 'a\n' >"$proj/run.sh"
+chmod +x "$proj/run.sh"
+commit lib
+echo b >>"$proj/run.sh"
+echo s >"$proj/staged.txt"
+git -C "$proj" add staged.txt
+echo t >>"$proj/staged.txt"
+echo u >"$proj/u.txt"
+worktree >"$tmp/before"
+unneeded 'grep -qx keep lib.txt'
+good=1
+[ "$code" -ne 0 ] || good=0
+grep -qxF 'run.sh:2: b' "$tmp/out" || good=0
+worktree | cmp -s "$tmp/before" - || good=0
+expect -n "unneeded restores the tree" test "$good" -eq 1
+
+# The test command blocks once extra is removed; a watcher then signals the hook,
+# and kills it after 10 seconds. The hook runs in the foreground so INT is not ignored.
+unneeded_base
+printf 'keep\nextra\n' >"$proj/lib.txt"
+commit lib
+worktree >"$tmp/before"
+good=1
+for sig in INT TERM; do
+  rm -f "$u"/*
+  (
+    await eval 'test -s "$u/pid" || test -e "$u/ended"' || true
+    if [ -s "$u/pid" ]; then kill -s "$sig" "$(cat "$u/hook")" || true; fi
+    await eval '! kill -0 "$(cat "$u/hook")"' || kill -9 "$(cat "$u/hook")" || true
+  ) >/dev/null 2>&1 &
+  watcher=$!
+  code=0
+  sh -c 'echo $$ >"$1"; exec sh "$2" unneeded "$3"' sh "$u/hook" "$hook" \
+    "if ! grep -qx extra lib.txt; then echo \$\$ >\"$u/pid\"; until [ -e \"$u/go\" ]; do sleep 0.1; done; fi" \
+    </dev/null >/dev/null 2>&1 || code=$?
+  : >"$u/ended"
+  wait "$watcher" || true
+  [ "$code" -ne 0 ] || good=0
+  if [ -s "$u/pid" ]; then
+    child=$(cat "$u/pid")
+    await eval "! kill -0 $child 2>/dev/null" || good=0
+    : >"$u/go"
+    await eval "! kill -0 $child 2>/dev/null" || true
+  else
+    good=0
+  fi
+  worktree | cmp -s "$tmp/before" - || good=0
+done
+expect -n "unneeded restores the tree when interrupted" test "$good" -eq 1
+
 [ "$failed" -eq 0 ] && echo PASS
 exit "$failed"
