@@ -21,7 +21,7 @@ create_exception!(
     starlightpdf,
     PdfError,
     PyException,
-    "Every failure; `code` and `number` give the error code."
+    "Every failure; carries `code`, `number`, `message`, `operation`, `offset`, `object_number` and `io_cause`, `None` when unknown."
 );
 
 /// A caller's `bytes`.
@@ -104,14 +104,23 @@ fn header_version(data: &[u8]) -> PyResult<(u8, u8)> {
         .map_err(|error| to_py(&error))
 }
 
-/// A `PdfError` carrying `error`'s code name and number.
+/// A `PdfError` carrying `error`'s details, its operation spelled as in Python.
 fn to_py(error: &starlightpdf::PdfError) -> PyErr {
+    let operation = error.operation().replace("::", ".");
     Python::attach(|py| {
-        let raised = PdfError::new_err(error.to_string());
+        let raised = PdfError::new_err(format!("{operation}: {}", error.message()));
         let value = raised.value(py);
+        let io_cause = error
+            .io_cause()
+            .map(|kind| PyErr::from(io::Error::from(kind)).into_value(py));
         value
             .setattr("code", error.code().name())
             .and_then(|()| value.setattr("number", error.code().number()))
+            .and_then(|()| value.setattr("message", error.message()))
+            .and_then(|()| value.setattr("operation", operation))
+            .and_then(|()| value.setattr("offset", error.offset()))
+            .and_then(|()| value.setattr("object_number", error.object_number()))
+            .and_then(|()| value.setattr("io_cause", io_cause))
             .map_or_else(|failure| failure, |()| raised)
     })
 }
