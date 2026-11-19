@@ -156,13 +156,14 @@ esac
 if [ "$1" = core ]; then
   sh ci/lints.sh
   sh ci/deps.sh
-  cargo fmt --check -p starlightpdf
-  cargo clippy --all-targets --locked -p starlightpdf
-  cargo test --locked -p starlightpdf
-  RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked -p starlightpdf
+  cargo fmt --check -p starlightpdf -p starlightpdf-memory
+  cargo clippy --all-targets --locked -p starlightpdf -p starlightpdf-memory
+  cargo test --locked -p starlightpdf -p starlightpdf-memory
+  RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked -p starlightpdf -p starlightpdf-memory
   exit 0
 fi
 
+sh ci/lints.sh
 sh ci/deps.sh
 cargo fmt --check -p starlightpdf-python
 cargo clippy --all-targets --locked -p starlightpdf-python

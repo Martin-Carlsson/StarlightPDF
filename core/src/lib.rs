@@ -129,6 +129,8 @@
 //!
 //! A date is ISO 8601 text, such as `2026-11-17T10:15:00Z`; empty means none.
 
+#![forbid(unsafe_code)]
+
 extern crate alloc;
 
 pub mod analysis;

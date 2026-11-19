@@ -1,0 +1,20 @@
+[package]
+name = "starlightpdf-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+test = false
+
+[dev-dependencies]
+starlightpdf = { path = "../../core" }
+
+[lints]
+workspace = true
