@@ -11,7 +11,32 @@ use crate::{ErrorCode, PdfError};
 const CHUNK: usize = 512;
 
 /// The dictionary keys the library reads; others are not kept.
-const KEYS: [&[u8]; 5] = [b"Count", b"Pages", b"Prev", b"Root", b"Type"];
+///
+/// [`PARMS`] are kept only inside `DecodeParms`, the others only in the outermost dictionary.
+const KEYS: [&[u8]; 19] = [
+    b"BitsPerComponent",
+    b"Colors",
+    b"Columns",
+    b"Count",
+    b"DecodeParms",
+    b"Encrypt",
+    b"Filter",
+    b"First",
+    b"Index",
+    b"Length",
+    b"N",
+    b"Pages",
+    b"Predictor",
+    b"Prev",
+    b"Root",
+    b"Size",
+    b"Type",
+    b"W",
+    b"XRefStm",
+];
+
+/// The keys of [`KEYS`] a `DecodeParms` dictionary holds (ISO 32000-2:2020, 7.4.4.4).
+const PARMS: [&[u8]; 4] = [b"BitsPerComponent", b"Colors", b"Columns", b"Predictor"];
 
 /// Bytes kept of a name; longer names keep one more, so match no key.
 const NAME_LIMIT: usize = 127;
@@ -19,14 +44,14 @@ const NAME_LIMIT: usize = 127;
 /// Bytes of a number or keyword; longer ones fail with [`ErrorCode::LimitExceeded`].
 const RUN_LIMIT: usize = 255;
 
-/// An outermost dictionary's values of [`KEYS`]; of duplicates, the last.
+/// A dictionary's values of [`KEYS`], the outermost's or a `DecodeParms`'s; of duplicates, the last.
 #[derive(Default, Eq, PartialEq)]
 pub(crate) struct Dictionary(Box<[Option<Object>; KEYS.len()]>);
 
-/// A container being read; nothing in it is kept but an outermost dictionary's [`KEYS`].
+/// A container being read; of its contents only [`KEYS`] values are kept.
 enum Frame {
-    /// An array.
-    Array,
+    /// An array, from the offset of its `[`.
+    Array(u64),
     /// A dictionary awaiting a key.
     Dictionary,
     /// A dictionary awaiting the value of a key; its [`KEYS`] index when kept.
@@ -44,6 +69,8 @@ pub(crate) enum Keyword {
     Other,
     /// `R`.
     Reference,
+    /// `stream`.
+    Stream,
     /// `trailer`.
     Trailer,
 }
@@ -51,26 +78,47 @@ pub(crate) enum Keyword {
 /// An object, holding only what the library reads (ISO 32000-2:2020, 7.3).
 #[derive(Eq, PartialEq)]
 pub(crate) enum Object {
+    /// An outermost dictionary's array, from the offset of its `[`; read it again from there.
+    Array(u64),
     /// A dictionary.
     Dictionary(Dictionary),
     /// An integer.
     Integer(i64),
     /// A name, `#` escapes decoded, at most [`NAME_LIMIT`] bytes and one.
     Name(Vec<u8>),
-    /// An array, boolean, null, real, string or nested dictionary.
+    /// A boolean, null, real, string, nested array or nested dictionary.
     Other,
     /// An indirect reference.
     Reference(ObjectId),
 }
 
-/// Reads tokens and objects from a source through a small window.
-pub(crate) struct Reader<'source> {
+/// Bytes at an offset.
+pub(crate) trait Input {
+    /// Fills `buffer` from `offset`, stopping early at the end; returns the count read.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the bytes' source fails with; `operation` names the operation.
+    fn fill(
+        &mut self,
+        offset: u64,
+        buffer: &mut [u8],
+        operation: &'static str,
+    ) -> Result<usize, PdfError>;
+}
+
+/// Reads tokens and objects from bytes through a small window.
+pub(crate) struct Reader<I> {
+    /// Whether a token looked at ahead was malformed.
+    broken: bool,
+    /// The bytes.
+    input: I,
     /// The operation errors name.
     operation: &'static str,
     /// The offset of the next byte.
     position: u64,
-    /// The source.
-    source: &'source Source,
+    /// Tokens looked at ahead and not used, the next last.
+    pushed: Vec<Token>,
     /// The offset of `window`.
     start: u64,
     /// Bytes read at `start`.
@@ -109,6 +157,15 @@ impl Dictionary {
 }
 
 impl Object {
+    /// The offset of the array's `[`, when this is an array.
+    pub(crate) const fn array(&self) -> Option<u64> {
+        if let Self::Array(start) = *self {
+            Some(start)
+        } else {
+            None
+        }
+    }
+
     /// The dictionary, when this is one.
     pub(crate) fn dictionary(self) -> Option<Dictionary> {
         if let Self::Dictionary(dictionary) = self {
@@ -127,6 +184,16 @@ impl Object {
         }
     }
 
+    /// Whether this is the name `name`.
+    pub(crate) fn is_name(&self, name: &[u8]) -> bool {
+        matches!(self, Self::Name(found) if found.as_slice() == name)
+    }
+
+    /// Whether this is a name.
+    pub(crate) const fn is_named(&self) -> bool {
+        matches!(*self, Self::Name(_))
+    }
+
     /// The reference, when this is one.
     pub(crate) const fn reference(&self) -> Option<ObjectId> {
         if let Self::Reference(id) = *self {
@@ -137,14 +204,31 @@ impl Object {
     }
 }
 
-impl<'source> Reader<'source> {
+impl Input for &Source {
+    fn fill(
+        &mut self,
+        offset: u64,
+        buffer: &mut [u8],
+        operation: &'static str,
+    ) -> Result<usize, PdfError> {
+        self.read(offset, buffer, operation)
+    }
+}
+
+impl<I> Reader<I>
+where
+    I: Input,
+{
     /// `number` as an integer, or the start of a reference `number generation R`
     /// (ISO 32000-2:2020, 7.3.10).
     fn after_integer(&mut self, number: i64) -> Result<Object, PdfError> {
-        let mark = self.position;
-        if let Some(Token::Integer(generation)) = self.lookahead()?
-            && self.lookahead()? == Some(Token::Keyword(Keyword::Reference))
-        {
+        let first = self.lookahead()?;
+        let Some(Token::Integer(generation)) = first else {
+            self.pushed.extend(first);
+            return Ok(Object::Integer(number));
+        };
+        let second = self.lookahead()?;
+        if second == Some(Token::Keyword(Keyword::Reference)) {
             return u32::try_from(number)
                 .ok()
                 .zip(u16::try_from(generation).ok())
@@ -156,7 +240,8 @@ impl<'source> Reader<'source> {
                 })
                 .ok_or_else(|| self.malformed());
         }
-        self.position = mark;
+        self.pushed.extend(second);
+        self.pushed.push(Token::Integer(generation));
         Ok(Object::Integer(number))
     }
 
@@ -220,11 +305,14 @@ impl<'source> Reader<'source> {
         }
     }
 
-    /// The next token, or `None` where it is malformed.
+    /// The next token, or `None` where it is malformed; then every later token is malformed.
     fn lookahead(&mut self) -> Result<Option<Token>, PdfError> {
         match self.token() {
             Ok(token) => Ok(Some(token)),
-            Err(error) if error.code() == ErrorCode::Malformed => Ok(None),
+            Err(error) if error.code() == ErrorCode::Malformed => {
+                self.broken = true;
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }
@@ -247,16 +335,14 @@ impl<'source> Reader<'source> {
         Ok(Token::Name(name))
     }
 
-    /// A reader of `source` at `position`, failing as `operation`.
-    pub(crate) const fn new(
-        source: &'source Source,
-        position: u64,
-        operation: &'static str,
-    ) -> Self {
+    /// A reader of `input` at `position`, failing as `operation`.
+    pub(crate) const fn new(input: I, position: u64, operation: &'static str) -> Self {
         Self {
+            broken: false,
+            input,
             operation,
             position,
-            source,
+            pushed: Vec::new(),
             start: 0,
             window: Vec::new(),
         }
@@ -274,14 +360,14 @@ impl<'source> Reader<'source> {
     pub(crate) fn object(&mut self, depth_limit: u32) -> Result<Object, PdfError> {
         let limit = usize::try_from(depth_limit).unwrap_or(usize::MAX);
         let mut stack = Vec::new();
-        let mut outermost = Dictionary::default();
+        let mut outermost = None;
         loop {
             let value = match self.token()? {
                 Token::ArrayStart | Token::DictionaryStart if stack.len() >= limit => {
                     return Err(PdfError::new(ErrorCode::LimitExceeded, self.operation));
                 }
                 Token::ArrayStart => {
-                    stack.push(Frame::Array);
+                    stack.push(Frame::Array(self.position.saturating_sub(1)));
                     continue;
                 }
                 Token::DictionaryStart => {
@@ -289,29 +375,42 @@ impl<'source> Reader<'source> {
                     continue;
                 }
                 Token::ArrayEnd => match stack.pop() {
-                    Some(Frame::Array) => Object::Other,
+                    Some(Frame::Array(start)) if stack.len() == 1 => Object::Array(start),
+                    Some(Frame::Array(_)) => Object::Other,
                     Some(Frame::Dictionary | Frame::Key(_)) | None => {
                         return Err(self.malformed());
                     }
                 },
                 Token::DictionaryEnd => match stack.pop() {
                     Some(Frame::Dictionary) if stack.is_empty() => {
-                        Object::Dictionary(mem::take(&mut outermost))
+                        Object::Dictionary(mem::take(&mut outermost).unwrap_or_default())
                     }
                     Some(Frame::Dictionary) => Object::Other,
-                    Some(Frame::Array | Frame::Key(_)) | None => return Err(self.malformed()),
+                    Some(Frame::Array(_) | Frame::Key(_)) | None => return Err(self.malformed()),
                 },
                 Token::Integer(integer) => self.after_integer(integer)?,
                 Token::Keyword(Keyword::Constant) | Token::Other => Object::Other,
                 Token::Keyword(
-                    Keyword::Obj | Keyword::Other | Keyword::Reference | Keyword::Trailer,
+                    Keyword::Obj
+                    | Keyword::Other
+                    | Keyword::Reference
+                    | Keyword::Stream
+                    | Keyword::Trailer,
                 ) => return Err(self.malformed()),
                 Token::Name(name) => match stack.pop() {
                     Some(Frame::Dictionary) => {
-                        let slot = KEYS
-                            .iter()
-                            .position(|key| *key == name)
-                            .filter(|_| stack.is_empty());
+                        let slot = KEYS.iter().position(|key| *key == name).filter(|_| {
+                            let parm = PARMS.contains(&name.as_slice());
+                            let own = stack.len() == 1
+                                || stack.len() == 2
+                                    && matches!(stack.get(1), Some(Frame::Array(_)));
+                            let in_parms = own
+                                && stack.first().is_some_and(|frame| {
+                                    matches!(*frame, Frame::Key(Some(slot))
+                                        if KEYS.get(slot) == Some(&b"DecodeParms".as_slice()))
+                                });
+                            if parm { in_parms } else { stack.is_empty() }
+                        });
                         stack.push(Frame::Key(slot));
                         continue;
                     }
@@ -324,9 +423,14 @@ impl<'source> Reader<'source> {
             };
             match stack.pop() {
                 None => return Ok(value),
-                Some(Frame::Array) => stack.push(Frame::Array),
+                Some(Frame::Array(start)) => stack.push(Frame::Array(start)),
                 Some(Frame::Key(slot)) => {
-                    if let Some(kept) = slot.and_then(|index| outermost.0.get_mut(index)) {
+                    if let Some(kept) = slot.and_then(|index| {
+                        outermost
+                            .get_or_insert_with(Dictionary::default)
+                            .0
+                            .get_mut(index)
+                    }) {
                         *kept = Some(value);
                     }
                     stack.push(Frame::Dictionary);
@@ -348,8 +452,8 @@ impl<'source> Reader<'source> {
         }
         self.window.resize(CHUNK, 0);
         let count = self
-            .source
-            .read(self.position, &mut self.window, self.operation)?;
+            .input
+            .fill(self.position, &mut self.window, self.operation)?;
         self.window.truncate(count);
         self.start = self.position;
         Ok(self.window.first().copied())
@@ -379,6 +483,7 @@ impl<'source> Reader<'source> {
             b"R" => Ok(Token::Keyword(Keyword::Reference)),
             b"false" | b"null" | b"true" => Ok(Token::Keyword(Keyword::Constant)),
             b"obj" => Ok(Token::Keyword(Keyword::Obj)),
+            b"stream" => Ok(Token::Keyword(Keyword::Stream)),
             b"trailer" => Ok(Token::Keyword(Keyword::Trailer)),
             _ if !digits
                 .iter()
@@ -431,8 +536,30 @@ impl<'source> Reader<'source> {
         Ok(())
     }
 
+    /// The start of a stream's data: `stream` and then LF or CR LF, as the next bytes
+    /// (ISO 32000-2:2020, 7.3.8.1); anything else is [`ErrorCode::Malformed`].
+    pub(crate) fn stream_start(&mut self) -> Result<u64, PdfError> {
+        let line_end = self.token()? == Token::Keyword(Keyword::Stream)
+            && match self.next_byte()? {
+                Some(b'\n') => true,
+                Some(b'\r') => self.next_byte()? == Some(b'\n'),
+                Some(_) | None => false,
+            };
+        if line_end {
+            Ok(self.position)
+        } else {
+            Err(self.malformed())
+        }
+    }
+
     /// The next token; the end of the source is [`ErrorCode::Malformed`].
     pub(crate) fn token(&mut self) -> Result<Token, PdfError> {
+        if self.broken {
+            return Err(self.malformed());
+        }
+        if let Some(token) = self.pushed.pop() {
+            return Ok(token);
+        }
         self.skip_space()?;
         let byte = self.next_byte()?.ok_or_else(|| self.malformed())?;
         match byte {

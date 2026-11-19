@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use core::ops::Range;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
@@ -17,6 +18,9 @@ const CATALOG: u64 = 500_000;
 
 /// Bytes per cross-reference entry (ISO 32000-2:2020, 7.5.4).
 const ENTRY: u64 = 20;
+
+/// Bytes of the file of [`Streams`], 1 GiB.
+const GIB: u64 = 0x4000_0000;
 
 /// A valid header (ISO 32000-2:2020, 7.5.2).
 const HEADER: &[u8] = b"%PDF-2.0\n";
@@ -33,11 +37,18 @@ const OBJECTS: u64 = 1_000_000;
 /// Page objects, the root's only kids.
 const PAGES: u64 = 3;
 
+/// Bytes of the object stream's data (ISO 32000-2:2020, 7.5.7).
+const OBJECT_STREAM_DATA: usize = 4_096;
+
 /// Bytes per object; makes the file just over 1 GiB.
 const RECORD: u64 = 1054;
 
 /// Entries in the cross-reference table, object 0 included.
 const SIZE: u64 = OBJECTS + 1;
+
+/// Entries in the cross-reference stream: 683 of 6 bytes are about 4 KiB (ISO 32000-2:2020,
+/// 7.5.8.3).
+const STREAM_ENTRIES: u64 = 683;
 
 /// An error's code and I/O cause.
 type Failure = (ErrorCode, Option<ErrorKind>);
@@ -92,6 +103,167 @@ impl ReadAt for Generated {
             .and_then(|(start, xref)| start.checked_add(u64::try_from(tail(xref).len()).ok()?))
             .ok_or_else(overflow)
     }
+}
+
+/// A PDF of 1 GiB: an object stream of 4 KiB, a stream of `x` and a cross-reference stream of
+/// about 4 KiB, at the end; counts the bytes it serves.
+struct Streams {
+    /// Bytes of the middle stream's data.
+    bulk: u64,
+    /// The offsets of the object stream's data, where a read fails when `failing`.
+    data: Range<u64>,
+    /// Fails a read that touches the object stream's data with `ErrorKind::ConnectionReset`.
+    failing: bool,
+    /// The bytes before the bulk.
+    head: Vec<u8>,
+    /// Bytes served so far.
+    served: AtomicUsize,
+    /// The bytes after the bulk.
+    tail: Vec<u8>,
+}
+
+impl ReadAt for Streams {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
+        let end = u64::try_from(buffer.len())
+            .ok()
+            .and_then(|length| offset.checked_add(length))
+            .ok_or_else(overflow)?;
+        if self.failing && offset < self.data.end && end > self.data.start {
+            return Err(ErrorKind::ConnectionReset.into());
+        }
+        let mut filled: usize = 0;
+        for (to, at) in buffer.iter_mut().zip(offset..) {
+            let Some(byte) = self.byte(at) else { break };
+            *to = byte;
+            filled = filled.checked_add(1).ok_or_else(overflow)?;
+        }
+        let _previous = self.served.fetch_add(filled, Ordering::Relaxed);
+        Ok(filled)
+    }
+
+    fn size(&self) -> io::Result<u64> {
+        u64::try_from(self.head.len())
+            .ok()
+            .zip(u64::try_from(self.tail.len()).ok())
+            .and_then(|(head, tail)| head.checked_add(self.bulk)?.checked_add(tail))
+            .ok_or_else(overflow)
+    }
+}
+
+impl Streams {
+    /// The head, tail and object stream data offsets of a file with `bulk` bytes of `x`: the
+    /// header, the object stream, the bulk stream, then the cross-reference stream
+    /// (ISO 32000-2:2020, 7.5.7, 7.5.8).
+    fn assemble(bulk: u64) -> Option<(Vec<u8>, Vec<u8>, Range<u64>)> {
+        let page = "<< /Type /Page /Parent 4 0 R /MediaBox [0 0 612 792] /Resources << >> >>";
+        let texts = [
+            "<< /Type /Catalog /Pages 4 0 R >>",
+            "<< /Type /Pages /Kids [5 0 R 6 0 R 7 0 R] /Count 3 >>",
+            page,
+            page,
+            page,
+        ];
+        let mut body = String::new();
+        let mut pairs = Vec::new();
+        for (number, text) in (3_u64..).zip(texts) {
+            pairs.push(format!("{number} {}", body.len()));
+            body.push_str(text);
+            body.push('\n');
+        }
+        let header = format!("{} ", pairs.join(" "));
+        let mut data = format!("{header}{body}").into_bytes();
+        if data.len() > OBJECT_STREAM_DATA {
+            return None;
+        }
+        data.resize(OBJECT_STREAM_DATA, b' ');
+        let mut head = HEADER.to_vec();
+        head.extend(
+            format!(
+                "2 0 obj\n<< /Type /ObjStm /N 5 /First {} /Length {OBJECT_STREAM_DATA} >>\nstream\n",
+                header.len()
+            )
+            .into_bytes(),
+        );
+        let data_start = u64::try_from(head.len()).ok()?;
+        head.extend(data);
+        head.extend(b"\nendstream\nendobj\n");
+        let bulk_object = u64::try_from(head.len()).ok()?;
+        head.extend(format!("1 0 obj\n<< /Length {bulk} >>\nstream\n").into_bytes());
+        let end = b"\nendstream\nendobj\n";
+        let xref_at = u64::try_from(head.len())
+            .ok()?
+            .checked_add(bulk)?
+            .checked_add(u64::try_from(end.len()).ok()?)?;
+        let mut entries = Vec::new();
+        for number in 0..STREAM_ENTRIES {
+            let (kind, field, index) = if number == 1 {
+                (1, bulk_object, 0)
+            } else if number == 2 {
+                (1, u64::try_from(HEADER.len()).ok()?, 0)
+            } else if (3..=7).contains(&number) {
+                (2, 2, number.checked_sub(3)?)
+            } else if number == STREAM_ENTRIES.checked_sub(1)? {
+                (1, xref_at, 0)
+            } else {
+                (0, 0, 0)
+            };
+            entries.push(kind);
+            entries.extend(be(field, 4)?);
+            entries.extend(be(index, 1)?);
+        }
+        let mut tail = end.to_vec();
+        tail.extend(
+            format!(
+                "{} 0 obj\n<< /Type /XRef /Size {STREAM_ENTRIES} /W [1 4 1] /Root 3 0 R /Length {} >>\nstream\n",
+                STREAM_ENTRIES.checked_sub(1)?,
+                entries.len()
+            )
+            .into_bytes(),
+        );
+        tail.extend(entries);
+        tail.extend(format!("\nendstream\nendobj\nstartxref\n{xref_at}\n%%EOF\n").into_bytes());
+        let data_end = data_start.checked_add(u64::try_from(OBJECT_STREAM_DATA).ok()?)?;
+        Some((head, tail, data_start..data_end))
+    }
+
+    /// The byte at `offset`, `None` past the end.
+    fn byte(&self, offset: u64) -> Option<u8> {
+        let head = u64::try_from(self.head.len()).ok()?;
+        let Some(in_bulk) = offset.checked_sub(head) else {
+            return self.head.get(usize::try_from(offset).ok()?).copied();
+        };
+        match in_bulk.checked_sub(self.bulk) {
+            Some(in_tail) => self.tail.get(usize::try_from(in_tail).ok()?).copied(),
+            None => Some(b'x'),
+        }
+    }
+
+    /// The file; fails reads of the object stream's data when `failing`.
+    fn new(failing: bool) -> Option<Self> {
+        let (first_head, first_tail, _) = Self::assemble(GIB)?;
+        let used = u64::try_from(first_head.len().checked_add(first_tail.len())?).ok()?;
+        let bulk = GIB.checked_sub(used)?;
+        let (head, tail, data) = Self::assemble(bulk)?;
+        Some(Self {
+            bulk,
+            data,
+            failing,
+            head,
+            served: AtomicUsize::new(0),
+            tail,
+        })
+    }
+}
+
+/// `value` as `width` big-endian bytes (ISO 32000-2:2020, 7.5.8.3).
+fn be(value: u64, width: u32) -> Option<Vec<u8>> {
+    (0..width)
+        .rev()
+        .map(|index| {
+            let shift = index.checked_mul(8)?;
+            u8::try_from(value.checked_shr(shift)?.checked_rem(256)?).ok()
+        })
+        .collect()
 }
 
 /// Object `number`, `RECORD` bytes: the catalog, the page tree root, its pages or `null`,
@@ -195,8 +367,11 @@ fn segment(offset: u64) -> Option<(u64, Vec<u8>)> {
 }
 
 /// Opens `generated` without a policy.
-fn open(generated: &Arc<Generated>) -> Result<Document, Failure> {
-    let read_at: Arc<dyn ReadAt> = Arc::<Generated>::clone(generated);
+fn open<T>(generated: &Arc<T>) -> Result<Document, Failure>
+where
+    T: ReadAt + 'static,
+{
+    let read_at: Arc<dyn ReadAt> = Arc::<T>::clone(generated);
     Source::from_read_at(&read_at, &ReadAtSourceOptions::default())
         .and_then(|source| Document::open(&source, None, &OpenOptions::default()))
         .map_err(|error: PdfError| (error.code(), error.io_cause()))
@@ -260,6 +435,36 @@ fn page_count_fails_with_the_io_cause_of_a_failed_read() {
     assert_eq!(
         counted,
         Ok(Err((ErrorCode::Io, Some(ErrorKind::TimedOut)))),
+        "page count"
+    );
+}
+
+#[test]
+fn page_count_of_a_1_gib_stream_file_serves_at_most_64_kib() {
+    let made = Streams::new(false).map(Arc::new);
+    assert_eq!(made.as_ref().map(|file| file.size().ok()), Some(Some(GIB)));
+    let Some(source) = made else { return };
+    assert_eq!(
+        open(&source).map(|document| document
+            .page_count()
+            .map_err(|error| (error.code(), error.io_cause()))),
+        Ok(Ok(u32::try_from(PAGES).unwrap_or_default())),
+        "page count"
+    );
+    let served = source.served.load(Ordering::Relaxed);
+    assert!(served <= 0x1_0000, "served {served} bytes");
+}
+
+#[test]
+fn page_count_fails_with_the_io_cause_of_a_failed_read_in_stream_data() {
+    let made = Streams::new(true).map(Arc::new);
+    assert!(made.is_some(), "source");
+    let Some(source) = made else { return };
+    assert_eq!(
+        open(&source).and_then(|document| document
+            .page_count()
+            .map_err(|error| (error.code(), error.io_cause()))),
+        Err((ErrorCode::Io, Some(ErrorKind::ConnectionReset))),
         "page count"
     );
 }

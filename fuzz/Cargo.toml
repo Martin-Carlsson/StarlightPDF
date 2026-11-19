@@ -23,5 +23,10 @@ name = "page-count"
 path = "fuzz_targets/page_count.rs"
 test = false
 
+[[bin]]
+name = "xref-stream-flate"
+path = "fuzz_targets/xref_stream_flate.rs"
+test = false
+
 [lints]
 workspace = true
