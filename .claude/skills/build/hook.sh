@@ -236,6 +236,10 @@ if [ "$1" = merge ]; then
 fi
 
 if [ "$1" = unneeded ]; then
+  if [ $# -ne 2 ]; then
+    echo "build: usage: hook.sh unneeded 'CMD'" >&2
+    exit 2
+  fi
   tmp=$(mktemp -d)
   file=
   pid=
@@ -249,18 +253,21 @@ if [ "$1" = unneeded ]; then
     exit "$1"
   }
   trap 'rm -rf "$tmp"' EXIT
+  trap 'stop 129' HUP
   trap 'stop 130' INT
   trap 'stop 143' TERM
-  git diff -U0 --no-color --no-ext-diff --no-textconv --no-renames --src-prefix=a/ --dst-prefix=b/ \
-    "$(git merge-base HEAD origin/main)" | awk '
-    /^diff --git / { h = 1; next }
-    h && /^\+\+\+ b\// { f = substr($0, 7); next }
+  trap 'stop 141' PIPE
+  git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --merge-base origin/main >"$tmp/diff"
+  awk '
+    /^diff --git / { h = 1; f = ""; next }
+    h && /^\+\+\+ b\// { f = substr($0, 7); sub(/\t$/, "", f); next }
     /^@@ / { h = 0; split($3, a, ","); n = substr(a[1], 2); next }
     !h && /^\+/ {
       t = substr($0, 2)
-      if (t !~ /^[[:space:]]*(#|\/\/|$)/ && f !~ /(^|\/)(tests\/|test_[^\/]*$)|\.test\.[^\/]*$|\.md$/) print f "\t" n
+      sub(/^[[:space:]]+/, "", t)
+      if (t != "" && t !~ /^\/[\/*]/ && (t !~ /^#/ || t ~ /^#!?\[/) && f !~ /(^|\/)(tests\/|test_[^\/]*$)|\.test\.[^\/]*$|\.md$/) print f "\t" n
       n++
-    }' >"$tmp/lines"
+    }' "$tmp/diff" >"$tmp/lines"
   found=
   while IFS="$(printf '\t')" read -r f n; do
     if [ ! -f "$f" ] || [ -L "$f" ]; then continue; fi
@@ -277,8 +284,7 @@ if [ "$1" = unneeded ]; then
     cat "$tmp/b" >"$f"
     file=
   done <"$tmp/lines"
-  [ -z "$found" ]
-  exit
+  exit "${found:-0}"
 fi
 
 if [ "$1" = check ]; then
