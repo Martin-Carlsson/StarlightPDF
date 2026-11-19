@@ -5,7 +5,10 @@ set -eu
 
 mods=$(cd "$(dirname "$0")" && pwd)
 root=${CLAUDE_CODE_TMPDIR:-/tmp}/claude-$(id -u)/bundled-skills
-decl=$(ls -t "${root}"/*/*/plugin-authoring/types/claude-code.d.ts 2>/dev/null | head -n 1)
+decl=
+for f in "${root}"/*/*/plugin-authoring/types/claude-code.d.ts; do
+  if [ -e "${f}" ] && { [ -z "${decl}" ] || [ "${f}" -nt "${decl}" ]; }; then decl=${f}; fi
+done
 [ -n "${decl}" ] || {
   echo "typecheck.sh: no claude-code.d.ts in ${root}; load the plugin-authoring skill to write it" >&2
   exit 1

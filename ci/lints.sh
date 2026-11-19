@@ -4,12 +4,12 @@ set -eu
 cd "$(dirname "$0")/.."
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
-: > "$t/lints"
-: > "$t/groups"
+: > "${t}/lints"
+: > "${t}/groups"
 
 # Lint tables "name default" and group tables "group member"; names use `_`.
 for tool in rustc clippy-driver rustdoc; do
-  "$tool" -W help | tr -d '\r' | tr '-' '_' | awk -v l="$t/lints" -v g="$t/groups" '
+  "${tool}" -W help | tr -d '\r' | tr '-' '_' | awk -v l="${t}/lints" -v g="${t}/groups" '
     /^Lint checks/ { mode = "l"; next }
     /^Lint groups/ { mode = "g"; next }
     mode == "l" && $2 ~ /^(allow|warn|deny|forbid)$/ { print $1, $2 >> l }
@@ -17,20 +17,22 @@ for tool in rustc clippy-driver rustdoc; do
       for (i = 2; i <= NF; i++) { m = $i; sub(/,$/, "", m); print $1, m >> g }
     }'
 done
-grep -q '^unsafe_code ' "$t/lints" && grep -q '^clippy::unwrap_used ' "$t/lints" &&
-  grep -q '^rustdoc::bare_urls ' "$t/lints" && grep -q '^clippy::pedantic ' "$t/groups" ||
-  { echo "lints.sh: cannot parse the lint tables" >&2; exit 2; }
+if ! { grep -q '^unsafe_code ' "${t}/lints" && grep -q '^clippy::unwrap_used ' "${t}/lints" &&
+  grep -q '^rustdoc::bare_urls ' "${t}/lints" && grep -q '^clippy::pedantic ' "${t}/groups"; }; then
+  echo "lints.sh: cannot parse the lint tables" >&2
+  exit 2
+fi
 
 # Unstable lints cannot be named: the compiler reports them as unknown.
 {
   echo '#![warn(unknown_lints)]'
-  awk '{ print "#![warn(" $1 ")]" }' "$t/lints"
-} > "$t/probe.rs"
+  awk '{ print "#![warn(" $1 ")]" }' "${t}/lints"
+} > "${t}/probe.rs"
 {
-  clippy-driver --crate-type lib --emit=metadata --out-dir "$t" "$t/probe.rs" 2>&1 || true
-  rustdoc --out-dir "$t/doc" "$t/probe.rs" 2>&1 || true
-} | tr -d '\r' | sed -n 's/^warning.*unknown lint: `\(.*\)`$/\1/p' > "$t/unstable"
-grep -qx test_unstable_lint "$t/unstable" || { echo "lints.sh: cannot detect unstable lints" >&2; exit 2; }
+  clippy-driver --crate-type lib --emit=metadata --out-dir "${t}" "${t}/probe.rs" 2>&1 || true
+  rustdoc --out-dir "${t}/doc" "${t}/probe.rs" 2>&1 || true
+} | tr -d '\r' | sed -n "s/^warning.*unknown lint: \`\(.*\)\`\$/\1/p" > "${t}/unstable"
+grep -qx test_unstable_lint "${t}/unstable" || { echo "lints.sh: cannot detect unstable lints" >&2; exit 2; }
 
 # Lints set in the manifest: "name level reason"; reason is 1 when a `#` comment follows.
 awk '
@@ -42,11 +44,11 @@ awk '
     lvl = "?"
     if (match($0, /"(allow|warn|deny|forbid|expect)"/)) lvl = substr($0, RSTART + 1, RLENGTH - 2)
     print n, lvl, ($0 ~ /#[ \t]*[^ \t]/) ? 1 : 0
-  }' Cargo.toml > "$t/set"
+  }' Cargo.toml > "${t}/set"
 
 # A lint is covered when set to deny or forbid (a group covers its members), allowed with a reason,
 # denied by default, or warned by default while `warnings` is denied.
-awk -v lf="$t/lints" -v gf="$t/groups" -v uf="$t/unstable" -v sf="$t/set" '
+awk -v lf="${t}/lints" -v gf="${t}/groups" -v uf="${t}/unstable" -v sf="${t}/set" '
   FILENAME == lf { dflt[$1] = $2; next }
   FILENAME == gf { grp[$1] = 1; mem[$1] = mem[$1] " " $2; next }
   FILENAME == uf { unstable[$1] = 1; next }
@@ -64,9 +66,9 @@ awk -v lf="$t/lints" -v gf="$t/groups" -v uf="$t/unstable" -v sf="$t/set" '
       if (dflt[l] == "warn" && lvl["warnings"] == "deny") continue
       print "missing: " l " (" dflt[l] ")"
     }
-  }' "$t/lints" "$t/groups" "$t/unstable" "$t/set" | sort > "$t/problems"
+  }' "${t}/lints" "${t}/groups" "${t}/unstable" "${t}/set" | sort > "${t}/problems"
 
-if [ -s "$t/problems" ]; then
-  cat "$t/problems" >&2
+if [ -s "${t}/problems" ]; then
+  cat "${t}/problems" >&2
   exit 1
 fi
