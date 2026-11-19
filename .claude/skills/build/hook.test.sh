@@ -1176,6 +1176,13 @@ for sig in HUP INT PIPE TERM; do
   [ -s "${u}/pid" ] && ! xargs kill -0 <"${u}/pid" 2>/dev/null || good=0
   worktree >"${tmp}/after"
   cmp -s "${tmp}/before" "${tmp}/after" || good=0
+  # The hook's TERM to the test command answers with a second signal.
+  code=0
+  sh "${hook}" unneeded "if ! grep -qx extra lib.txt; then trap 'kill -s ${sig} \$PPID; exit 1' TERM; kill -s ${sig} \$PPID; sleep 5 & wait; fi; exit 1" \
+    </dev/null >/dev/null 2>&1 || code=$?
+  [ "${code}" -gt 128 ] || good=0
+  worktree >"${tmp}/after"
+  cmp -s "${tmp}/before" "${tmp}/after" || good=0
 done
 expect -n "unneeded restores the tree when interrupted" test "${good}" -eq 1
 

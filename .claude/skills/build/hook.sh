@@ -236,10 +236,10 @@ if [ "$1" = unneeded ]; then
   tmp=$(mktemp -d)
   file=
   pid=
-  # On exit: end the test command and restore the file under test.
-  trap 'if [ -n "${pid}" ]; then kill "${pid}" 2>/dev/null || true; wait "${pid}" || true; fi
-    if [ -n "${file}" ]; then cat "${tmp}/b" >"${file}"; fi
-    rm -rf "${tmp}"' EXIT
+  # On exit: restore the file under test, then end the test command; a second signal may cut the wait.
+  trap 'if [ -n "${file}" ]; then cat "${tmp}/b" >"${file}"; fi
+    rm -rf "${tmp}"
+    if [ -n "${pid}" ]; then kill "${pid}" 2>/dev/null || true; wait "${pid}" || true; fi' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
