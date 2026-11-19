@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "bindings/python", "fuzz"]
+members = ["core", "bindings/python", "fuzz", "tests/memory"]
 resolver = "3"
 
 [workspace.package]
@@ -13,7 +13,7 @@ keywords = ["pdf"]
 categories = ["text-processing"]
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 warnings = { level = "deny", priority = -1 }
 rust_2018_idioms = { level = "deny", priority = -1 }
 rust_2018_compatibility = { level = "deny", priority = -1 }

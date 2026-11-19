@@ -187,6 +187,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "starlightpdf-memory"
+version = "0.1.0"
+dependencies = [
+ "starlightpdf",
+]
+
+[[package]]
 name = "starlightpdf-python"
 version = "0.1.0"
 dependencies = [
