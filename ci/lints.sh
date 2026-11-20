@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fails when a stable rustc, clippy or rustdoc lint is neither denied nor allowed with a reason, a
-# member does not inherit the workspace lints, the core or Python root does not forbid unsafe code,
+# member does not inherit the workspace lints, the core or a binding root does not forbid unsafe code,
 # or a file other than tests/memory/src/lib.rs names it except to forbid it or as the root deny.
 set -eu
 cd "$(dirname "$0")/.."
@@ -75,7 +75,7 @@ if [ -s "${t}/problems" ]; then
   exit 1
 fi
 
-for f in core/src/lib.rs bindings/python/src/lib.rs; do
+for f in core/src/lib.rs bindings/javascript/src/lib.rs bindings/python/src/lib.rs; do
   grep -qxF '#![forbid(unsafe_code)]' "${f}" || { echo "${f}: add #![forbid(unsafe_code)]" >&2; exit 1; }
 done
 hits=$(git grep -nE --untracked 'unsafe[_-]code' -- ':!ci/lints.sh' ':!tests/memory/src/lib.rs') || [ $? -eq 1 ]

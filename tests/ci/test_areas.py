@@ -35,17 +35,33 @@ class AreasTest(unittest.TestCase):
     def test_includes(self) -> None:
         """Each path selects at least its areas."""
         cases = {
-            "Cargo.lock": {"advisories", "core", "dependencies", "licenses", "python"},
+            "Cargo.lock": {
+                "advisories",
+                "core",
+                "dependencies",
+                "javascript",
+                "licenses",
+                "python",
+            },
             "README.md": {"dependencies", "licenses"},
             "Cargo.toml": {"dependencies", "licenses"},
             "core/Cargo.toml": {"dependencies", "licenses"},
             "bindings/python/Cargo.toml": {"dependencies", "licenses"},
             "ci/dependencies.sh": {"dependencies", "licenses"},
             "ci/workflows.sh": {"licenses", "workflows"},
-            "core/src/lib.rs": {"core", "fuzz", "python", "licenses"},
-            "tests/corpus/header/empty.pdf": {"core", "fuzz", "python", "licenses"},
+            "core/src/lib.rs": {"core", "fuzz", "javascript", "python", "licenses"},
+            "tests/corpus/header/empty.pdf": {
+                "core",
+                "fuzz",
+                "javascript",
+                "python",
+                "licenses",
+            },
+            "tests/conformance/open.tsv": {"core", "javascript", "python", "licenses"},
             "fuzz/fuzz_targets/page_count.rs": {"fuzz", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
+            "bindings/javascript/src/lib.rs": {"javascript", "licenses"},
+            "bindings/javascript/package.json": {"javascript", "licenses"},
             "ci/licenses.sh": {"licenses", "ruff", "shell"},
             "tests/ci/test_areas.py": {"licenses", "ruff"},
             "bindings/python/starlightpdf/__init__.pyi": {"licenses", "python", "ruff"},
@@ -72,9 +88,13 @@ class AreasTest(unittest.TestCase):
         """Prose selects only licenses."""
         self.assertEqual({"licenses"}, areas("GLOSSARY.md"))
 
-    def test_python_without_core(self) -> None:
-        """The binding alone skips core and fuzz."""
-        self.assertEqual(set(), {"core", "fuzz"} & areas("bindings/python/src/lib.rs"))
+    def test_binding_without_core(self) -> None:
+        """A binding alone skips core, fuzz and the other binding."""
+        for binding in ("javascript", "python"):
+            with self.subTest(binding=binding):
+                skipped = {"core", "fuzz", "javascript", "python"} - {binding}
+                path = f"bindings/{binding}/src/lib.rs"
+                self.assertEqual(set(), skipped & areas(path))
 
     def test_no_paths(self) -> None:
         """No paths select nothing."""

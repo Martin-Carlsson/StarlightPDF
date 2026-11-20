@@ -1,0 +1,12 @@
+{
+  "name": "starlightpdf",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": "./index.js",
+  "files": [
+    "*.js",
+    "index.d.ts",
+    "wasm/*.js",
+    "wasm/*.wasm"
+  ]
+}

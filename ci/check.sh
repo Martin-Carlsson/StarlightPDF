@@ -2,7 +2,7 @@
 # Runs every check of an area.
 set -eu
 
-areas='core python advisories licenses dependencies fuzz workflows hook mods ruff shell'
+areas='core python javascript advisories licenses dependencies fuzz workflows hook mods ruff shell'
 ok=
 for a in ${areas}; do
   case ${a} in
@@ -41,6 +41,7 @@ get_shellcheck() {
 
 case $1 in
   core | python) tools='cargo-deny cargo-vet' ;;
+  javascript) tools='cargo-deny cargo-vet wasm-bindgen' ;;
   advisories) tools=cargo-deny ;;
   fuzz) tools=cargo-fuzz ;;
   *) tools= ;;
@@ -223,6 +224,35 @@ if [ "$1" = core ]; then
   cargo clippy --all-targets --locked -p starlightpdf -p starlightpdf-memory
   cargo test --locked -p starlightpdf -p starlightpdf-memory
   RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked -p starlightpdf -p starlightpdf-memory
+  exit 0
+fi
+
+if [ "$1" = javascript ]; then
+  node -e 'if (parseInt(process.versions.node, 10) < 24) process.exit(1)' || {
+    echo 'Node.js 24 or newer not found' >&2
+    exit 1
+  }
+  sh ci/lints.sh
+  sh ci/deps.sh
+  # Prettier: the standard formatter; large to write here.
+  npx -y prettier@3.10.1 --check bindings/javascript
+  cargo fmt --check -p starlightpdf-javascript
+  cargo clippy --all-targets --locked --target wasm32-unknown-unknown -p starlightpdf-javascript
+  RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked --target wasm32-unknown-unknown -p starlightpdf-javascript
+  wasm=target/wasm32-unknown-unknown/release/starlightpdf_javascript.wasm
+  # So a build that writes no .wasm fails rather than ship a stale one.
+  rm -f "${wasm}"
+  cargo build --release --locked --target wasm32-unknown-unknown -p starlightpdf-javascript
+  out=target/javascript
+  rm -rf "${out}"
+  wasm-bindgen --target web --out-dir "${out}/package/wasm" "${wasm}"
+  cp bindings/javascript/package.json LICENSE "${out}/package"
+  # TypeScript (Apache-2.0): the standard type checker and compiler.
+  npx -y -p typescript@7.0.2 tsc -p bindings/javascript
+  npx -y -p typescript@7.0.2 tsc -p bindings/javascript/tests
+  version=$(cargo pkgid -p starlightpdf-javascript)
+  (cd "${out}/package" && npm pkg set "version=${version##*[#@]}" && npm pack --pack-destination ..)
+  node --test --test-reporter=tap bindings/javascript/tests/*.test.mts
   exit 0
 fi
 
