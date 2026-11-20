@@ -23,35 +23,55 @@ page_count_file	tests/corpus/page-count/catalog-nested-pages.pdf	1
 # 7.7.3.2: Count up to 4,294,967,295
 page_count_bytes	tests/corpus/page-count/count-u32-max.pdf	4294967295
 page_count_file	tests/corpus/page-count/count-u32-max.pdf	4294967295
-# 7.5.4, 7.5.5, 7.5.6, 7.7.2, 7.7.3.2: malformed
-page_count_bytes	tests/corpus/page-count/startxref-before-last-kib.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-before-last-kib.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-beyond-eof.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-beyond-eof.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-not-at-xref.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-not-at-xref.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-before-xref.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-before-xref.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/entry-before-object.pdf	Malformed
-page_count_file	tests/corpus/page-count/entry-before-object.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-at-object.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-at-object.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-truncated.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-truncated.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-count-past-i64.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-count-past-i64.pdf	Malformed
+# 7.5.4, 7.5.5, 7.5.6, 7.7.2, 7.7.3.2: malformed; open rebuilds a damaged cross-reference table, strict rejects it
+page_count_bytes	tests/corpus/page-count/startxref-before-last-kib.pdf	1
+page_count_file	tests/corpus/page-count/startxref-before-last-kib.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-before-last-kib.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-before-last-kib.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-beyond-eof.pdf	1
+page_count_file	tests/corpus/page-count/startxref-beyond-eof.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-beyond-eof.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-beyond-eof.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-not-at-xref.pdf	1
+page_count_file	tests/corpus/page-count/startxref-not-at-xref.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-not-at-xref.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-not-at-xref.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-before-xref.pdf	1
+page_count_file	tests/corpus/page-count/startxref-before-xref.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-before-xref.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-before-xref.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/entry-before-object.pdf	1
+page_count_file	tests/corpus/page-count/entry-before-object.pdf	1
+page_count_bytes	tests/corpus/page-count/entry-before-object.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/entry-before-object.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-at-object.pdf	1
+page_count_file	tests/corpus/page-count/startxref-at-object.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-at-object.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-at-object.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-truncated.pdf	1
+page_count_file	tests/corpus/page-count/xref-truncated.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-truncated.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-truncated.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-count-past-i64.pdf	1
+page_count_file	tests/corpus/page-count/xref-count-past-i64.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-count-past-i64.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-count-past-i64.pdf	strict	Malformed
 page_count_bytes	tests/corpus/page-count/trailer-no-root.pdf	Malformed
 page_count_file	tests/corpus/page-count/trailer-no-root.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/root-not-in-xref.pdf	Malformed
 page_count_file	tests/corpus/page-count/root-not-in-xref.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/root-free.pdf	Malformed
-page_count_file	tests/corpus/page-count/root-free.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/root-free.pdf	1
+page_count_file	tests/corpus/page-count/root-free.pdf	1
+page_count_bytes	tests/corpus/page-count/root-free.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/root-free.pdf	strict	Malformed
 page_count_bytes	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
 page_count_file	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/pages-not-in-xref.pdf	Malformed
 page_count_file	tests/corpus/page-count/pages-not-in-xref.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/pages-free.pdf	Malformed
-page_count_file	tests/corpus/page-count/pages-free.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/pages-free.pdf	1
+page_count_file	tests/corpus/page-count/pages-free.pdf	1
+page_count_bytes	tests/corpus/page-count/pages-free.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/pages-free.pdf	strict	Malformed
 page_count_bytes	tests/corpus/page-count/pages-not-dictionary.pdf	Malformed
 page_count_file	tests/corpus/page-count/pages-not-dictionary.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/object-number-mismatch.pdf	Malformed
@@ -64,14 +84,22 @@ page_count_bytes	tests/corpus/page-count/count-negative.pdf	Malformed
 page_count_file	tests/corpus/page-count/count-negative.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/count-over-u32.pdf	Malformed
 page_count_file	tests/corpus/page-count/count-over-u32.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/prev-loop.pdf	Malformed
-page_count_file	tests/corpus/page-count/prev-loop.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-2-pow-63.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-2-pow-63.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	Malformed
-page_count_file	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/prev-loop.pdf	1
+page_count_file	tests/corpus/page-count/prev-loop.pdf	1
+page_count_bytes	tests/corpus/page-count/prev-loop.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/prev-loop.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63.pdf	1
+page_count_file	tests/corpus/page-count/startxref-2-pow-63.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-63.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	1
+page_count_file	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-63-minus-1.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	1
+page_count_file	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	1
+page_count_bytes	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/startxref-2-pow-64-minus-1.pdf	strict	Malformed
 # 7.5.8 (cross-reference stream)
 page_count_bytes	tests/corpus/page-count/xref-stream.pdf	1
 page_count_file	tests/corpus/page-count/xref-stream.pdf	1
@@ -131,59 +159,109 @@ page_count_bytes	tests/corpus/page-count/xref-stream-crlf.pdf	1
 page_count_file	tests/corpus/page-count/xref-stream-crlf.pdf	1
 page_count_bytes	tests/corpus/page-count/object-stream-crlf.pdf	1
 page_count_file	tests/corpus/page-count/object-stream-crlf.pdf	1
-# 7.5.7, 7.5.8, 7.3.8: malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-no-size.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-no-size.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-no-w.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-no-w.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-w-two-fields.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-w-two-fields.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-w-four-fields.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-w-four-fields.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-w-negative.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-w-negative.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-w-real.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-w-real.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-w-second-0.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-w-second-0.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-index-odd.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-index-odd.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-index-negative.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-index-negative.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-truncated.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-truncated.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-root-type-0.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-root-type-0.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-root-type-3.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-root-type-3.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-0.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-pages-type-0.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-3.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-pages-type-3.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-length-missing.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-length-missing.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-length-negative.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-length-negative.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-length-past-end.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-length-past-end.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-stream-cr.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-stream-cr.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-predictor-3.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-predictor-3.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-png-filter-5.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-png-filter-5.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-length-missing.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-length-missing.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-length-negative.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-length-negative.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-length-past-end.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-length-past-end.pdf	Malformed
+# 7.5.7, 7.5.8, 7.3.8: malformed; open rebuilds a damaged cross-reference table or ignores a wrong Length, strict rejects it
+page_count_bytes	tests/corpus/page-count/xref-stream-no-size.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-no-size.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-no-size.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-no-size.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-no-w.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-no-w.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-no-w.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-no-w.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-w-two-fields.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-w-two-fields.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-w-two-fields.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-w-two-fields.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-w-four-fields.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-w-four-fields.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-w-four-fields.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-w-four-fields.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-w-negative.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-w-negative.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-w-negative.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-w-negative.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-w-real.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-w-real.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-w-real.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-w-real.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-w-second-0.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-w-second-0.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-w-second-0.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-w-second-0.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-index-odd.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-index-odd.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-index-odd.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-index-odd.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-index-negative.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-index-negative.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-index-negative.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-index-negative.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-truncated.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-truncated.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-truncated.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-truncated.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-root-type-0.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-root-type-0.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-root-type-0.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-root-type-0.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-root-type-3.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-root-type-3.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-root-type-3.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-root-type-3.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-0.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-pages-type-0.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-0.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-pages-type-0.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-3.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-pages-type-3.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-pages-type-3.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-pages-type-3.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-length-missing.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-length-missing.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-length-missing.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-length-missing.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-length-negative.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-length-negative.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-length-negative.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-length-negative.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-length-past-end.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-length-past-end.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-length-past-end.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-length-past-end.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-no-stream-keyword.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-stream-cr.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-stream-cr.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-stream-cr.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-stream-cr.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-predictor-3.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-predictor-3.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-predictor-3.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-predictor-3.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-png-filter-5.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-png-filter-5.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-png-filter-5.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-png-filter-5.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-length-missing.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-length-missing.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-length-missing.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-length-missing.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-length-negative.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-length-negative.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-length-negative.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-length-negative.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-length-past-end.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-length-past-end.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-length-past-end.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-length-past-end.pdf	strict	Malformed
 page_count_bytes	tests/corpus/page-count/object-stream-no-stream-keyword.pdf	Malformed
 page_count_file	tests/corpus/page-count/object-stream-no-stream-keyword.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-stream-cr.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-stream-cr.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-stream-cr.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-stream-cr.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-stream-cr.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-stream-cr.pdf	strict	Malformed
 page_count_bytes	tests/corpus/page-count/object-stream-predictor-3.pdf	Malformed
 page_count_file	tests/corpus/page-count/object-stream-predictor-3.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/object-stream-png-filter-5.pdf	Malformed
@@ -198,41 +276,55 @@ page_count_bytes	tests/corpus/page-count/object-stream-wrong-number.pdf	Malforme
 page_count_file	tests/corpus/page-count/object-stream-wrong-number.pdf	Malformed
 page_count_bytes	tests/corpus/page-count/object-stream-offset-outside.pdf	Malformed
 page_count_file	tests/corpus/page-count/object-stream-offset-outside.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-container-free.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-container-free.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-container-missing.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-container-missing.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-container-not-stream.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-container-not-stream.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-container-compressed.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-container-compressed.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	Malformed
-# 7.4.4.4, 7.4.4.3 (filters, predictors), 7.6 (encryption): unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-filter-lzw.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-filter-lzw.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-filter-chain.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-filter-chain.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-predictor-2.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-predictor-2.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-colors-3.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-colors-3.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-bits-16.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-bits-16.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/object-stream-filter-lzw.pdf	Unsupported
-page_count_file	tests/corpus/page-count/object-stream-filter-lzw.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/object-stream-filter-chain.pdf	Unsupported
-page_count_file	tests/corpus/page-count/object-stream-filter-chain.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/object-stream-predictor-2.pdf	Unsupported
-page_count_file	tests/corpus/page-count/object-stream-predictor-2.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/object-stream-colors-3.pdf	Unsupported
-page_count_file	tests/corpus/page-count/object-stream-colors-3.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/object-stream-bits-16.pdf	Unsupported
-page_count_file	tests/corpus/page-count/object-stream-bits-16.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/xref-stream-length-indirect.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-length-indirect.pdf	Unsupported
-page_count_bytes	tests/corpus/page-count/encrypt-object-stream.pdf	Unsupported
-page_count_file	tests/corpus/page-count/encrypt-object-stream.pdf	Unsupported
+page_count_bytes	tests/corpus/page-count/object-stream-container-free.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-container-free.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-container-free.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-container-free.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-container-missing.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-container-missing.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-container-missing.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-container-missing.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-container-not-stream.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-container-not-stream.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-container-not-stream.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-container-not-stream.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-container-compressed.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-container-compressed.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-container-compressed.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-container-compressed.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-length-in-object-stream.pdf	strict	Malformed
+# 7.4.4.3 and 7.4.4.4 (filter arrays, predictor 2, Colors, BitsPerComponent), 7.4.4.2 (LZWDecode over data that is not LZW), 7.5.8.2 (indirect Length), 7.6.4.4 (no password authenticates)
+page_count_bytes	tests/corpus/page-count/xref-stream-filter-lzw.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-filter-lzw.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-filter-lzw.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-filter-lzw.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-filter-chain.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-filter-chain.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-predictor-2.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-predictor-2.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-colors-3.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-colors-3.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-bits-16.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-bits-16.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-filter-lzw.pdf	Malformed
+page_count_file	tests/corpus/page-count/object-stream-filter-lzw.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/object-stream-filter-chain.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-filter-chain.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-predictor-2.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-predictor-2.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-colors-3.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-colors-3.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-bits-16.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-bits-16.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-length-indirect.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-length-indirect.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-length-indirect.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-length-indirect.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/encrypt-object-stream.pdf	InvalidPassword
+page_count_file	tests/corpus/page-count/encrypt-object-stream.pdf	InvalidPassword
 # 7.5.8.2 (W field width)
 page_count_bytes	tests/corpus/page-count/xref-stream-w-9.pdf	LimitExceeded
 page_count_file	tests/corpus/page-count/xref-stream-w-9.pdf	LimitExceeded
@@ -280,68 +372,120 @@ page_count_bytes	tests/corpus/page-count/flate-no-distance-code.pdf	1
 page_count_file	tests/corpus/page-count/flate-no-distance-code.pdf	1
 page_count_bytes	tests/corpus/page-count/flate-distance-32768.pdf	1
 page_count_file	tests/corpus/page-count/flate-distance-32768.pdf	1
-# RFC 1950, 2.2: malformed zlib header and Adler-32
-page_count_bytes	tests/corpus/page-count/flate-method-7.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-method-7.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-window-64-kib.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-window-64-kib.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-header-check.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-header-check.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-preset-dictionary.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-preset-dictionary.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-adler-32.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-adler-32.pdf	Malformed
-# RFC 1951, 3.2.3 to 3.2.7: malformed blocks
-page_count_bytes	tests/corpus/page-count/flate-block-type-3.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-block-type-3.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-stored-nlen.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-stored-nlen.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-oversubscribed.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-oversubscribed.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-incomplete.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-incomplete.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-incomplete-distance.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-incomplete-distance.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-incomplete-code-length.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-incomplete-code-length.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-no-end-of-block.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-no-end-of-block.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-repeat-first.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-repeat-first.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-repeat-past-last.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-repeat-past-last.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-literal-286.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-literal-286.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-literal-287.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-literal-287.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-distance-30.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-distance-30.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-distance-31.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-distance-31.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-distance-too-far.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-distance-too-far.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-truncated.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-truncated.pdf	Malformed
-# 7.5.8 (cross-reference stream dictionary), 7.5.6 (Prev): malformed
+# RFC 1950, 2.2: malformed zlib header and Adler-32 of a cross-reference stream; open rebuilds the table, strict rejects it
+page_count_bytes	tests/corpus/page-count/flate-method-7.pdf	1
+page_count_file	tests/corpus/page-count/flate-method-7.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-method-7.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-method-7.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-window-64-kib.pdf	1
+page_count_file	tests/corpus/page-count/flate-window-64-kib.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-window-64-kib.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-window-64-kib.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-header-check.pdf	1
+page_count_file	tests/corpus/page-count/flate-header-check.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-header-check.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-header-check.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-preset-dictionary.pdf	1
+page_count_file	tests/corpus/page-count/flate-preset-dictionary.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-preset-dictionary.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-preset-dictionary.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-adler-32.pdf	1
+page_count_file	tests/corpus/page-count/flate-adler-32.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-adler-32.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-adler-32.pdf	strict	Malformed
+# RFC 1951, 3.2.3 to 3.2.7: malformed blocks, likewise
+page_count_bytes	tests/corpus/page-count/flate-block-type-3.pdf	1
+page_count_file	tests/corpus/page-count/flate-block-type-3.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-block-type-3.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-block-type-3.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-stored-nlen.pdf	1
+page_count_file	tests/corpus/page-count/flate-stored-nlen.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-stored-nlen.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-stored-nlen.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed.pdf	1
+page_count_file	tests/corpus/page-count/flate-oversubscribed.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-oversubscribed.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-incomplete.pdf	1
+page_count_file	tests/corpus/page-count/flate-incomplete.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-incomplete.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-incomplete.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-incomplete-distance.pdf	1
+page_count_file	tests/corpus/page-count/flate-incomplete-distance.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-incomplete-distance.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-incomplete-distance.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	1
+page_count_file	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-oversubscribed-code-length.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-incomplete-code-length.pdf	1
+page_count_file	tests/corpus/page-count/flate-incomplete-code-length.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-incomplete-code-length.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-incomplete-code-length.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-no-end-of-block.pdf	1
+page_count_file	tests/corpus/page-count/flate-no-end-of-block.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-no-end-of-block.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-no-end-of-block.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-repeat-first.pdf	1
+page_count_file	tests/corpus/page-count/flate-repeat-first.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-repeat-first.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-repeat-first.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-repeat-past-last.pdf	1
+page_count_file	tests/corpus/page-count/flate-repeat-past-last.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-repeat-past-last.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-repeat-past-last.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-literal-286.pdf	1
+page_count_file	tests/corpus/page-count/flate-literal-286.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-literal-286.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-literal-286.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-literal-287.pdf	1
+page_count_file	tests/corpus/page-count/flate-literal-287.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-literal-287.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-literal-287.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-distance-30.pdf	1
+page_count_file	tests/corpus/page-count/flate-distance-30.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-distance-30.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-distance-30.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-distance-31.pdf	1
+page_count_file	tests/corpus/page-count/flate-distance-31.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-distance-31.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-distance-31.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-distance-too-far.pdf	1
+page_count_file	tests/corpus/page-count/flate-distance-too-far.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-distance-too-far.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-distance-too-far.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-truncated.pdf	1
+page_count_file	tests/corpus/page-count/flate-truncated.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-truncated.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-truncated.pdf	strict	Malformed
+# 7.5.8 (cross-reference stream dictionary), 7.5.6 (Prev): malformed; open rebuilds the table, strict rejects it
 page_count_bytes	tests/corpus/page-count/xref-stream-not-xref.pdf	Malformed
 page_count_file	tests/corpus/page-count/xref-stream-not-xref.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-index-not-array.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-index-not-array.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/xref-stream-prev-not-object.pdf	Malformed
-page_count_file	tests/corpus/page-count/xref-stream-prev-not-object.pdf	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-index-not-array.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-index-not-array.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-index-not-array.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-index-not-array.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/xref-stream-prev-not-object.pdf	2
+page_count_file	tests/corpus/page-count/xref-stream-prev-not-object.pdf	2
+page_count_bytes	tests/corpus/page-count/xref-stream-prev-not-object.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-prev-not-object.pdf	strict	Malformed
 # RFC 1950, 8.2 (Adler-32 modulus)
 page_count_bytes	tests/corpus/page-count/flate-adler-32-modulo.pdf	1
 page_count_file	tests/corpus/page-count/flate-adler-32-modulo.pdf	1
-# RFC 1951, 3.2.3 to 3.2.7: more malformed blocks
-page_count_bytes	tests/corpus/page-count/flate-oversubscribed-distance.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-oversubscribed-distance.pdf	Malformed
-page_count_bytes	tests/corpus/page-count/flate-truncated-mid-block.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-truncated-mid-block.pdf	Malformed
-# ISO 32000-2:2020, 7.4.4.4 (PNG row cut short)
-page_count_bytes	tests/corpus/page-count/png-partial-row.pdf	Malformed
-page_count_file	tests/corpus/page-count/png-partial-row.pdf	Malformed
+# RFC 1951, 3.2.3 to 3.2.7: more malformed blocks, likewise
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed-distance.pdf	1
+page_count_file	tests/corpus/page-count/flate-oversubscribed-distance.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-oversubscribed-distance.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-oversubscribed-distance.pdf	strict	Malformed
+page_count_bytes	tests/corpus/page-count/flate-truncated-mid-block.pdf	1
+page_count_file	tests/corpus/page-count/flate-truncated-mid-block.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-truncated-mid-block.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-truncated-mid-block.pdf	strict	Malformed
+# ISO 32000-2:2020, 7.4.4.4 (PNG row cut short), likewise
+page_count_bytes	tests/corpus/page-count/png-partial-row.pdf	1
+page_count_file	tests/corpus/page-count/png-partial-row.pdf	1
+page_count_bytes	tests/corpus/page-count/png-partial-row.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/png-partial-row.pdf	strict	Malformed
 # 7.3.6 (array elements are any objects), 7.3.10 (an integer run is a reference only before R), 7.2.3 (stray delimiter)
 page_count_bytes	tests/corpus/page-count/integer-run-not-reference.pdf	1
 page_count_file	tests/corpus/page-count/integer-run-not-reference.pdf	1
@@ -350,20 +494,33 @@ page_count_file	tests/corpus/page-count/integer-then-malformed-token.pdf	Malform
 # RFC 1951, 3.2.4 (stored block) and 7.5.8 (Flate data over the 4 KiB read buffer)
 page_count_bytes	tests/corpus/page-count/flate-over-4-kib.pdf	1
 page_count_file	tests/corpus/page-count/flate-over-4-kib.pdf	1
-# RFC 1950, 2.2 (input ends where the Adler-32 starts)
-page_count_bytes	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	Malformed
-page_count_file	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	Malformed
+# RFC 1950, 2.2 (input ends where the Adler-32 starts), likewise
+page_count_bytes	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	1
+page_count_file	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	1
+page_count_bytes	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/flate-truncated-at-adler-32.pdf	strict	Malformed
 # 7.3.8.2 (DecodeParms: only the top-level Predictor applies; filter and parameter arrays)
 page_count_bytes	tests/corpus/page-count/predictor-nested-parms.pdf	1
 page_count_file	tests/corpus/page-count/predictor-nested-parms.pdf	1
 page_count_bytes	tests/corpus/page-count/predictor-12-array.pdf	1
 page_count_file	tests/corpus/page-count/predictor-12-array.pdf	1
-# 7.5.7, 7.5.8.4: an object stream the table lists as free is not in use
-page_count_bytes	tests/corpus/page-count/object-stream-container-free-in-table.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-container-free-in-table.pdf	Malformed
-# 7.3.8.2 (DecodeParms as an indirect reference)
-page_count_bytes	tests/corpus/page-count/xref-stream-parms-indirect.pdf	Unsupported
-page_count_file	tests/corpus/page-count/xref-stream-parms-indirect.pdf	Unsupported
-# 7.3.8.2 (indirect Length), 7.5.7: a Length object the table lists as free is not in use
-page_count_bytes	tests/corpus/page-count/object-stream-length-free-in-table.pdf	Malformed
-page_count_file	tests/corpus/page-count/object-stream-length-free-in-table.pdf	Malformed
+# 7.5.7, 7.5.8.4: an object stream the table lists as free is not in use; open rebuilds the table, strict rejects it
+page_count_bytes	tests/corpus/page-count/object-stream-container-free-in-table.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-container-free-in-table.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-container-free-in-table.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-container-free-in-table.pdf	strict	Malformed
+# 7.5.8.2: a cross-reference stream's DecodeParms shall be direct; open rebuilds the table, strict rejects it
+page_count_bytes	tests/corpus/page-count/xref-stream-parms-indirect.pdf	1
+page_count_file	tests/corpus/page-count/xref-stream-parms-indirect.pdf	1
+page_count_bytes	tests/corpus/page-count/xref-stream-parms-indirect.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/xref-stream-parms-indirect.pdf	strict	Malformed
+# 7.3.8.2 (indirect Length), 7.5.7: a Length object the table lists as free is not in use; open ignores it, strict rejects it
+page_count_bytes	tests/corpus/page-count/object-stream-length-free-in-table.pdf	1
+page_count_file	tests/corpus/page-count/object-stream-length-free-in-table.pdf	1
+page_count_bytes	tests/corpus/page-count/object-stream-length-free-in-table.pdf	strict	Malformed
+page_count_file	tests/corpus/page-count/object-stream-length-free-in-table.pdf	strict	Malformed
+# 7.2.3, 7.5.4, 7.5.6: an older trailer holds a 300-byte keyword; open rebuilds the table, strict rejects it
+page_count_bytes	tests/corpus/repair/trailer-long-keyword.pdf	1
+page_count_file	tests/corpus/repair/trailer-long-keyword.pdf	1
+page_count_bytes	tests/corpus/repair/trailer-long-keyword.pdf	strict	Malformed
+page_count_file	tests/corpus/repair/trailer-long-keyword.pdf	strict	Malformed

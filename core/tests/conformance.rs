@@ -4,68 +4,279 @@ extern crate alloc;
 
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
+use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use starlightpdf::PdfError;
-use starlightpdf::document::{Document, OpenOptions};
+use starlightpdf::document::{Document, OpenOptions, PageOptions};
 use starlightpdf::input::{BytesSourceOptions, FileSourceOptions, Source};
+use starlightpdf::limits::{ResourcePolicy, ResourcePolicyOptions};
+use starlightpdf::objects::{ObjectId, ObjectOptions, StreamDataOptions};
+use starlightpdf::output::{MemorySinkOptions, Sink};
+use starlightpdf::page::{Boundary, BoundaryOptions};
+use starlightpdf::security::{Cipher, Permission};
+use starlightpdf::{ErrorCode, PdfError};
+
+/// Each `box=` value's boundary.
+const BOXES: [(&str, Boundary); 5] = [
+    ("Art", Boundary::Art),
+    ("Bleed", Boundary::Bleed),
+    ("Crop", Boundary::Crop),
+    ("Media", Boundary::Media),
+    ("Trim", Boundary::Trim),
+];
+
+/// Each cipher's name.
+const CIPHERS: [(Cipher, &str); 4] = [
+    (Cipher::Aes128, "Aes128"),
+    (Cipher::Aes256, "Aes256"),
+    (Cipher::Rc4, "Rc4"),
+    (Cipher::Unencrypted, "Unencrypted"),
+];
+
+/// Each permission's name.
+const PERMISSIONS: [(Permission, &str); 7] = [
+    (Permission::Annotate, "Annotate"),
+    (Permission::Assemble, "Assemble"),
+    (Permission::Copy, "Copy"),
+    (Permission::Edit, "Edit"),
+    (Permission::FillForms, "FillForms"),
+    (Permission::Print, "Print"),
+    (Permission::PrintHighQuality, "PrintHighQuality"),
+];
 
 /// The repository root, against which case paths resolve.
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 
+/// A case's arguments after its path.
+#[derive(Debug, Default)]
+struct Case {
+    /// `decode`.
+    decode: bool,
+    /// `id=`.
+    id: ObjectId,
+    /// `index=`.
+    index: u32,
+    /// `box=`.
+    kind: Boundary,
+    /// `password=`.
+    password: String,
+    /// The limits, when any is given.
+    policy: Option<ResourcePolicyOptions>,
+    /// The keys given.
+    seen: Vec<String>,
+    /// `strict`.
+    strict: bool,
+}
+
 /// Calls `operation`; only operations listed here are known.
 fn call(operation: &str, args: &[&str]) -> Result<String, String> {
-    match operation {
-        "header_version" => Ok(
+    if operation == "header_version" {
+        return Ok(
             starlightpdf::header_version(&read(operation, args)?).map_or_else(
                 |error| String::from(error.code().name()),
                 |version| format!("{}.{}", version.major, version.minor),
             ),
-        ),
-        "open_bytes" => {
-            let mut options = BytesSourceOptions::default();
-            options.bytes = Arc::new(read(operation, args)?);
-            Ok(open(Source::from_bytes(&options)))
-        }
-        "open_file" => {
-            let mut options = FileSourceOptions::default();
-            options.file = PathBuf::from(path(operation, args)?);
-            Ok(open(Source::from_file(&options)))
-        }
-        "page_count_bytes" => {
-            let mut options = BytesSourceOptions::default();
-            options.bytes = Arc::new(read(operation, args)?);
-            Ok(page_count(Source::from_bytes(&options)))
-        }
-        "page_count_file" => {
-            let mut options = FileSourceOptions::default();
-            options.file = PathBuf::from(path(operation, args)?);
-            Ok(page_count(Source::from_file(&options)))
-        }
-        _ => Err(format!("unknown operation '{operation}'")),
+        );
     }
+    let unknown = || format!("unknown operation '{operation}'");
+    let (family, file) = match operation.strip_suffix("_bytes") {
+        Some(family) => (family, false),
+        None => (operation.strip_suffix("_file").ok_or_else(unknown)?, true),
+    };
+    // The keys each operation takes, then those it needs.
+    let (takes, needs): (&[&str], &[&str]) = match family {
+        "open" | "page_count" | "catalog" | "encryption" => (&[], &[]),
+        "object" => (&["id"], &["id"]),
+        "stream_data" => (&["id", "decode"], &["id"]),
+        "page" | "rotation" => (&["index"], &["index"]),
+        "boundary" => (&["index", "box"], &["index", "box"]),
+        "warnings" | "dropped_warnings" => (&["id"], &[]),
+        _ => return Err(unknown()),
+    };
+    let (&relative, rest) = args
+        .split_first()
+        .ok_or_else(|| format!("{operation} takes a path"))?;
+    let case = parse(operation, takes, rest)?;
+    if let Some(need) = needs
+        .iter()
+        .find(|&&need| !case.seen.iter().any(|key| key == need))
+    {
+        return Err(format!("{operation} needs {need}="));
+    }
+    let file_path = format!("{ROOT}/{relative}");
+    let source = if file {
+        let mut options = FileSourceOptions::default();
+        options.file = PathBuf::from(file_path);
+        Source::from_file(&options)
+    } else {
+        let mut options = BytesSourceOptions::default();
+        options.bytes =
+            Arc::new(fs::read(&file_path).map_err(|err| format!("{file_path}: {err}"))?);
+        Source::from_bytes(&options)
+    };
+    Ok(perform(family, &case, source).unwrap_or_else(|error| String::from(error.code().name())))
 }
 
-/// Opens a made source without a policy: `ok`, or the error code's name.
-fn open(made: Result<Source, PdfError>) -> String {
-    made.and_then(|source| Document::open(&source, None, &OpenOptions::default()))
-        .map_or_else(
-            |error| String::from(error.code().name()),
-            |_| String::from("ok"),
-        )
+/// Parses `args`, accepting only the open options and the keys in `takes`.
+fn parse(operation: &str, takes: &[&str], args: &[&str]) -> Result<Case, String> {
+    let mut case = Case::default();
+    for &arg in args {
+        let (key, value) = arg.split_once('=').unwrap_or((arg, ""));
+        let bad = || format!("{operation}: bad argument '{arg}'");
+        let flag = !arg.contains('=');
+        let known = match key {
+            "strict" | "decode" => flag,
+            "password" | "decoded_limit" | "object_limit" | "warning_limit" | "id" | "index"
+            | "box" => !flag,
+            _ => false,
+        };
+        if !known
+            || ["decode", "id", "index", "box"].contains(&key) && !takes.contains(&key)
+            || case.seen.iter().any(|seen| seen == key)
+        {
+            return Err(bad());
+        }
+        case.seen.push(String::from(key));
+        match key {
+            "strict" => case.strict = true,
+            "decode" => case.decode = true,
+            "password" => case.password = String::from(value),
+            "decoded_limit" => {
+                case.policy.get_or_insert_default().decoded_limit =
+                    Some(value.parse().map_err(|_err| bad())?);
+            }
+            "object_limit" => {
+                case.policy.get_or_insert_default().object_limit =
+                    Some(value.parse().map_err(|_err| bad())?);
+            }
+            "warning_limit" => {
+                case.policy.get_or_insert_default().warning_limit =
+                    Some(value.parse().map_err(|_err| bad())?);
+            }
+            "id" => {
+                let (number, generation) = value.split_once(' ').ok_or_else(bad)?;
+                case.id.number = number.parse().map_err(|_err| bad())?;
+                case.id.generation = generation.parse().map_err(|_err| bad())?;
+            }
+            "index" => case.index = value.parse().map_err(|_err| bad())?,
+            _ => {
+                case.kind = BOXES.iter().find(|pair| pair.0 == value).ok_or_else(bad)?.1;
+            }
+        }
+    }
+    Ok(case)
 }
 
-/// Opens a made source without a policy and counts its pages: the count, or the error code's name.
-fn page_count(made: Result<Source, PdfError>) -> String {
-    made.and_then(|source| Document::open(&source, None, &OpenOptions::default()))
-        .and_then(|document| document.page_count())
-        .map_or_else(
-            |error| String::from(error.code().name()),
-            |count| count.to_string(),
-        )
+/// The name `names` gives `value`, or `unknown`.
+fn name<T>(names: &[(T, &'static str)], value: T) -> &'static str
+where
+    T: Copy + PartialEq,
+{
+    names
+        .iter()
+        .find(|pair| pair.0 == value)
+        .map_or("unknown", |pair| pair.1)
+}
+
+/// Options for reading `case`'s object.
+fn object(case: &Case) -> ObjectOptions {
+    let mut options = ObjectOptions::default();
+    options.id = case.id;
+    options
+}
+
+/// Opens `source` with `case`'s options and performs `family`: its result, or the error code's name.
+fn perform(
+    family: &str,
+    case: &Case,
+    source: Result<Source, PdfError>,
+) -> Result<String, PdfError> {
+    let made = source?;
+    let policy = case.policy.as_ref().map(ResourcePolicy::new).transpose()?;
+    let mut options = OpenOptions::default();
+    options.password.clone_from(&case.password);
+    options.strict = case.strict;
+    let document = Document::open(&made, policy.as_ref(), &options)?;
+    let mut page = PageOptions::default();
+    page.index = case.index;
+    match family {
+        "page_count" => Ok(document.page_count()?.to_string()),
+        "catalog" => {
+            let id = document.catalog()?;
+            Ok(format!("{} {}", id.number, id.generation))
+        }
+        "object" => document.object(&object(case)),
+        "stream_data" => {
+            let bytes = stream_data(&document, case, case.decode)?;
+            Ok(if bytes.is_empty() {
+                String::from("empty")
+            } else {
+                bytes
+                    .iter()
+                    .try_fold(String::new(), |mut hex, byte| {
+                        write!(hex, "{byte:02x}").map(|()| hex)
+                    })
+                    .unwrap_or_default()
+            })
+        }
+        "page" => document.page(&page).map(|_page| String::from("ok")),
+        "boundary" => {
+            let mut boundary = BoundaryOptions::default();
+            boundary.kind = case.kind;
+            let rect = document.page(&page)?.boundary(&boundary)?;
+            Ok(format!(
+                "{} {} {} {}",
+                rect.x, rect.y, rect.width, rect.height
+            ))
+        }
+        "rotation" => Ok(document.page(&page)?.rotation()?.to_string()),
+        "encryption" => {
+            let encryption = document.encryption()?;
+            let denied: Vec<&str> = encryption
+                .restrictions
+                .iter()
+                .map(|&permission| name(&PERMISSIONS, permission))
+                .collect();
+            Ok(format!(
+                "{} {} {}",
+                name(&CIPHERS, encryption.cipher),
+                encryption.certificate,
+                if denied.is_empty() {
+                    String::from("none")
+                } else {
+                    denied.join(",")
+                }
+            ))
+        }
+        "warnings" | "dropped_warnings" => {
+            let _: u32 = document.page_count()?;
+            if case.seen.iter().any(|key| key == "id") {
+                drop(document.object(&object(case))?);
+                match stream_data(&document, case, false) {
+                    Err(error) if error.code() == ErrorCode::InvalidArgument => {}
+                    read => drop(read?),
+                }
+            }
+            if family == "dropped_warnings" {
+                return Ok(document.dropped_warnings()?.to_string());
+            }
+            let warnings = document.warnings()?;
+            let mut clauses = Vec::new();
+            while let Some(deviation) = warnings.next()? {
+                clauses.push(deviation.clause);
+            }
+            Ok(if clauses.is_empty() {
+                String::from("none")
+            } else {
+                clauses.join(";")
+            })
+        }
+        // `open`.
+        _ => Ok(String::from("ok")),
+    }
 }
 
 /// The one argument, a path from the repository root, resolved.
@@ -80,6 +291,16 @@ fn path(operation: &str, args: &[&str]) -> Result<String, String> {
 fn read(operation: &str, args: &[&str]) -> Result<Vec<u8>, String> {
     let file = path(operation, args)?;
     fs::read(&file).map_err(|err| format!("{file}: {err}"))
+}
+
+/// The data of `case`'s stream, decoded when `decode`, through an in-memory sink.
+fn stream_data(document: &Document, case: &Case, decode: bool) -> Result<Vec<u8>, PdfError> {
+    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+    let mut options = StreamDataOptions::default();
+    options.decode = decode;
+    options.id = case.id;
+    document.stream_data(&sink, &options)?;
+    sink.take_bytes()
 }
 
 /// Fails unless `operation` on `args` gives `expected`.
@@ -202,6 +423,12 @@ fn suite_passes() -> Result<(), String> {
 #[test]
 fn unknown_operation_fails() -> Result<(), String> {
     rejects("nope\tx\ty\n")
+}
+
+/// A case with an unknown argument fails.
+#[test]
+fn unknown_argument_fails() -> Result<(), String> {
+    rejects("open_bytes\ttests/corpus/header/version-1.7.pdf\tnope\tok\n")
 }
 
 /// A suite with only a comment fails.

@@ -1,0 +1,21 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.6.4.2 Table 22 (P) and 7.6.2 Table 20 (V, R, CF CFM): cipher, certificate, restrictions
+encryption_bytes	tests/corpus/page-count/one-page.pdf	Unencrypted false none
+encryption_file	tests/corpus/page-count/one-page.pdf	Unencrypted false none
+encryption_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	Rc4 false Copy
+encryption_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	Rc4 false Copy
+encryption_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=user	Rc4 false Annotate,Assemble,Copy,Edit,FillForms,Print,PrintHighQuality
+encryption_file	tests/corpus/encryption/r3-rc4-128.pdf	password=user	Rc4 false Annotate,Assemble,Copy,Edit,FillForms,Print,PrintHighQuality
+encryption_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	Rc4 false none
+encryption_file	tests/corpus/encryption/r3-empty-user-password.pdf	Rc4 false none
+encryption_bytes	tests/corpus/encryption/r4-rc4-128.pdf	password=user	Rc4 false Print,PrintHighQuality
+encryption_file	tests/corpus/encryption/r4-rc4-128.pdf	password=user	Rc4 false Print,PrintHighQuality
+encryption_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	Aes128 false PrintHighQuality
+encryption_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	Aes128 false PrintHighQuality
+encryption_bytes	tests/corpus/encryption/r5-aes-256.pdf	password=user	Aes256 false Edit
+encryption_file	tests/corpus/encryption/r5-aes-256.pdf	password=user	Aes256 false Edit
+encryption_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=user	Aes256 false Annotate,FillForms
+encryption_file	tests/corpus/encryption/r6-aes-256.pdf	password=user	Aes256 false Annotate,FillForms
+# 7.6.4.2 Table 22, revision 3: bit 6 alone grants FillForms, bit 4 alone not Assemble, bit 12 without bit 3 not PrintHighQuality
+encryption_bytes	tests/corpus/encryption/r3-permission-bits.pdf	password=user	Rc4 false Assemble,Print,PrintHighQuality
+encryption_file	tests/corpus/encryption/r3-permission-bits.pdf	password=user	Rc4 false Assemble,Print,PrintHighQuality

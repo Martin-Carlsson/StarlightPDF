@@ -47,12 +47,25 @@ const pending = new Set<(why: string) => void>();
 /** `name`'s failure as the core's `Io` because the package failed `why`. */
 function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): PdfError {
   const operations: Record<Name, string> = {
+    boundary: "Page.boundary",
+    catalog: "Document.catalog",
+    droppedWarnings: "Document.droppedWarnings",
+    encryption: "Document.encryption",
     free: "free",
     headerVersion: "headerVersion",
     libraryVersion: "libraryVersion",
+    nextWarning: "Deviations.next",
+    object: "Document.object",
     open: "Document.open",
+    page: "Document.page",
     pageCount: "Document.pageCount",
+    policy: "ResourcePolicy.new",
+    rotation: "Page.rotation",
+    sink: "Sink.inMemory",
     source: arg instanceof Blob ? "Source.fromBlob" : "Source.fromBytes",
+    streamData: "Document.streamData",
+    takeBytes: "Sink.takeBytes",
+    warnings: "Document.warnings",
   };
   return new PdfError({
     code: "Io",
@@ -146,6 +159,23 @@ function hold<T extends object>(made: T, handle: number): T {
   return made;
 }
 
+/** The core's unsigned integer types' largest values. */
+const U16 = 0xffff;
+const U32 = 0xffff_ffff;
+
+/** `value`, which the core takes as an unsigned integer up to `max`; a `RangeError` if it is not one, so it never wraps. */
+function unsigned<T extends number | undefined>(value: T, max: number, name: string): T {
+  if (value !== undefined && !(Number.isSafeInteger(value) && value >= 0 && value <= max)) {
+    throw new RangeError(`${name} must be an integer from 0 to ${String(max)}, not ${String(value)}`);
+  }
+  return value;
+}
+
+/** `id`, checked by `unsigned`. */
+function objectId(id: ObjectId): ObjectId {
+  return { generation: unsigned(id.generation, U16, "generation"), number: unsigned(id.number, U32, "number") };
+}
+
 /** Input with a size and reads at an offset. */
 export class Source {
   private constructor() {}
@@ -169,18 +199,184 @@ export class Source {
   }
 }
 
+/** Limits for `ResourcePolicy.create`; unset means a safe library default. */
+export interface ResourcePolicyOptions {
+  /** Bytes one stream may decode to. */
+  readonly decodedLimit?: number;
+  /** Objects per document. */
+  readonly objectLimit?: number;
+  /** Warnings recorded per document. */
+  readonly warningLimit?: number;
+}
+
+/** Limits shared by the documents opened with it. */
+export class ResourcePolicy {
+  private constructor() {}
+
+  /** A policy with these limits. */
+  static async create(options: ResourcePolicyOptions): Promise<ResourcePolicy> {
+    unsigned(options.decodedLimit, Number.MAX_SAFE_INTEGER, "decodedLimit");
+    unsigned(options.objectLimit, Number.MAX_SAFE_INTEGER, "objectLimit");
+    unsigned(options.warningLimit, U32, "warningLimit");
+    return hold(new ResourcePolicy(), await call("policy", options));
+  }
+}
+
+/** Options for `Document.open`. */
+export interface OpenOptions {
+  /** The user or owner password; unset is the empty one. */
+  readonly password?: string;
+  /** Fail with `Malformed` on any deviation instead of tolerating it. */
+  readonly strict?: boolean;
+}
+
+/** Output that only appends. */
+export class Sink {
+  private constructor() {}
+
+  /** A sink that holds its bytes in memory, for `takeBytes`. */
+  static async inMemory(): Promise<Sink> {
+    return hold(new Sink(), await call("sink", undefined));
+  }
+
+  /** Takes the bytes appended so far, leaving the sink empty; copies them once out of WebAssembly memory. */
+  async takeBytes(): Promise<Uint8Array> {
+    return call("takeBytes", handles.get(this) ?? 0);
+  }
+}
+
+/** An indirect object's number and generation. */
+export interface ObjectId {
+  readonly generation: number;
+  readonly number: number;
+}
+
+/** A rectangle in default user space, y up. */
+export interface Rect {
+  readonly height: number;
+  readonly width: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A page boundary (ISO 32000-2:2020, 14.11.2). */
+export type Boundary = "Art" | "Bleed" | "Crop" | "Media" | "Trim";
+
+/** How a document is protected. */
+export interface Encryption {
+  /** Certificate-based rather than password-based. */
+  readonly certificate: boolean;
+  /** The algorithm: `Aes128`, `Aes256`, `Rc4` or `Unencrypted`. */
+  readonly cipher: string;
+  /** What is denied, as `Permission` names. */
+  readonly restrictions: readonly string[];
+}
+
+/** A deviation from a standard; `null` when unknown. */
+export interface Deviation {
+  /** Standard and clause, e.g. `ISO 32000-2:2020, 7.5.4`. */
+  readonly clause: string;
+  readonly message: string;
+  readonly objectNumber: number | null;
+  /** The byte offset in the source. */
+  readonly offset: number | null;
+  /** The page index. */
+  readonly page: number | null;
+}
+
+/** A page holding `handle`; set by `Page`, whose constructor is private. */
+let newPage: (handle: number) => Page;
+
+/** A page. */
+export class Page {
+  static {
+    newPage = (handle) => hold(new Page(), handle);
+  }
+
+  private constructor() {}
+
+  /** A boundary: inherited, defaulted, clipped to the media box and normalized. */
+  async boundary(options: { readonly kind?: Boundary } = {}): Promise<Rect> {
+    return call("boundary", { kind: options.kind ?? "Crop", page: handles.get(this) ?? 0 });
+  }
+
+  /** The rotation in degrees: 0, 90, 180 or 270. */
+  async rotation(): Promise<number> {
+    return call("rotation", handles.get(this) ?? 0);
+  }
+}
+
 /** An open PDF. */
 export class Document {
   private constructor() {}
 
-  /** Opens `source`, checking only its header. */
-  static async open(source: Source): Promise<Document> {
-    return hold(new Document(), await call("open", handles.get(source) ?? 0));
+  /** Opens `source` with `policy`, or the default one. */
+  static async open(source: Source, policy?: ResourcePolicy | null, options: OpenOptions = {}): Promise<Document> {
+    const arg = {
+      options,
+      policy: policy === undefined || policy === null ? null : (handles.get(policy) ?? 0),
+      source: handles.get(source) ?? 0,
+    };
+    return hold(new Document(), await call("open", arg));
+  }
+
+  /** The catalog's id. */
+  async catalog(): Promise<ObjectId> {
+    return call("catalog", handles.get(this) ?? 0);
+  }
+
+  /** The number of deviations not kept in `warnings`. */
+  async droppedWarnings(): Promise<number> {
+    return call("droppedWarnings", handles.get(this) ?? 0);
+  }
+
+  /** How the document is protected. */
+  async encryption(): Promise<Encryption> {
+    return call("encryption", handles.get(this) ?? 0);
+  }
+
+  /** An object as PDF syntax; the string `"null"` for a free or missing one. */
+  async object(options: { readonly id: ObjectId }): Promise<string> {
+    return call("object", { document: handles.get(this) ?? 0, id: objectId(options.id) });
+  }
+
+  /** The page at `index`. */
+  async page(options: { readonly index: number }): Promise<Page> {
+    return newPage(
+      await call("page", { document: handles.get(this) ?? 0, index: unsigned(options.index, U32, "index") }),
+    );
   }
 
   /** The number of pages. */
   async pageCount(): Promise<number> {
     return call("pageCount", handles.get(this) ?? 0);
+  }
+
+  /** Writes a stream's stored data to `sink`, or with `decode` its decoded data. */
+  async streamData(sink: Sink, options: { readonly decode?: boolean; readonly id: ObjectId }): Promise<void> {
+    const arg = {
+      decode: options.decode ?? false,
+      document: handles.get(this) ?? 0,
+      id: objectId(options.id),
+      sink: handles.get(sink) ?? 0,
+    };
+    return call("streamData", arg);
+  }
+
+  /** The deviations tolerated so far, up to the policy's limit. */
+  async warnings(): Promise<AsyncIterable<Deviation>> {
+    const cursor = hold({}, await call("warnings", handles.get(this) ?? 0));
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<Deviation> {
+        for (;;) {
+          const deviation = await call("nextWarning", handles.get(cursor) ?? 0);
+          if (deviation === null) {
+            return;
+          }
+          yield deviation;
+        }
+      },
+    };
   }
 }
 

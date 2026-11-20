@@ -14,6 +14,16 @@ libfuzzer-sys = "=0.4.13" # libFuzzer runtime: the standard coverage-guided fuzz
 starlightpdf = { path = "../core" }
 
 [[bin]]
+name = "encrypted-open"
+path = "fuzz_targets/encrypted_open.rs"
+test = false
+
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
+test = false
+
+[[bin]]
 name = "header-version"
 path = "fuzz_targets/header_version.rs"
 test = false
@@ -26,6 +36,11 @@ test = false
 [[bin]]
 name = "xref-stream-flate"
 path = "fuzz_targets/xref_stream_flate.rs"
+test = false
+
+[[bin]]
+name = "rebuild"
+path = "fuzz_targets/rebuild.rs"
 test = false
 
 [lints]

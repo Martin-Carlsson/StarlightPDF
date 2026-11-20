@@ -1,0 +1,8 @@
+# operation	arguments	expected
+# ISO 32000-2:2020; warnings past warning_limit are only counted
+dropped_warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	0
+dropped_warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	0
+dropped_warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=1	1
+dropped_warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=1	1
+dropped_warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=0	2
+dropped_warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=0	2

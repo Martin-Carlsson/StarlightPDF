@@ -1,0 +1,17 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.7.3: page tree nested four levels deep, unevenly
+page_bytes	tests/corpus/pages/nested-tree.pdf	index=6	InvalidArgument
+page_file	tests/corpus/pages/nested-tree.pdf	index=6	InvalidArgument
+# ISO 32000-2:2020, 7.7.3.2: the root's Kids holds an integer, not a reference
+page_bytes	tests/corpus/pages/kids-not-reference.pdf	index=1	Malformed
+page_file	tests/corpus/pages/kids-not-reference.pdf	index=1	Malformed
+# ISO 32000-2:2020, 7.7.2: the catalog holds the page tree root as a direct dictionary
+page_bytes	tests/corpus/pages/pages-direct.pdf	index=1	ok
+page_file	tests/corpus/pages/pages-direct.pdf	index=1	ok
+page_bytes	tests/corpus/pages/pages-direct.pdf	index=2	InvalidArgument
+page_file	tests/corpus/pages/pages-direct.pdf	index=2	InvalidArgument
+# 7.7.3.2: a page tree deeper than the depth limit; a node whose Kids holds the root
+page_bytes	tests/corpus/pages/tree-faults.pdf	index=0	LimitExceeded
+page_file	tests/corpus/pages/tree-faults.pdf	index=0	LimitExceeded
+page_bytes	tests/corpus/pages/tree-faults.pdf	index=1	Malformed
+page_file	tests/corpus/pages/tree-faults.pdf	index=1	Malformed

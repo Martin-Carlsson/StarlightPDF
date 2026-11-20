@@ -1,0 +1,16 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.5.5 (Root) and 7.7.2: a catalog of generation 1
+catalog_bytes	tests/corpus/objects/objects.pdf	3 1
+catalog_file	tests/corpus/objects/objects.pdf	3 1
+# 7.5.8 (Root of a cross-reference stream), 7.5.7: the catalog in an object stream
+catalog_bytes	tests/corpus/objects/object-stream.pdf	2 0
+catalog_file	tests/corpus/objects/object-stream.pdf	2 0
+# 7.5.6: the Root of the last update
+catalog_bytes	tests/corpus/objects/incremental-update.pdf	6 0
+catalog_file	tests/corpus/objects/incremental-update.pdf	6 0
+# 7.7.2: the trailer's Root refers to an array, not a catalog dictionary
+catalog_bytes	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
+catalog_file	tests/corpus/page-count/root-not-dictionary.pdf	Malformed
+# 7.5.4: a rebuild takes no dictionary that names /XRef without that Type for a trailer (7.5.8.2)
+catalog_bytes	tests/corpus/repair/scan-false-matches.pdf	1 0
+catalog_file	tests/corpus/repair/scan-false-matches.pdf	1 0

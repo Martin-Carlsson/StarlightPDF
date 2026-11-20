@@ -1,6 +1,6 @@
 //! Streaming zlib decoder (RFC 1950, RFC 1951).
 
-use crate::pull::Pull;
+use crate::pull::{Buffered, Pull};
 use crate::{ErrorCode, PdfError};
 
 /// Base lengths of length symbols 257 to 285 (RFC 1951, 3.2.5).
@@ -40,24 +40,15 @@ const WINDOW: usize = 0x8000;
 /// The Adler-32 modulus (RFC 1950, 8.2).
 const ADLER_MOD: u32 = 0xFFF1;
 
-/// The input read buffer's size.
-const BUFFER: usize = 0x1000;
-
 /// Reads bits and bytes from the input.
 #[derive(Debug)]
 struct Bits<P> {
-    /// Read-ahead bytes.
-    buffer: Vec<u8>,
     /// Unread bits left in `current`.
     count: u32,
     /// The byte being read bit by bit.
     current: u8,
-    /// The number of valid bytes in `buffer`.
-    end: usize,
     /// The input.
-    inner: P,
-    /// The next unread byte in `buffer`.
-    position: usize,
+    input: Buffered<P>,
 }
 
 impl<P: Pull> Bits<P> {
@@ -89,17 +80,7 @@ impl<P: Pull> Bits<P> {
 
     /// The next whole byte; the input ending is an error.
     fn byte(&mut self) -> Result<u8, PdfError> {
-        if self.position >= self.end {
-            let read = self.inner.pull(&mut self.buffer)?;
-            if read == 0 {
-                return Err(malformed());
-            }
-            self.end = read.min(self.buffer.len());
-            self.position = 0;
-        }
-        let value = *self.buffer.get(self.position).ok_or_else(malformed)?;
-        self.position = self.position.wrapping_add(1);
-        Ok(value)
+        self.input.byte()?.ok_or_else(malformed)
     }
 
     /// The next symbol of `table` (RFC 1951, 3.2.2).
@@ -373,12 +354,9 @@ impl<P: Pull> Inflate<P> {
             adler_high: 0,
             adler_low: 1,
             bits: Bits {
-                buffer: vec![0; BUFFER],
                 count: 0,
                 current: 0,
-                end: 0,
-                inner,
-                position: 0,
+                input: Buffered::new(inner),
             },
             distance: Huffman {
                 counts: [0; 16],

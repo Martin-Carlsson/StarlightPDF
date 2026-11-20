@@ -1,0 +1,21 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.7.3.3: Rotate defaults to 0
+rotation_bytes	tests/corpus/pages/media-box-missing.pdf	index=0	0
+rotation_file	tests/corpus/pages/media-box-missing.pdf	index=0	0
+# 7.7.3.3: inherited from the root
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=0	180
+rotation_file	tests/corpus/pages/nested-tree.pdf	index=0	180
+# 7.7.3.3: -90, inherited from an intermediate node, is 270
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=1	270
+rotation_file	tests/corpus/pages/nested-tree.pdf	index=1	270
+# 7.7.3.3: 450 is 90
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=2	90
+rotation_file	tests/corpus/pages/nested-tree.pdf	index=2	90
+# 7.7.3.3: an own 0 overrides the inherited 180
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=5	0
+rotation_file	tests/corpus/pages/nested-tree.pdf	index=5	0
+# 7.7.3.3: 45 is not a multiple of 90; viewers (pdf.js) show 0, strict rejects it
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=4	0
+rotation_file	tests/corpus/pages/nested-tree.pdf	index=4	0
+rotation_bytes	tests/corpus/pages/nested-tree.pdf	strict	index=4	Malformed
+rotation_file	tests/corpus/pages/nested-tree.pdf	strict	index=4	Malformed

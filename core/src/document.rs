@@ -22,7 +22,7 @@ use crate::fonts::{AddFontOptions, Font, Fonts};
 use crate::forms::{ExportDataOptions, Fields, ImportDataOptions, SetXfaOptions, XfaOptions};
 use crate::input::Source;
 use crate::layers::{AddLayerOptions, Layer, Layers};
-use crate::limits::{DEFAULT_DEPTH_LIMIT, ResourcePolicy};
+use crate::limits::ResourcePolicy;
 use crate::metadata::{InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions};
 use crate::navigation::{
     AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, DeleteLabelRangeOptions,
@@ -34,7 +34,7 @@ use crate::objects::{
     StreamDataOptions, XrefEntries,
 };
 use crate::output::Sink;
-use crate::page::Page;
+use crate::page::{self, Page};
 use crate::progress::Progress;
 use crate::rendering::{ColorSpace, PrintOptions};
 use crate::security::{Cipher, Encryption, Permission, SanitizeOptions};
@@ -42,9 +42,10 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
-use crate::syntax::Object;
-use crate::xref::Xref;
-use crate::{ErrorCode, HEADER_LEN, PdfError, Version, parse_header};
+use crate::store::Store;
+use crate::stream;
+use crate::syntax::Value;
+use crate::{ErrorCode, PdfError, Version};
 
 /// Options for [`Document::close`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -86,10 +87,8 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
-    /// Nesting depth of arrays and dictionaries.
-    depth_limit: u32,
-    /// The source.
-    source: Source,
+    /// The shared state.
+    store: Arc<Store>,
 }
 
 /// Documents, one at a time.
@@ -424,18 +423,13 @@ impl Document {
         ))
     }
 
-    /// The document catalog's object.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The document catalog's object: the trailer's `Root` (ISO 32000-2:2020, 7.7.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn catalog(&self) -> Result<ObjectId, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::catalog",
-        ))
+        self.store.objects("Document::catalog").catalog()
     }
 
     /// Discards unsaved changes, releases the source and invalidates handles; never writes.
@@ -578,16 +572,11 @@ impl Document {
 
     /// How many warnings the policy's limit kept out of `warnings`.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
+    /// [`ErrorCode::DocumentClosed`].
     pub fn dropped_warnings(&self) -> Result<u64, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::dropped_warnings",
-        ))
+        Ok(self.store.dropped_warnings())
     }
 
     /// The structure elements, in reading order.
@@ -604,18 +593,14 @@ impl Document {
         ))
     }
 
-    /// How the document is protected.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// How the document is protected: the cipher, what `P` denies and whether certificates are
+    /// used (ISO 32000-2:2020, 7.6.2 and 7.6.4.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn encryption(&self) -> Result<Encryption, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::encryption",
-        ))
+        Ok(self.store.encryption())
     }
 
     /// Writes form values or annotations as FDF, XFDF, XML or JSON.
@@ -846,41 +831,36 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::layers"))
     }
 
-    /// An object as PDF syntax; a missing object is `null`.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// An object as PDF syntax, from the body, an object stream or a later update; a stream gives
+    /// its dictionary; a free or missing object is `null` (ISO 32000-2:2020, 7.3, 7.5.6, 7.5.7).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn object(&self, options: &ObjectOptions) -> Result<String, PdfError> {
-        let _: &ObjectOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::object"))
+        self.store.objects("Document::object").object(options.id)
     }
 
-    /// Opens `source`, checking only its header (ISO 32000-2:2020, 7.5.2); `options` are not used yet.
+    /// Opens `source`, reading its header and cross-reference data (ISO 32000-2:2020, 7.5); a
+    /// damaged table is rebuilt, bytes before the header tolerated, each with a warning, unless
+    /// `strict`. An encrypted file opens with its user or owner password, or none when the user
+    /// password is empty (ISO 32000-2:2020, 7.6.4); the private key is not used yet.
     ///
     /// A forward-only source fails with [`ErrorCode::NotSeekable`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::InvalidHeader`], [`ErrorCode::Io`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::InvalidHeader`], [`ErrorCode::InvalidPassword`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn open(
         source: &Source,
         policy: Option<&ResourcePolicy>,
         options: &OpenOptions,
     ) -> Result<Self, PdfError> {
-        /// The operation.
-        const OPEN: &str = "Document::open";
-        let _: &OpenOptions = options;
         if source.forward_only() {
-            return Err(PdfError::new(ErrorCode::NotSeekable, OPEN));
+            return Err(PdfError::new(ErrorCode::NotSeekable, "Document::open"));
         }
-        let mut header = [0; HEADER_LEN];
-        let count = source.read(0, &mut header, OPEN)?;
-        parse_header(header.get(..count).unwrap_or_default(), OPEN).map(|_| Self {
-            depth_limit: policy.map_or(DEFAULT_DEPTH_LIMIT, ResourcePolicy::depth_limit),
-            source: source.clone(),
+        Store::open(source, policy, options.strict, &options.password).map(|store| Self {
+            store: Arc::new(store),
         })
     }
 
@@ -898,16 +878,14 @@ impl Document {
         ))
     }
 
-    /// The page at `index`.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The page at `index` of the page tree (ISO 32000-2:2020, 7.7.3); past the last is
+    /// [`ErrorCode::InvalidArgument`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn page(&self, options: &PageOptions) -> Result<Page, PdfError> {
-        let _: &PageOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::page"))
+        page::find(&self.store, options.index)
     }
 
     /// The number of pages: the root page tree node's `Count` (ISO 32000-2:2020, 7.7.3.2).
@@ -916,18 +894,15 @@ impl Document {
     ///
     /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn page_count(&self) -> Result<u32, PdfError> {
-        /// The operation.
-        const PAGE_COUNT: &str = "Document::page_count";
-        let (xref, trailer) = Xref::open(&self.source, self.depth_limit, PAGE_COUNT)?;
-        let catalog = xref.dictionary(trailer.get(b"Root"))?;
-        let pages = xref.dictionary(catalog.get(b"Pages"))?;
-        let count = pages.get(b"Count");
-        match count.and_then(Object::reference) {
-            Some(id) => xref.object(id)?.integer(),
-            None => count.and_then(Object::integer),
+        let objects = self.store.objects("Document::page_count");
+        let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
+        let pages = objects.dictionary(objects.get(catalog, b"Pages")?)?;
+        match objects.get(pages, b"Count")? {
+            Some(Value::Reference(id)) => objects.resolve(id)?.integer(),
+            found => found.as_ref().and_then(Value::integer),
         }
         .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| PdfError::new(ErrorCode::Malformed, PAGE_COUNT))
+        .ok_or_else(|| objects.malformed())
     }
 
     /// Saves incrementally with room for a signature, for the caller to sign.
@@ -1328,20 +1303,20 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::stamp"))
     }
 
-    /// Writes a stream's data; [`ErrorCode::InvalidArgument`] when `id` is missing or not a stream.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Writes a stream's stored bytes, or with `decode` its data with its filters undone
+    /// (ISO 32000-2:2020, 7.4); [`ErrorCode::InvalidArgument`] when `id` is missing or not a
+    /// stream, [`ErrorCode::Unsupported`] for an image filter.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), PdfError> {
-        let _: &Sink = sink;
-        let _: &StreamDataOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::stream_data",
-        ))
+        stream::write(
+            self.store.objects("Document::stream_data"),
+            options.id,
+            options.decode,
+            sink,
+        )
     }
 
     /// Builds a structure tree with reading order from the layout.
@@ -1420,16 +1395,11 @@ impl Document {
 
     /// The deviations tolerated so far, up to the policy's limit.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
+    /// [`ErrorCode::DocumentClosed`].
     pub fn warnings(&self) -> Result<Deviations, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::warnings",
-        ))
+        Ok(Deviations::new(self.store.warnings()))
     }
 
     /// Writes the XFA form's XML; nothing when there is none.

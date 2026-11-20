@@ -8,7 +8,7 @@ pub enum Cipher {
     Aes128,
     /// AES with a 256-bit key.
     Aes256,
-    /// 128-bit RC4.
+    /// RC4 with a 40- to 128-bit key.
     Rc4,
     /// No encryption.
     Unencrypted,

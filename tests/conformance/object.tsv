@@ -1,0 +1,133 @@
+# operation	arguments	expected
+# Repair (ISO 32000-2:2020): the object is found despite 7.5.2, 7.5.5, 7.5.4 and 7.3.10 faults
+object_bytes	tests/corpus/repair/leading-bytes.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/leading-bytes.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/startxref-wrong.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/startxref-wrong.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/startxref-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/startxref-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/xref-damaged.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/xref-damaged.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/xref-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/xref-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/endobj-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_file	tests/corpus/repair/endobj-missing.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>
+object_bytes	tests/corpus/repair/endobj-missing.pdf	strict	id=3 0	Malformed
+object_file	tests/corpus/repair/endobj-missing.pdf	strict	id=3 0	Malformed
+# ISO 32000-2:2020, 7.2.4 and 7.3.2 to 7.3.7: comments, numbers, names, arrays and dictionaries in canonical syntax
+object_bytes	tests/corpus/objects/objects.pdf	id=4 0	<< /Int 42 /Plus 17 /Neg -17 /Real 0.5 /NegReal -12.25 /Whole 3 /Small -0.000001 /Key#20One /A#20B /Hex /A#2Fb /Bool [true false] /Nest [1 [2 3 R] null] /Empty [] /Dict << >> /Sub << /X 1 >> >>
+object_file	tests/corpus/objects/objects.pdf	id=4 0	<< /Int 42 /Plus 17 /Neg -17 /Real 0.5 /NegReal -12.25 /Whole 3 /Small -0.000001 /Key#20One /A#20B /Hex /A#2Fb /Bool [true false] /Nest [1 [2 3 R] null] /Empty [] /Dict << >> /Sub << /X 1 >> >>
+# 7.3.4: literal string escapes, line continuation and end of line, hexadecimal string with an odd digit; other than printable ASCII in hex
+object_bytes	tests/corpus/objects/objects.pdf	id=7 0	[(x\(y\)z) (a\\b\)) <410771> (linecont) <63720a6c66> <486900> ()]
+object_file	tests/corpus/objects/objects.pdf	id=7 0	[(x\(y\)z) (a\\b\)) <410771> (linecont) <63720a6c66> <486900> ()]
+# 7.3.8: a stream gives its dictionary
+object_bytes	tests/corpus/objects/objects.pdf	id=5 0	<< /Kind /Data /Length 3 >>
+object_file	tests/corpus/objects/objects.pdf	id=5 0	<< /Kind /Data /Length 3 >>
+# 7.3.10: an object of generation 1
+object_bytes	tests/corpus/objects/objects.pdf	id=3 1	<< /Type /Catalog /Pages 1 0 R >>
+object_file	tests/corpus/objects/objects.pdf	id=3 1	<< /Type /Catalog /Pages 1 0 R >>
+# 7.3.10: a free object, one beyond Size and one of another generation are null
+object_bytes	tests/corpus/objects/objects.pdf	id=6 0	null
+object_file	tests/corpus/objects/objects.pdf	id=6 0	null
+object_bytes	tests/corpus/objects/objects.pdf	id=99 0	null
+object_file	tests/corpus/objects/objects.pdf	id=99 0	null
+object_bytes	tests/corpus/objects/objects.pdf	id=4 1	null
+object_file	tests/corpus/objects/objects.pdf	id=4 1	null
+# 7.5.7: an object in an object stream
+object_bytes	tests/corpus/objects/object-stream.pdf	id=5 0	[1 (two) /Three]
+object_file	tests/corpus/objects/object-stream.pdf	id=5 0	[1 (two) /Three]
+# 7.5.6: an update replaces one object and frees another; an unchanged one is read from the original body
+object_bytes	tests/corpus/objects/incremental-update.pdf	id=4 0	(new)
+object_file	tests/corpus/objects/incremental-update.pdf	id=4 0	(new)
+object_bytes	tests/corpus/objects/incremental-update.pdf	id=5 0	null
+object_file	tests/corpus/objects/incremental-update.pdf	id=5 0	null
+object_bytes	tests/corpus/objects/incremental-update.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+object_file	tests/corpus/objects/incremental-update.pdf	id=3 0	<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>
+# Resource policy object count: in-use cross-reference entries, checked at open; objects.pdf has 6 (Size 8)
+object_bytes	tests/corpus/objects/objects.pdf	object_limit=6	id=5 0	<< /Kind /Data /Length 3 >>
+object_file	tests/corpus/objects/objects.pdf	object_limit=6	id=5 0	<< /Kind /Data /Length 3 >>
+object_bytes	tests/corpus/objects/objects.pdf	object_limit=5	id=5 0	LimitExceeded
+object_file	tests/corpus/objects/objects.pdf	object_limit=5	id=5 0	LimitExceeded
+# ISO 32000-2:2020, 7.6.2 and 7.6.3 (Algorithm 1): strings read decrypted; RC4, AESV2, AESV3; EncryptMetadata false; StrF Identity; inside an object stream (7.5.7)
+object_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r3-empty-user-password.pdf	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r4-aes-128-encrypt-metadata-false.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r4-aes-128-encrypt-metadata-false.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r4-rc4-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r4-rc4-128.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r5-aes-256.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r5-aes-256.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r6-aes-256-encrypt-metadata-false.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r6-aes-256-encrypt-metadata-false.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r6-aes-256.pdf	password=user	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r6-empty-user-password.pdf	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r6-empty-user-password.pdf	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r6-long-password.pdf	password=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r6-long-password.pdf	password=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789	id=4 0	<< /Title (Secret title) >>
+# 7.6.4.4 Algorithm 7 and 7.6.4.3.3 Algorithm 2.A: decrypted with the owner password
+object_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r3-rc4-128.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r5-aes-256.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r5-aes-256.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+object_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+object_file	tests/corpus/encryption/r6-aes-256.pdf	password=owner	id=4 0	<< /Title (Secret title) >>
+# 7.6.3: the encryption dictionary's strings are not encrypted
+object_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=6 0	<< /Filter /Standard /V 4 /R 4 /Length 128 /CF << /StdCF << /Type /CryptFilter /CFM /AESV2 /AuthEvent /DocOpen /Length 16 >> >> /StmF /StdCF /StrF /StdCF /O <0ba3835f88f90388e74e54584125ce142be0de24c6b0d37746e075b891756671> /U <794a0e60217ad470526eee92f47087d83c9eaea8935fd9f396f94458aade84ac> /P -2052 >>
+object_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=6 0	<< /Filter /Standard /V 4 /R 4 /Length 128 /CF << /StdCF << /Type /CryptFilter /CFM /AESV2 /AuthEvent /DocOpen /Length 16 >> >> /StmF /StdCF /StrF /StdCF /O <0ba3835f88f90388e74e54584125ce142be0de24c6b0d37746e075b891756671> /U <794a0e60217ad470526eee92f47087d83c9eaea8935fd9f396f94458aade84ac> /P -2052 >>
+# 7.5.8.2: a cross-reference stream's strings are not encrypted
+object_bytes	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=7 0	<< /Type /XRef /Size 9 /W [1 4 2] /Root 1 0 R /Info 4 0 R /Encrypt 6 0 R /ID [<eed439058d872da856c899f488ab9933> <eed439058d872da856c899f488ab9933>] /Length 63 >>
+object_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=7 0	<< /Type /XRef /Size 9 /W [1 4 2] /Root 1 0 R /Info 4 0 R /Encrypt 6 0 R /ID [<eed439058d872da856c899f488ab9933> <eed439058d872da856c899f488ab9933>] /Length 63 >>
+# 7.5.4: a table entry mid-subsection gives another object's offset; reading it rebuilds the table, strict rejects it
+object_bytes	tests/corpus/repair/xref-entry-wrong.pdf	id=4 0	<< /Answer 42 >>
+object_file	tests/corpus/repair/xref-entry-wrong.pdf	id=4 0	<< /Answer 42 >>
+object_bytes	tests/corpus/repair/xref-entry-wrong.pdf	strict	id=4 0	Malformed
+object_file	tests/corpus/repair/xref-entry-wrong.pdf	strict	id=4 0	Malformed
+# 7.5.4: a garbled table entry mid-subsection; reading it rebuilds the table, strict rejects it
+object_bytes	tests/corpus/repair/xref-entry-garbled.pdf	id=4 0	<< /Answer 42 >>
+object_file	tests/corpus/repair/xref-entry-garbled.pdf	id=4 0	<< /Answer 42 >>
+object_bytes	tests/corpus/repair/xref-entry-garbled.pdf	strict	id=4 0	Malformed
+object_file	tests/corpus/repair/xref-entry-garbled.pdf	strict	id=4 0	Malformed
+# 7.5.4, 7.5.7: open reads the catalog from the object stream the table gives, then a wrong entry rebuilds the table; the catalog is then read from the object stream defined last
+object_bytes	tests/corpus/repair/object-stream-replaced.pdf	id=1 0	<< /Type /Catalog /Pages 2 0 R /Marker (new) >>
+object_file	tests/corpus/repair/object-stream-replaced.pdf	id=1 0	<< /Type /Catalog /Pages 2 0 R /Marker (new) >>
+# ISO 32000-2:2020, 7.3.4.2: parentheses nested and closed across 512-byte boundaries
+object_bytes	tests/corpus/objects/syntax.pdf	id=4 0	(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\)ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+object_file	tests/corpus/objects/syntax.pdf	id=4 0	(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\)ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+# 7.3.4.2, Table 3: escapes \n \r \t \b \f and a line continuation after CR and after CR LF
+object_bytes	tests/corpus/objects/syntax.pdf	id=5 0	<6162630a0d09080c>
+object_file	tests/corpus/objects/syntax.pdf	id=5 0	<6162630a0d09080c>
+# 7.3.6: arrays nested 300 deep, past the depth limit
+object_bytes	tests/corpus/objects/syntax.pdf	id=6 0	LimitExceeded
+object_file	tests/corpus/objects/syntax.pdf	id=6 0	LimitExceeded
+# 7.2.2: a stray ) or } is no token, within an array or after the object
+object_bytes	tests/corpus/objects/syntax.pdf	id=7 0	Malformed
+object_file	tests/corpus/objects/syntax.pdf	id=7 0	Malformed
+object_bytes	tests/corpus/objects/syntax.pdf	id=8 0	Malformed
+object_file	tests/corpus/objects/syntax.pdf	id=8 0	Malformed
+# 7.5.8.2: a number past a subsection's count, before the next, is missing (7.3.10), though the entry that far into the data names it
+object_bytes	tests/corpus/objects/syntax.pdf	id=12 0	null
+object_file	tests/corpus/objects/syntax.pdf	id=12 0	null
+# 7.5.4, 7.5.7: an object only in the object stream defined first is missing (7.3.10); one in the stream defined last is read
+object_bytes	tests/corpus/repair/object-stream-replaced.pdf	id=4 0	null
+object_file	tests/corpus/repair/object-stream-replaced.pdf	id=4 0	null
+object_bytes	tests/corpus/repair/object-stream-replaced.pdf	id=7 0	(seven)
+object_file	tests/corpus/repair/object-stream-replaced.pdf	id=7 0	(seven)
+# 7.5.4: a rebuild takes neither 4 0 objx for an object nor a dictionary that names /ObjStm without that Type for an object stream (7.5.7)
+object_bytes	tests/corpus/repair/scan-false-matches.pdf	id=4 0	(real)
+object_file	tests/corpus/repair/scan-false-matches.pdf	id=4 0	(real)
+object_bytes	tests/corpus/repair/scan-false-matches.pdf	id=9 0	null
+object_file	tests/corpus/repair/scan-false-matches.pdf	id=9 0	null
+# 7.6.3: an integer object of an encrypted file, which has no strings to decrypt
+object_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=7 0	42
+object_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=7 0	42

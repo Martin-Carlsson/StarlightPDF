@@ -1,11 +1,9 @@
-//! Cross-reference tables and streams and the indirect objects they locate (ISO 32000-2:2020, 7.5).
+//! Cross-reference tables and streams (ISO 32000-2:2020, 7.5.4 to 7.5.8).
 
-use crate::input::Source;
-use crate::object_stream;
-use crate::objects::{ObjectId, XrefEntry, XrefKind};
-use crate::pull::Pull;
+use crate::objects::{XrefEntry, XrefKind};
+use crate::store::Objects;
 use crate::stream::decoder;
-use crate::syntax::{Dictionary, Input, Keyword, Object, Reader, Token, is_white_space};
+use crate::syntax::{At, Input, Keyword, Reader, Token, is_white_space};
 use crate::xref_stream;
 use crate::{ErrorCode, PdfError};
 
@@ -31,29 +29,36 @@ struct Chain {
     steps: u64,
 }
 
-/// What a section holds for a looked-up object.
+/// What a section holds for a request.
 enum Lookup {
-    /// Its entry.
+    /// The entry asked for.
     Entry(XrefEntry),
-    /// No entry; the section's trailer.
-    Trailer(Dictionary),
+    /// No such entry: the section's trailer and its entries, declared or, for
+    /// [`Want::Count`], in use.
+    Trailer(At, u64),
 }
 
-/// The cross-reference sections of a source, read on demand.
-pub(crate) struct Xref<'source> {
-    /// Nesting depth of arrays and dictionaries.
-    depth_limit: u32,
-    /// Whether the newest trailer has `Encrypt`.
-    encrypted: bool,
-    /// The newest section's offset.
-    newest: u64,
-    /// The operation errors name.
-    operation: &'static str,
-    /// The source.
-    source: &'source Source,
+/// What is asked of a section.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Want {
+    /// Its entries in use, counted.
+    Count,
+    /// The entry of an object.
+    Entry(u32),
+    /// Its trailer and declared entries.
+    Trailer,
 }
 
 impl Chain {
+    /// A chain from `offset`.
+    const fn new(offset: u64) -> Self {
+        Self {
+            power: 1,
+            saved: offset,
+            steps: 0,
+        }
+    }
+
     /// Records the next offset; a repeat fails with [`ErrorCode::Malformed`].
     fn step(&mut self, offset: u64, operation: &'static str) -> Result<(), PdfError> {
         if offset == self.saved {
@@ -69,359 +74,81 @@ impl Chain {
     }
 }
 
-impl<'source> Xref<'source> {
-    /// A [`Chain`] from the newest section.
-    const fn chain(&self) -> Chain {
-        Chain {
-            power: 1,
-            saved: self.newest,
-            steps: 0,
-        }
-    }
-
-    /// The object `number` in the object stream `entry` names, at the entry's index
-    /// (ISO 32000-2:2020, 7.5.7).
-    fn compressed(&self, entry: XrefEntry, number: u32) -> Result<Object, PdfError> {
-        if self.encrypted {
-            return Err(PdfError::new(ErrorCode::Unsupported, self.operation));
-        }
-        let container = self
-            .entry(entry.stream)?
-            .filter(|found| found.kind == XrefKind::InUse)
-            .ok_or_else(|| self.malformed())?;
-        let mut reader = Reader::new(self.source, container.offset, self.operation);
-        if object_header(&mut reader, self.operation)?
-            != Some((i64::from(entry.stream), i64::from(container.generation)))
-        {
-            return Err(self.malformed());
-        }
-        let dictionary = reader
-            .object(self.depth_limit)?
-            .dictionary()
-            .ok_or_else(|| self.malformed())?;
-        let mut data = self.data(&mut reader, &dictionary, true)?;
-        object_stream::find(
-            &mut *data,
-            &dictionary,
-            number,
-            entry.index,
-            self.depth_limit,
-            self.operation,
-        )
-    }
-
-    /// The decoded data of the stream whose dictionary `reader` has just read; `length_indirect`
-    /// allows a `Length` that is a reference (ISO 32000-2:2020, 7.3.8.2).
-    fn data<I>(
-        &self,
-        reader: &mut Reader<I>,
-        dictionary: &Dictionary,
-        length_indirect: bool,
-    ) -> Result<Box<dyn Pull + 'source>, PdfError>
-    where
-        I: Input,
-    {
-        let start = reader.stream_start()?;
-        let found = dictionary.get(b"Length").ok_or_else(|| self.malformed())?;
-        let length = if let Some(value) = found.integer() {
-            value
-        } else if let Some(id) = found.reference() {
-            if !length_indirect {
-                return Err(PdfError::new(ErrorCode::Unsupported, self.operation));
-            }
-            self.length(id)?
-        } else {
-            return Err(self.malformed());
-        };
-        let size = self.source.size(self.operation)?;
-        let end = u64::try_from(length)
-            .ok()
-            .and_then(|bytes| start.checked_add(bytes))
-            .filter(|end| *end <= size)
-            .ok_or_else(|| self.malformed())?;
-        decoder(
-            self.source,
-            start,
-            end.saturating_sub(start),
-            dictionary,
-            self.operation,
-        )
-    }
-
-    /// The dictionary `reference` points at; anything else is [`ErrorCode::Malformed`].
-    pub(crate) fn dictionary(&self, reference: Option<&Object>) -> Result<Dictionary, PdfError> {
-        match reference.and_then(Object::reference) {
-            Some(id) => self.object(id)?.dictionary(),
-            None => None,
-        }
-        .ok_or_else(|| self.malformed())
-    }
-
-    /// The newest entry for object `number` along the `Prev` chain (ISO 32000-2:2020, 7.5.6).
-    fn entry(&self, number: u32) -> Result<Option<XrefEntry>, PdfError> {
-        let mut chain = self.chain();
-        let mut offset = self.newest;
-        loop {
-            match self.section(offset, Some(number))? {
-                Lookup::Entry(entry) => return Ok(Some(entry)),
-                Lookup::Trailer(trailer) => {
-                    if let Some(hybrid) = trailer.get(b"XRefStm") {
-                        let at = hybrid
-                            .integer()
-                            .and_then(|stream| u64::try_from(stream).ok())
-                            .ok_or_else(|| self.malformed())?;
-                        if let Lookup::Entry(entry) = self.section(at, Some(number))? {
-                            return Ok(Some(entry));
-                        }
-                    }
-                    match self.prev(&trailer)? {
-                        Some(prev) => {
-                            chain.step(prev, self.operation)?;
-                            offset = prev;
-                        }
-                        None => return Ok(None),
-                    }
-                }
-            }
-        }
-    }
-
-    /// The integer in the indirect object `id`, which must be in use and not in an object stream.
-    fn length(&self, id: ObjectId) -> Result<i64, PdfError> {
-        let entry = self
-            .entry(id.number)?
-            .filter(|found| found.kind == XrefKind::InUse)
-            .ok_or_else(|| self.malformed())?;
-        self.read_object(entry.offset, id)?
+/// The non-negative integer at `key` of `trailer`, when present.
+fn offset_at(objects: Objects<'_>, trailer: At, key: &[u8]) -> Result<Option<u64>, PdfError> {
+    objects.get(trailer, key)?.map_or(Ok(None), |found| {
+        found
             .integer()
-            .ok_or_else(|| self.malformed())
-    }
+            .and_then(|offset| u64::try_from(offset).ok())
+            .map(Some)
+            .ok_or_else(|| objects.malformed())
+    })
+}
 
-    /// A [`ErrorCode::Malformed`] error.
-    fn malformed(&self) -> PdfError {
-        PdfError::new(ErrorCode::Malformed, self.operation)
-    }
-
-    /// Indirect object `id`; null ([`Object::Other`]) when free or missing (ISO 32000-2:2020, 7.3.10).
-    pub(crate) fn object(&self, id: ObjectId) -> Result<Object, PdfError> {
-        match self.entry(id.number)? {
-            Some(entry) if entry.kind == XrefKind::InUse && entry.generation == id.generation => {
-                self.read_object(entry.offset, id)
-            }
-            Some(entry) if entry.kind == XrefKind::Compressed && id.generation == 0 => {
-                self.compressed(entry, id.number)
-            }
-            Some(_) | None => Ok(Object::Other),
-        }
-    }
-
-    /// The newest section through `startxref`, and its trailer, after checking the `Prev` chain
-    /// (ISO 32000-2:2020, 7.5.5 and 7.5.6); objects nest at most `depth_limit` deep.
-    pub(crate) fn open(
-        source: &'source Source,
-        depth_limit: u32,
-        operation: &'static str,
-    ) -> Result<(Self, Dictionary), PdfError> {
-        let malformed = || PdfError::new(ErrorCode::Malformed, operation);
-        let size = source.size(operation)?;
-        let tail_start = size.saturating_sub(TAIL_LEN);
-        let mut tail = vec![0; usize::try_from(size.min(TAIL_LEN)).unwrap_or_default()];
-        let count = source.read(tail_start, &mut tail, operation)?;
-        let keyword = tail
-            .get(..count)
-            .and_then(|bytes| {
-                bytes
-                    .windows(STARTXREF.len())
-                    .rposition(|window| window == STARTXREF)
-            })
-            .and_then(|index| u64::try_from(index.saturating_add(STARTXREF.len())).ok())
-            .ok_or_else(malformed)?;
-        let mut reader = Reader::new(source, tail_start.saturating_add(keyword), operation);
-        let Token::Integer(newest) = reader.token()? else {
-            return Err(malformed());
+/// The newest entry for object `number` along the `Prev` chain from `newest`
+/// (ISO 32000-2:2020, 7.5.6 and 7.5.8.4).
+pub(crate) fn entry(
+    objects: Objects<'_>,
+    newest: u64,
+    number: u32,
+) -> Result<Option<XrefEntry>, PdfError> {
+    let mut chain = Chain::new(newest);
+    let mut offset = newest;
+    loop {
+        let trailer = match section(objects, offset, Want::Entry(number))? {
+            Lookup::Entry(entry) => return Ok(Some(entry)),
+            Lookup::Trailer(trailer, _) => trailer,
         };
-        let mut xref = Self {
-            depth_limit,
-            encrypted: false,
-            newest: u64::try_from(newest).ok().ok_or_else(malformed)?,
-            operation,
-            source,
-        };
-        let Lookup::Trailer(trailer) = xref.section(xref.newest, None)? else {
-            return Err(malformed());
-        };
-        xref.encrypted = trailer.get(b"Encrypt").is_some();
-        let mut chain = xref.chain();
-        let mut prev = xref.prev(&trailer)?;
-        while let Some(offset) = prev {
-            chain.step(offset, operation)?;
-            let Lookup::Trailer(older) = xref.section(offset, None)? else {
-                return Err(malformed());
-            };
-            prev = xref.prev(&older)?;
-        }
-        Ok((xref, trailer))
-    }
-
-    /// The offset of the section before the one `trailer` ends, from its `Prev`.
-    fn prev(&self, trailer: &Dictionary) -> Result<Option<u64>, PdfError> {
-        trailer.get(b"Prev").map_or(Ok(None), |prev| {
-            prev.integer()
-                .and_then(|offset| u64::try_from(offset).ok())
-                .map(Some)
-                .ok_or_else(|| self.malformed())
-        })
-    }
-
-    /// The entry at `offset` for object `number` (ISO 32000-2:2020, 7.5.4).
-    fn read_entry(&self, offset: u64, number: u32) -> Result<XrefEntry, PdfError> {
-        let mut bytes = [0; ENTRY_LEN];
-        let read = self.source.read(offset, &mut bytes, self.operation)?;
-        let [
-            offset_digits @ ..,
-            b' ',
-            g0,
-            g1,
-            g2,
-            g3,
-            g4,
-            b' ',
-            letter,
-            end0,
-            end1,
-        ] = bytes
-        else {
-            return Err(self.malformed());
-        };
-        let kind = match letter {
-            b'f' => Some(XrefKind::Free),
-            b'n' => Some(XrefKind::InUse),
-            _ => None,
-        };
-        let generation = decimal(&[g0, g1, g2, g3, g4]).and_then(|value| u16::try_from(value).ok());
-        match (kind, decimal(&offset_digits), generation) {
-            (Some(found), Some(at), Some(version))
-                if read == bytes.len()
-                    && matches!((end0, end1), (b' ', b'\r' | b'\n') | (b'\r', b'\n')) =>
-            {
-                Ok(XrefEntry {
-                    generation: version,
-                    index: 0,
-                    kind: found,
-                    number,
-                    offset: at,
-                    stream: 0,
-                })
-            }
-            _ => Err(self.malformed()),
-        }
-    }
-
-    /// The object `id` at `offset`.
-    fn read_object(&self, offset: u64, id: ObjectId) -> Result<Object, PdfError> {
-        let mut reader = Reader::new(self.source, offset, self.operation);
-        if object_header(&mut reader, self.operation)?
-            != Some((i64::from(id.number), i64::from(id.generation)))
+        if let Some(hybrid) = offset_at(objects, trailer, b"XRefStm")?
+            && let Lookup::Entry(entry) = section(objects, hybrid, Want::Entry(number))?
         {
-            return Err(self.malformed());
+            return Ok(Some(entry));
         }
-        reader.object(self.depth_limit)
-    }
-
-    /// The section at `offset`: object `number`'s entry if it has one, else its trailer
-    /// (ISO 32000-2:2020, 7.5.4 and 7.5.5).
-    ///
-    /// Reads only the subsection headers, the entry and the last entry of each skipped subsection.
-    fn section(&self, offset: u64, number: Option<u32>) -> Result<Lookup, PdfError> {
-        let entry_len = u64::try_from(ENTRY_LEN)
-            .ok()
-            .ok_or_else(|| self.malformed())?;
-        let mut keyword = [0; XREF.len() + 1];
-        let read = self.source.read(offset, &mut keyword, self.operation)?;
-        let at_xref = read == keyword.len()
-            && keyword
-                .split_last()
-                .is_some_and(|(last, start)| start == XREF && is_white_space(*last));
-        if !at_xref {
-            return self.stream_section(offset, number);
-        }
-        let mut reader = Reader::new(
-            self.source,
-            offset.saturating_add(u64::try_from(XREF.len()).unwrap_or_default()),
-            self.operation,
-        );
-        loop {
-            let first = match reader.token()? {
-                Token::Keyword(Keyword::Trailer) => {
-                    return reader
-                        .object(self.depth_limit)?
-                        .dictionary()
-                        .map(Lookup::Trailer)
-                        .ok_or_else(|| self.malformed());
-                }
-                Token::Integer(first) => first,
-                Token::ArrayEnd
-                | Token::ArrayStart
-                | Token::DictionaryEnd
-                | Token::DictionaryStart
-                | Token::Keyword(_)
-                | Token::Name(_)
-                | Token::Other => return Err(self.malformed()),
-            };
-            let Token::Integer(count) = reader.token()? else {
-                return Err(self.malformed());
-            };
-            reader.skip_white_space()?;
-            let start = reader.position();
-            let (Ok(first_number), Ok(entries)) = (u64::try_from(first), u64::try_from(count))
-            else {
-                return Err(self.malformed());
-            };
-            let end = entries
-                .checked_mul(entry_len)
-                .and_then(|len| start.checked_add(len))
-                .ok_or_else(|| self.malformed())?;
-            if let Some(wanted) = number
-                && let Some(index) = u64::from(wanted).checked_sub(first_number)
-                && index < entries
-            {
-                let at = index.saturating_mul(entry_len).saturating_add(start);
-                return self.read_entry(at, wanted).map(Lookup::Entry);
+        match offset_at(objects, trailer, b"Prev")? {
+            Some(prev) => {
+                chain.step(prev, objects.operation())?;
+                offset = prev;
             }
-            if let Some(last) = end.checked_sub(entry_len).filter(|_| entries > 0) {
-                let _entry = self.read_entry(last, 0)?;
-            }
-            reader.seek(end);
+            None => return Ok(None),
         }
     }
+}
 
-    /// The cross-reference stream at `offset`: object `number`'s entry if it has one, else its
-    /// dictionary, which is its trailer (ISO 32000-2:2020, 7.5.8).
-    fn stream_section(&self, offset: u64, number: Option<u32>) -> Result<Lookup, PdfError> {
-        let mut reader = Reader::new(self.source, offset, self.operation);
-        if object_header(&mut reader, self.operation)?.is_none() {
-            return Err(self.malformed());
-        }
-        let dictionary = reader
-            .object(self.depth_limit)
-            .map_err(|error| malformed_unless_io(error, self.operation))?
-            .dictionary()
-            .filter(|found| found.get(b"Type").is_some_and(|kind| kind.is_name(b"XRef")))
-            .ok_or_else(|| self.malformed())?;
-        let Some(wanted) = number else {
-            return Ok(Lookup::Trailer(dictionary));
-        };
-        let mut data = self.data(&mut reader, &dictionary, false)?;
-        Ok(
-            xref_stream::lookup(self.source, &dictionary, &mut *data, wanted, self.operation)?
-                .map_or(Lookup::Trailer(dictionary), Lookup::Entry),
-        )
+/// The entries in use the sections along the `Prev` chain from `newest` hold, an object
+/// counted once per section that lists it.
+pub(crate) fn in_use(objects: Objects<'_>, newest: u64) -> Result<u64, PdfError> {
+    walk_for(objects, newest, Want::Count).map(|(_, used)| used)
+}
+
+/// Whether a cross-reference table or stream starts at `offset` (ISO 32000-2:2020, 7.5.4 and 7.5.8).
+pub(crate) fn is_section(objects: Objects<'_>, offset: u64) -> Result<bool, PdfError> {
+    let mut keyword = [0; XREF.len() + 1];
+    let read = objects
+        .source()
+        .read(offset, &mut keyword, objects.operation())?;
+    if read == keyword.len()
+        && keyword
+            .split_last()
+            .is_some_and(|(last, start)| start == XREF && is_white_space(*last))
+    {
+        return Ok(true);
+    }
+    let mut reader = Reader::new(objects.source(), offset, objects.operation());
+    Ok(object_header(&mut reader, objects.operation())?.is_some())
+}
+
+/// `error`, or [`ErrorCode::Malformed`] unless it is [`ErrorCode::Io`].
+fn malformed_unless_io(error: PdfError, operation: &'static str) -> PdfError {
+    if error.code() == ErrorCode::Io {
+        error
+    } else {
+        PdfError::new(ErrorCode::Malformed, operation)
     }
 }
 
 /// `number generation obj` right at the reader, the start of an indirect object
 /// (ISO 32000-2:2020, 7.3.10); a failure other than [`ErrorCode::Io`] is [`ErrorCode::Malformed`].
-fn object_header<I>(
+pub(crate) fn object_header<I>(
     reader: &mut Reader<I>,
     operation: &'static str,
 ) -> Result<Option<(i64, i64)>, PdfError>
@@ -446,12 +173,231 @@ where
     }
 }
 
-/// `error`, or [`ErrorCode::Malformed`] unless it is [`ErrorCode::Io`].
-fn malformed_unless_io(error: PdfError, operation: &'static str) -> PdfError {
-    if error.code() == ErrorCode::Io {
-        error
-    } else {
-        PdfError::new(ErrorCode::Malformed, operation)
+/// The entry at `offset` for object `number` (ISO 32000-2:2020, 7.5.4).
+fn read_entry(objects: Objects<'_>, offset: u64, number: u32) -> Result<XrefEntry, PdfError> {
+    let mut bytes = [0; ENTRY_LEN];
+    let read = objects
+        .source()
+        .read(offset, &mut bytes, objects.operation())?;
+    let [
+        offset_digits @ ..,
+        b' ',
+        g0,
+        g1,
+        g2,
+        g3,
+        g4,
+        b' ',
+        letter,
+        end0,
+        end1,
+    ] = bytes
+    else {
+        return Err(objects.malformed());
+    };
+    let kind = match letter {
+        b'f' => Some(XrefKind::Free),
+        b'n' => Some(XrefKind::InUse),
+        _ => None,
+    };
+    let generation = decimal(&[g0, g1, g2, g3, g4]).and_then(|value| u16::try_from(value).ok());
+    match (kind, decimal(&offset_digits), generation) {
+        (Some(found), Some(at), Some(version))
+            if read == bytes.len()
+                && matches!((end0, end1), (b' ', b'\r' | b'\n') | (b'\r', b'\n')) =>
+        {
+            Ok(XrefEntry {
+                generation: version,
+                index: 0,
+                kind: found,
+                number,
+                offset: at,
+                stream: 0,
+            })
+        }
+        _ => Err(objects.malformed()),
+    }
+}
+
+/// What the section at `offset` holds for `want` (ISO 32000-2:2020, 7.5.4 and 7.5.5).
+///
+/// Unless counting, reads only the subsection headers, the entry and the last entry of each
+/// other subsection.
+fn section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfError> {
+    let malformed = || objects.malformed();
+    let entry_len = u64::try_from(ENTRY_LEN).ok().ok_or_else(malformed)?;
+    let mut keyword = [0; XREF.len() + 1];
+    let read = objects
+        .source()
+        .read(offset, &mut keyword, objects.operation())?;
+    let at_xref = read == keyword.len()
+        && keyword
+            .split_last()
+            .is_some_and(|(last, start)| start == XREF && is_white_space(*last));
+    if !at_xref {
+        return stream_section(objects, offset, want);
+    }
+    let mut reader = Reader::new(
+        objects.source(),
+        offset.saturating_add(u64::try_from(XREF.len()).unwrap_or_default()),
+        objects.operation(),
+    );
+    let mut total: u64 = 0;
+    loop {
+        let first = match reader.token()? {
+            Token::Keyword(Keyword::Trailer) => {
+                let trailer = reader
+                    .head(objects.depth_limit())?
+                    .dictionary()
+                    .ok_or_else(malformed)?;
+                return Ok(Lookup::Trailer(trailer, total));
+            }
+            Token::Integer(first) => first,
+            Token::ArrayEnd
+            | Token::ArrayStart
+            | Token::DictionaryEnd
+            | Token::DictionaryStart
+            | Token::Keyword(_)
+            | Token::Name(_)
+            | Token::Real(_)
+            | Token::Reference(_)
+            | Token::String(_) => return Err(malformed()),
+        };
+        let Token::Integer(count) = reader.token()? else {
+            return Err(malformed());
+        };
+        reader.skip_white_space()?;
+        let start = reader.position();
+        let (Ok(first_number), Ok(entries)) = (u64::try_from(first), u64::try_from(count)) else {
+            return Err(malformed());
+        };
+        let end = entries
+            .checked_mul(entry_len)
+            .and_then(|len| start.checked_add(len))
+            .ok_or_else(malformed)?;
+        let number_at = |index: u64| u32::try_from(first_number.saturating_add(index));
+        if let Want::Entry(wanted) = want
+            && let Some(index) = u64::from(wanted).checked_sub(first_number)
+            && index < entries
+        {
+            let at = index.saturating_mul(entry_len).saturating_add(start);
+            return read_entry(objects, at, wanted).map(Lookup::Entry);
+        }
+        if want == Want::Count {
+            for index in 0..entries {
+                let at = index.saturating_mul(entry_len).saturating_add(start);
+                let number = number_at(index).ok().ok_or_else(malformed)?;
+                if read_entry(objects, at, number)?.kind == XrefKind::InUse {
+                    total = total.saturating_add(1);
+                }
+            }
+        } else {
+            if let Some(last) = end.checked_sub(entry_len).filter(|_| entries > 0) {
+                let _last = read_entry(objects, last, 0)?;
+            }
+            total = total.saturating_add(entries);
+        }
+        reader.seek(end);
+    }
+}
+
+/// The offset of the newest section, from `startxref` in the last 1 KiB (ISO 32000-2:2020, 7.5.5).
+pub(crate) fn startxref(objects: Objects<'_>) -> Result<u64, PdfError> {
+    let malformed = || objects.malformed();
+    let source = objects.source();
+    let size = source.size(objects.operation())?;
+    let tail_start = size.saturating_sub(TAIL_LEN);
+    let mut tail = [0; 1024];
+    let count = source.read(tail_start, &mut tail, objects.operation())?;
+    let keyword = tail
+        .get(..count)
+        .and_then(|bytes| {
+            bytes
+                .windows(STARTXREF.len())
+                .rposition(|window| window == STARTXREF)
+        })
+        .and_then(|index| u64::try_from(index.saturating_add(STARTXREF.len())).ok())
+        .ok_or_else(malformed)?;
+    let mut reader = Reader::new(
+        source,
+        tail_start.saturating_add(keyword),
+        objects.operation(),
+    );
+    let Token::Integer(newest) = reader.token()? else {
+        return Err(malformed());
+    };
+    u64::try_from(newest).ok().ok_or_else(malformed)
+}
+
+/// What the cross-reference stream at `offset` holds for `want`; its dictionary is its trailer
+/// (ISO 32000-2:2020, 7.5.8).
+fn stream_section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfError> {
+    let operation = objects.operation();
+    let mut reader = Reader::new(objects.source(), offset, operation);
+    if object_header(&mut reader, operation)?.is_none() {
+        return Err(objects.malformed());
+    }
+    let dictionary = reader
+        .value(objects.depth_limit())
+        .map_err(|error| malformed_unless_io(error, operation))?
+        .dictionary()
+        .ok_or_else(|| objects.malformed())?;
+    if !objects
+        .get(dictionary, b"Type")?
+        .is_some_and(|kind| kind.is_name(b"XRef"))
+    {
+        return Err(objects.malformed());
+    }
+    if want == Want::Trailer {
+        let declared = xref_stream::declared(objects, dictionary)?;
+        return Ok(Lookup::Trailer(dictionary, declared));
+    }
+    let (start, length) = objects.extent(&mut reader, dictionary, false)?;
+    let mut data = decoder(objects, None, start, length, dictionary, true)?;
+    match want {
+        Want::Entry(number) => Ok(
+            xref_stream::lookup(objects, dictionary, &mut *data, number)?
+                .map_or(Lookup::Trailer(dictionary, 0), Lookup::Entry),
+        ),
+        Want::Count | Want::Trailer => Ok(Lookup::Trailer(
+            dictionary,
+            xref_stream::count(objects, dictionary, &mut *data)?,
+        )),
+    }
+}
+
+/// The newest trailer and the entries the sections along the `Prev` chain from `newest` declare
+/// (ISO 32000-2:2020, 7.5.6 and 7.5.8.4).
+pub(crate) fn walk(objects: Objects<'_>, newest: u64) -> Result<(At, u64), PdfError> {
+    walk_for(objects, newest, Want::Trailer)
+}
+
+/// The newest trailer and the sum over the sections along the `Prev` chain of what `want`
+/// counts.
+fn walk_for(objects: Objects<'_>, newest: u64, want: Want) -> Result<(At, u64), PdfError> {
+    let mut chain = Chain::new(newest);
+    let mut offset = newest;
+    let mut first = None;
+    let mut total: u64 = 0;
+    loop {
+        let Lookup::Trailer(trailer, entries) = section(objects, offset, want)? else {
+            return Err(objects.malformed());
+        };
+        total = total.saturating_add(entries);
+        let newest_trailer = *first.get_or_insert(trailer);
+        if let Some(hybrid) = offset_at(objects, trailer, b"XRefStm")? {
+            let Lookup::Trailer(_, more) = section(objects, hybrid, want)? else {
+                return Err(objects.malformed());
+            };
+            total = total.saturating_add(more);
+        }
+        match offset_at(objects, trailer, b"Prev")? {
+            Some(prev) => {
+                chain.step(prev, objects.operation())?;
+                offset = prev;
+            }
+            None => return Ok((newest_trailer, total)),
+        }
     }
 }
 

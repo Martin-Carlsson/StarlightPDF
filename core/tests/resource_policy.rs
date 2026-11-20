@@ -77,25 +77,33 @@ fn new_accepts_no_options_or_only_depth_limit() {
 }
 
 #[test]
-fn new_rejects_zero_depth_and_other_options() {
-    assert_eq!(
-        policy(Some(0)).map(|_| ()).map_err(|error| error.code()),
-        Err(ErrorCode::InvalidArgument),
-        "depth_limit 0"
-    );
-    let others: [(&str, Setter); 8] = [
+fn new_rejects_zero_limits_and_unimplemented_options() {
+    let zeros: [(&str, Setter); 3] = [
+        ("decoded_limit", |options| options.decoded_limit = Some(0)),
+        ("depth_limit", |options| options.depth_limit = Some(0)),
+        ("object_limit", |options| options.object_limit = Some(0)),
+    ];
+    for (name, set) in zeros {
+        let mut options = ResourcePolicyOptions::default();
+        set(&mut options);
+        assert_eq!(
+            ResourcePolicy::new(&options)
+                .map(|_| ())
+                .map_err(|error| error.code()),
+            Err(ErrorCode::InvalidArgument),
+            "{name} 0"
+        );
+    }
+    let others: [(&str, Setter); 5] = [
         ("cache_limit", |options| options.cache_limit = Some(1)),
         ("concurrency", |options| options.concurrency = Some(1)),
-        ("decoded_limit", |options| options.decoded_limit = Some(1)),
         ("memory_budget", |options| options.memory_budget = Some(1)),
-        ("object_limit", |options| options.object_limit = Some(1)),
         ("temporary_directory", |options| {
             options.temporary_directory = Some(PathBuf::new());
         }),
         ("temporary_quota", |options| {
             options.temporary_quota = Some(1);
         }),
-        ("warning_limit", |options| options.warning_limit = Some(1)),
     ];
     for (name, set) in others {
         for depth_limit in [None, Some(8)] {

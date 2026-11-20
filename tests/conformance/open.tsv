@@ -27,3 +27,98 @@ open_file	tests/corpus/header/version-1-dot.pdf	InvalidHeader
 open_file	tests/corpus/header/version-1.10.pdf	InvalidHeader
 open_file	tests/corpus/header/no-eol.pdf	InvalidHeader
 open_file	tests/corpus/header/missing.pdf	Io
+# Repair: 7.5.2 (bytes before header), 7.5.5 (startxref), 7.5.4 (xref table)
+open_bytes	tests/corpus/repair/leading-bytes.pdf	ok
+open_file	tests/corpus/repair/leading-bytes.pdf	ok
+open_bytes	tests/corpus/repair/startxref-wrong.pdf	ok
+open_file	tests/corpus/repair/startxref-wrong.pdf	ok
+open_bytes	tests/corpus/repair/startxref-missing.pdf	ok
+open_file	tests/corpus/repair/startxref-missing.pdf	ok
+open_bytes	tests/corpus/repair/xref-damaged.pdf	ok
+open_file	tests/corpus/repair/xref-damaged.pdf	ok
+open_bytes	tests/corpus/repair/xref-missing.pdf	ok
+open_file	tests/corpus/repair/xref-missing.pdf	ok
+open_bytes	tests/corpus/repair/leading-bytes.pdf	strict	Malformed
+open_file	tests/corpus/repair/leading-bytes.pdf	strict	Malformed
+open_bytes	tests/corpus/repair/startxref-wrong.pdf	strict	Malformed
+open_file	tests/corpus/repair/startxref-wrong.pdf	strict	Malformed
+open_bytes	tests/corpus/repair/startxref-missing.pdf	strict	Malformed
+open_file	tests/corpus/repair/startxref-missing.pdf	strict	Malformed
+open_bytes	tests/corpus/repair/xref-damaged.pdf	strict	Malformed
+open_file	tests/corpus/repair/xref-damaged.pdf	strict	Malformed
+open_bytes	tests/corpus/repair/xref-missing.pdf	strict	Malformed
+open_file	tests/corpus/repair/xref-missing.pdf	strict	Malformed
+# Repair, faults seen only on reading the object: 7.3.10 (endobj), 7.3.8.2 (Length)
+open_bytes	tests/corpus/repair/endobj-missing.pdf	ok
+open_file	tests/corpus/repair/endobj-missing.pdf	ok
+open_bytes	tests/corpus/repair/length-wrong.pdf	ok
+open_file	tests/corpus/repair/length-wrong.pdf	ok
+open_bytes	tests/corpus/repair/length-missing.pdf	ok
+open_file	tests/corpus/repair/length-missing.pdf	ok
+open_bytes	tests/corpus/repair/two-faults.pdf	ok
+open_file	tests/corpus/repair/two-faults.pdf	ok
+# 7.5.4: 6 entries declared, over object_limit 5, one garbled: the open rebuilds and finds objects 1 to 5
+open_bytes	tests/corpus/repair/xref-entry-garbled.pdf	object_limit=5	ok
+open_file	tests/corpus/repair/xref-entry-garbled.pdf	object_limit=5	ok
+open_bytes	tests/corpus/repair/xref-entry-garbled.pdf	strict	object_limit=5	Malformed
+open_file	tests/corpus/repair/xref-entry-garbled.pdf	strict	object_limit=5	Malformed
+# ISO 32000-2:2020, 7.6.4.3.3 and 7.6.4.4 (Algorithms 2.A, 6, 7): user, owner, empty user password; a wrong one fails
+open_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=owner	ok
+open_file	tests/corpus/encryption/r2-rc4-40.pdf	password=owner	ok
+open_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r2-rc4-40.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r3-rc4-128.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r4-rc4-128.pdf	password=owner	ok
+open_file	tests/corpus/encryption/r4-rc4-128.pdf	password=owner	ok
+open_bytes	tests/corpus/encryption/r4-rc4-128.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r4-rc4-128.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=owner	ok
+open_file	tests/corpus/encryption/r4-aes-128.pdf	password=owner	ok
+open_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r4-aes-128.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r5-aes-256.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r5-aes-256.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=wrong	InvalidPassword
+open_file	tests/corpus/encryption/r6-aes-256.pdf	password=wrong	InvalidPassword
+open_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	password=owner	ok
+open_file	tests/corpus/encryption/r3-empty-user-password.pdf	password=owner	ok
+open_bytes	tests/corpus/encryption/r6-empty-user-password.pdf	password=owner	ok
+open_file	tests/corpus/encryption/r6-empty-user-password.pdf	password=owner	ok
+open_bytes	tests/corpus/encryption/r2-rc4-40.pdf	InvalidPassword
+open_file	tests/corpus/encryption/r2-rc4-40.pdf	InvalidPassword
+open_bytes	tests/corpus/encryption/r6-aes-256.pdf	InvalidPassword
+open_file	tests/corpus/encryption/r6-aes-256.pdf	InvalidPassword
+# 7.6.4.3.3 Algorithm 2.A a: a revision 6 password is truncated to 127 bytes
+open_bytes	tests/corpus/encryption/r6-long-password.pdf	password=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456	ok
+open_file	tests/corpus/encryption/r6-long-password.pdf	password=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456	ok
+open_bytes	tests/corpus/encryption/r6-long-password.pdf	password=012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345	InvalidPassword
+open_file	tests/corpus/encryption/r6-long-password.pdf	password=012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345	InvalidPassword
+# 7.6.4.3.2 Algorithm 2 a and Annex D: a revision 2 to 4 password is in PDFDocEncoding; user, owner
+open_bytes	tests/corpus/encryption/r3-non-ascii-password.pdf	password=café€	ok
+open_file	tests/corpus/encryption/r3-non-ascii-password.pdf	password=café€	ok
+open_bytes	tests/corpus/encryption/r3-non-ascii-password.pdf	password=naïve—	ok
+open_file	tests/corpus/encryption/r3-non-ascii-password.pdf	password=naïve—	ok
+# 7.6.4.3.3 Algorithm 2.A: an O without its salts matches no owner password, but the user one opens
+open_bytes	tests/corpus/encryption/r6-short-owner.pdf	password=user	ok
+open_file	tests/corpus/encryption/r6-short-owner.pdf	password=user	ok
+open_bytes	tests/corpus/encryption/r6-short-owner.pdf	password=owner	InvalidPassword
+open_file	tests/corpus/encryption/r6-short-owner.pdf	password=owner	InvalidPassword
+# 7.6.5 public-key and 7.6.2 Table 20 Filter: an unknown security handler
+open_bytes	tests/corpus/encryption/public-key.pdf	Unsupported
+open_file	tests/corpus/encryption/public-key.pdf	Unsupported
+open_bytes	tests/corpus/encryption/unknown-handler.pdf	Unsupported
+open_file	tests/corpus/encryption/unknown-handler.pdf	Unsupported
+# 7.6.2 Table 20 Length: a key length for revision 3 is a multiple of 8 from 40 to 128
+open_bytes	tests/corpus/encryption/key-length-136.pdf	Malformed
+open_file	tests/corpus/encryption/key-length-136.pdf	Malformed
+open_bytes	tests/corpus/encryption/key-length-44.pdf	Malformed
+open_file	tests/corpus/encryption/key-length-44.pdf	Malformed
+# 7.5.4, 7.5.7: a rebuild's object stream members count toward the object limit
+open_bytes	tests/corpus/repair/object-stream-replaced.pdf	object_limit=5	LimitExceeded
+open_file	tests/corpus/repair/object-stream-replaced.pdf	object_limit=5	LimitExceeded
+open_bytes	tests/corpus/repair/object-stream-replaced.pdf	object_limit=6	ok
+open_file	tests/corpus/repair/object-stream-replaced.pdf	object_limit=6	ok
+# 7.4.4.4, 7.5.7: an empty object stream under TIFF predictor 2 decodes to no bytes, within decoded_limit 2
+open_bytes	tests/corpus/streams/predictor-empty.pdf	decoded_limit=2	ok
+open_file	tests/corpus/streams/predictor-empty.pdf	decoded_limit=2	ok
