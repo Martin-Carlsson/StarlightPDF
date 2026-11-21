@@ -161,6 +161,7 @@ pub mod objects;
 pub mod output;
 mod overlay;
 pub mod page;
+mod part;
 mod predictor;
 pub mod progress;
 mod pull;

@@ -3,11 +3,13 @@
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use crate::analysis::{CompareOptions, Differences};
 use crate::annotations::GenerateAppearancesOptions;
 use crate::arrange::{
-    ImposeOptions, InsertBlankPageOptions, InsertPagesOptions, InsertTocOptions, SplitOptions,
+    ImposeOptions, InsertBlankPageOptions, InsertPagesOptions, InsertTocOptions, SplitBy,
+    SplitOptions,
 };
 use crate::attachments::{
     AddAttachmentOptions, Attachment, Attachments, Collection, SetCollectionOptions,
@@ -38,6 +40,7 @@ use crate::objects::{
 use crate::output::Sink;
 use crate::overlay::{Dictionary, Object, Overlay};
 use crate::page::{self, Page};
+use crate::part::{self, Pages, Part};
 use crate::progress::Progress;
 use crate::rendering::{ColorSpace, PrintOptions};
 use crate::security::{Cipher, Encryption, Permission, SanitizeOptions};
@@ -107,6 +110,8 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// Whether saves write the source decrypted by default: a part's do (ISO 32000-2:2020, 7.6).
+    decrypted: bool,
     /// The changes.
     overlay: Arc<Overlay>,
     /// The shared state.
@@ -116,8 +121,8 @@ pub struct Document {
 /// Documents, one at a time.
 #[derive(Clone, Debug)]
 pub struct Documents {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// The split giving them.
+    parts: Arc<Mutex<Parts>>,
 }
 
 /// The format [`Document::convert_from`] reads.
@@ -179,6 +184,23 @@ pub enum Optimization {
 pub struct PageOptions {
     /// The page index.
     pub index: u32,
+}
+
+/// A split's state: its document, pages, where parts start and the next part.
+#[derive(Debug)]
+struct Parts {
+    /// Leave out what a part cannot keep.
+    allow_loss: bool,
+    /// Pages per part; 0 for parts at `starts`.
+    count: u32,
+    /// The next part's index.
+    next: u32,
+    /// The document's pages.
+    pages: Arc<Pages>,
+    /// The document split.
+    source: Document,
+    /// The first pages of the parts, when not `count` pages each.
+    starts: Vec<u32>,
 }
 
 /// Options for [`Document::revert`].
@@ -576,6 +598,7 @@ impl Document {
         ]))?;
         overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
         Ok(Self {
+            decrypted: false,
             overlay: Arc::new(overlay),
             store: Arc::new(Store::create(policy, version)?),
         })
@@ -1009,6 +1032,7 @@ impl Document {
         let store = Store::open(source, policy, options.strict, &options.password)?;
         let next = store.objects("Document::open").size()?;
         Ok(Self {
+            decrypted: false,
             overlay: Arc::new(Overlay::new(next)),
             store: Arc::new(store),
         })
@@ -1045,14 +1069,35 @@ impl Document {
     /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn page_count(&self) -> Result<u32, PdfError> {
         let objects = self.store.objects("Document::page_count");
-        let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
-        let pages = objects.dictionary(objects.get(catalog, b"Pages")?)?;
-        match objects.get(pages, b"Count")? {
-            Some(Value::Reference(id)) => objects.resolve(id)?.integer(),
-            found => found.as_ref().and_then(Value::integer),
-        }
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| objects.malformed())
+        let overlay = &*self.overlay;
+        let count = if overlay.is_changed() {
+            let trailer = Object::Dictionary(overlay.trailer(objects)?);
+            let catalog = overlay.entry(objects, &trailer, b"Root")?;
+            let pages = overlay.entry(objects, &catalog, b"Pages")?;
+            match overlay.entry(objects, &pages, b"Count")? {
+                Object::Integer(found) => Some(found),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => None,
+            }
+        } else {
+            // Read in place: a catalog or root node can be too large to hold.
+            let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
+            let pages = objects.dictionary(objects.get(catalog, b"Pages")?)?;
+            match objects.get(pages, b"Count")? {
+                Some(Value::Reference(id)) => objects.resolve(id)?.integer(),
+                found => found.as_ref().and_then(Value::integer),
+            }
+        };
+        count
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| objects.malformed())
     }
 
     /// Saves incrementally with room for a signature, for the caller to sign.
@@ -1186,7 +1231,7 @@ impl Document {
         /// The operation.
         const SAVE: &str = "Document::save";
         let objects = self.store.objects(SAVE);
-        let encrypted = objects.security().is_some();
+        let encrypted = objects.security().is_some() && !self.decrypted;
         let defaults = !options.allow_loss
             && options.color_space.is_none()
             && options.image_quality.is_none()
@@ -1499,16 +1544,62 @@ impl Document {
         ))
     }
 
-    /// Splits the pages into new documents.
+    /// Splits the pages into parts of `count` pages, or from each of `starts` to the next, the
+    /// last to the end; pages before the first start are in no part. A part holds only its pages,
+    /// their inherited attributes made their own, under a page tree of its own, with the info
+    /// dictionary, output intents and layers; links between its pages lead to them
+    /// (ISO 32000-2:2020, 7.7.3, 8.11.4, 12.3.2, 14.3.3, 14.11.5).
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts and a
+    /// link to a page in another part fail with [`ErrorCode::LossRefused`] unless `allow_loss`,
+    /// which leaves them out; such a link keeps its appearance. A `count` of 0 and `starts` empty,
+    /// not ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
+    /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
     pub fn split(&self, options: &SplitOptions) -> Result<Documents, PdfError> {
-        let _: &SplitOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::split"))
+        /// The operation.
+        const SPLIT: &str = "Document::split";
+        let invalid = || PdfError::new(ErrorCode::InvalidArgument, SPLIT);
+        let (count, starts) = match options.by {
+            SplitBy::Pages if options.count == 0 => return Err(invalid()),
+            SplitBy::Pages => (options.count, Vec::new()),
+            SplitBy::Ranges => (0, options.starts.clone()),
+            SplitBy::Bookmarks | SplitBy::Size => {
+                return Err(PdfError::new(ErrorCode::NotImplemented, SPLIT));
+            }
+        };
+        let total = self.page_count()?;
+        if count == 0
+            && (!starts.is_sorted_by(|before, after| before < after)
+                || starts.last().is_none_or(|&last| last >= total))
+        {
+            return Err(invalid());
+        }
+        let objects = self.store.objects(SPLIT);
+        if !options.allow_loss {
+            part::refuse(
+                objects,
+                &self.overlay,
+                objects.security().is_some() && !self.decrypted,
+            )?;
+        }
+        let pages = Pages::read(objects, &self.overlay)?;
+        if pages.count() != total {
+            return Err(objects.malformed());
+        }
+        Ok(Documents {
+            parts: Arc::new(Mutex::new(Parts {
+                allow_loss: options.allow_loss,
+                count,
+                next: 0,
+                pages: Arc::new(pages),
+                source: self.clone(),
+                starts,
+            })),
+        })
     }
 
     /// Stamps text or `image` on pages: watermarks, headers, footers, page and Bates numbers.
@@ -1697,15 +1788,62 @@ impl Document {
 }
 
 impl Documents {
-    /// The next document, or `None` after the last.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The next document, or `None` after the last; a part is made only when asked for, and
+    /// unsaved, never encrypted.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
     pub fn next(&self) -> Result<Option<Document>, PdfError> {
-        Err(PdfError::new(ErrorCode::NotImplemented, "Documents::next"))
+        let (source, pages, range, allow_loss) = {
+            let mut parts = self.parts.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some(range) = parts.range() else {
+                return Ok(None);
+            };
+            parts.next = parts.next.saturating_add(1);
+            (
+                parts.source.clone(),
+                Arc::clone(&parts.pages),
+                range,
+                parts.allow_loss,
+            )
+        };
+        let part = Part::new((&source.overlay, &source.store), &pages, range)?;
+        if !allow_loss {
+            part.refuse_links()?;
+        }
+        let objects = source.store.objects("Documents::next");
+        let info = Object::Dictionary(source.overlay.trailer(objects)?).take(b"Info");
+        let (catalog, next) = (part.catalog(), part.next());
+        let overlay = Overlay::with_view(Box::new(part), next);
+        let root = overlay.add(Object::Dictionary(catalog))?;
+        let mut trailer = vec![(b"Root".to_vec(), Object::Reference(root))];
+        trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
+        overlay.set_trailer(trailer);
+        Ok(Some(Document {
+            decrypted: true,
+            overlay: Arc::new(overlay),
+            store: Arc::clone(&source.store),
+        }))
+    }
+}
+
+impl Parts {
+    /// The pages of the next part, first and one past the last; `None` after the last.
+    fn range(&self) -> Option<(u32, u32)> {
+        let total = self.pages.count();
+        if self.count > 0 {
+            let first = self.next.checked_mul(self.count)?;
+            return (first < total).then(|| (first, first.saturating_add(self.count).min(total)));
+        }
+        let at = usize::try_from(self.next).ok()?;
+        let first = *self.starts.get(at)?;
+        let end = self
+            .starts
+            .get(at.saturating_add(1))
+            .copied()
+            .unwrap_or(total);
+        Some((first, end))
     }
 }
 

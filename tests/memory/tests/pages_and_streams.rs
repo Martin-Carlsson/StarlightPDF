@@ -23,9 +23,9 @@ const BOUNDARY_BOUND: usize = 2_048;
 /// Most bytes opening and decoding a stream to a sink may hold allocated at once.
 const STREAM_BOUND: usize = 49_152;
 
-/// Most bytes opening, splitting and saving each part to a sink may hold allocated at once; 1
-/// until the first measurement replaces it.
-const SPLIT_BOUND: usize = 1;
+/// Most bytes opening, splitting and saving each part to a sink may hold allocated at once;
+/// measured 98,456,211 for the file of small objects, 265,514 for that of large streams.
+const SPLIT_BOUND: usize = 100_663_296;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
