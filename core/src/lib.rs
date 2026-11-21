@@ -164,6 +164,7 @@ pub mod page;
 mod predictor;
 pub mod progress;
 mod pull;
+mod raster;
 pub mod rendering;
 mod repair;
 mod run_length;
