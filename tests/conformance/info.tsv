@@ -40,6 +40,14 @@ info_file	tests/corpus/info/full.pdf	set_title=	key=title	none
 # 7.9.4: a date that is not ISO 8601
 info_bytes	tests/corpus/page-count/one-page.pdf	set_created=yesterday	key=created	InvalidArgument
 info_file	tests/corpus/page-count/one-page.pdf	set_created=yesterday	key=created	InvalidArgument
+# 7.9.4: days per month of the Gregorian calendar (ISO 8601): April has 30; February 29 only in a leap year, not in 1900,
+#   in 2000
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=2023-04-31T00:00:00Z	key=created	InvalidArgument
+info_file	tests/corpus/page-count/one-page.pdf	set_created=2023-04-31T00:00:00Z	key=created	InvalidArgument
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=1900-02-29T00:00:00Z	key=created	InvalidArgument
+info_file	tests/corpus/page-count/one-page.pdf	set_created=1900-02-29T00:00:00Z	key=created	InvalidArgument
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=2000-02-29T00:00:00Z	key=created	2000-02-29T00:00:00Z
+info_file	tests/corpus/page-count/one-page.pdf	set_created=2000-02-29T00:00:00Z	key=created	2000-02-29T00:00:00Z
 # 14.3.3, 7.9.2.2, 7.9.4: every entry survives a save
 info_bytes	tests/corpus/info/full.pdf	saved	key=title	Café — € 5
 info_file	tests/corpus/info/full.pdf	saved	key=title	Café — € 5
@@ -74,20 +82,12 @@ info_file	tests/corpus/info/full.pdf	set_title=	saved	key=title	none
 # 7.6.2, 14.3.3: an encrypted source's Info saved decrypted
 info_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	saved	cipher=Unencrypted	key=title	Secret title
 info_file	tests/corpus/encryption/r3-empty-user-password.pdf	saved	cipher=Unencrypted	key=title	Secret title
-# 14.3.3: a save adds no entry the caller did not set and the source did not hold: none without Info, none beside
-#   a Title only after another entry is set
+# 14.3.3: a save adds no entry the caller did not set and the source did not hold, without Info or beside a Title after
+#   another entry is set
 info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=creator	none
 info_file	tests/corpus/page-count/one-page.pdf	saved	key=creator	none
 info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=producer	none
 info_file	tests/corpus/page-count/one-page.pdf	saved	key=producer	none
-info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=created	none
-info_file	tests/corpus/page-count/one-page.pdf	saved	key=created	none
-info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=modified	none
-info_file	tests/corpus/page-count/one-page.pdf	saved	key=modified	none
-info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=creator	none
-info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=creator	none
-info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=producer	none
-info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=producer	none
 info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
 info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
 info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=modified	none

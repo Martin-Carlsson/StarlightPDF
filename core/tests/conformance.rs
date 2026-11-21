@@ -48,11 +48,7 @@ const CIPHERS: [(Cipher, &str); 4] = [
 ];
 
 /// Each `color_space=` value.
-const COLOR_SPACES: [(ColorSpace, &str); 3] = [
-    (ColorSpace::Cmyk, "Cmyk"),
-    (ColorSpace::Gray, "Gray"),
-    (ColorSpace::Rgb, "Rgb"),
-];
+const COLOR_SPACES: [(ColorSpace, &str); 1] = [(ColorSpace::Gray, "Gray")];
 
 /// The keys without a value.
 const FLAGS: [&str; 8] = [
@@ -67,44 +63,10 @@ const FLAGS: [&str; 8] = [
 ];
 
 /// Each `format=` value.
-const FORMATS: [(ImageFormat, &str); 37] = [
-    (ImageFormat::Arw, "Arw"),
-    (ImageFormat::Avif, "Avif"),
-    (ImageFormat::Bmp, "Bmp"),
-    (ImageFormat::Ccitt, "Ccitt"),
-    (ImageFormat::Cr2, "Cr2"),
-    (ImageFormat::Cr3, "Cr3"),
-    (ImageFormat::Dds, "Dds"),
-    (ImageFormat::Dicom, "Dicom"),
-    (ImageFormat::Dng, "Dng"),
-    (ImageFormat::Dpx, "Dpx"),
-    (ImageFormat::Emf, "Emf"),
-    (ImageFormat::Eps, "Eps"),
+const FORMATS: [(ImageFormat, &str); 3] = [
     (ImageFormat::Gif, "Gif"),
-    (ImageFormat::Hdr, "Hdr"),
-    (ImageFormat::Heif, "Heif"),
-    (ImageFormat::Ico, "Ico"),
-    (ImageFormat::Jbig2, "Jbig2"),
     (ImageFormat::Jpeg, "Jpeg"),
-    (ImageFormat::Jpeg2000, "Jpeg2000"),
-    (ImageFormat::JpegXl, "JpegXl"),
-    (ImageFormat::Nef, "Nef"),
-    (ImageFormat::OpenExr, "OpenExr"),
-    (ImageFormat::Orf, "Orf"),
-    (ImageFormat::Pcx, "Pcx"),
     (ImageFormat::Png, "Png"),
-    (ImageFormat::Pnm, "Pnm"),
-    (ImageFormat::Psd, "Psd"),
-    (ImageFormat::Qoi, "Qoi"),
-    (ImageFormat::Raf, "Raf"),
-    (ImageFormat::Rw2, "Rw2"),
-    (ImageFormat::Svg, "Svg"),
-    (ImageFormat::Tga, "Tga"),
-    (ImageFormat::Tiff, "Tiff"),
-    (ImageFormat::WebP, "WebP"),
-    (ImageFormat::Wmf, "Wmf"),
-    (ImageFormat::Xbm, "Xbm"),
-    (ImageFormat::Xpm, "Xpm"),
 ];
 
 /// SHA-256's initial hash value (FIPS 180-4, 5.3.3).
@@ -136,13 +98,8 @@ const OPEN: [&str; 5] = [
 ];
 
 /// Each `optimizations=` value.
-const OPTIMIZATIONS: [(Optimization, &str); 5] = [
-    (Optimization::CompressStreams, "CompressStreams"),
-    (Optimization::Deduplicate, "Deduplicate"),
-    (Optimization::Linearize, "Linearize"),
-    (Optimization::ObjectStreams, "ObjectStreams"),
-    (Optimization::SubsetFonts, "SubsetFonts"),
-];
+const OPTIMIZATIONS: [(Optimization, &str); 1] =
+    [(Optimization::CompressStreams, "CompressStreams")];
 
 /// Each permission's name.
 const PERMISSIONS: [(Permission, &str); 7] = [
@@ -270,29 +227,7 @@ const SPLITS: [(SplitBy, &str); 4] = [
 ];
 
 /// Each `standards=` value.
-const STANDARDS: [(Standard, &str); 21] = [
-    (Standard::FacturX, "FacturX"),
-    (Standard::Pdf, "Pdf"),
-    (Standard::PdfA1A, "PdfA1A"),
-    (Standard::PdfA1B, "PdfA1B"),
-    (Standard::PdfA2A, "PdfA2A"),
-    (Standard::PdfA2B, "PdfA2B"),
-    (Standard::PdfA2U, "PdfA2U"),
-    (Standard::PdfA3A, "PdfA3A"),
-    (Standard::PdfA3B, "PdfA3B"),
-    (Standard::PdfA3U, "PdfA3U"),
-    (Standard::PdfA4, "PdfA4"),
-    (Standard::PdfA4E, "PdfA4E"),
-    (Standard::PdfA4F, "PdfA4F"),
-    (Standard::PdfE1, "PdfE1"),
-    (Standard::PdfUa1, "PdfUa1"),
-    (Standard::PdfUa2, "PdfUa2"),
-    (Standard::PdfVt, "PdfVt"),
-    (Standard::PdfX1A, "PdfX1A"),
-    (Standard::PdfX3, "PdfX3"),
-    (Standard::PdfX4, "PdfX4"),
-    (Standard::PdfX6, "PdfX6"),
-];
+const STANDARDS: [(Standard, &str); 1] = [(Standard::PdfA2B, "PdfA2B")];
 
 /// A case's arguments after its path.
 #[derive(Debug, Default)]

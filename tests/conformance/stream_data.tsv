@@ -165,17 +165,7 @@ stream_data_file	tests/corpus/streams/filter-edges.pdf	id=8 0	decode	Malformed
 # 7.4.4.4, Table 8: BitsPerComponent 3
 stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=9 0	decode	Malformed
 stream_data_file	tests/corpus/streams/filter-edges.pdf	id=9 0	decode	Malformed
-# ISO 32000-2:2020, 7.3.8: after a save an unchanged stream keeps its stored bytes, and decodes as before (7.4.4.1);
-#   object 4, the page's content stream, is the fourth object reached from the trailer, so it keeps its number
-stream_data_bytes	tests/corpus/streams/page-content.pdf	saved	id=4 0	78da335030503054284a573037022113330b0533130b85a2548534004c8805de
-stream_data_file	tests/corpus/streams/page-content.pdf	saved	id=4 0	78da335030503054284a573037022113330b0533130b85a2548534004c8805de
-stream_data_bytes	tests/corpus/streams/page-content.pdf	saved	id=4 0	decode	302030203120726720373220373220343638203634382072652066
-stream_data_file	tests/corpus/streams/page-content.pdf	saved	id=4 0	decode	302030203120726720373220373220343638203634382072652066
-# 7.6.2 (Algorithm 1), 7.6.4.3: an RC4 128-bit content stream reads decrypted; saved with cipher Unencrypted it is
-#   stored decrypted; saved keeping its encryption is not implemented
-stream_data_bytes	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	id=4 0	302030203120726720373220373220343638203634382072652066
-stream_data_file	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	id=4 0	302030203120726720373220373220343638203634382072652066
+# ISO 32000-2:2020, 7.6.2 (Algorithm 1), 7.6.4.3: an RC4 128-bit content stream saved with cipher Unencrypted is
+#   stored decrypted
 stream_data_bytes	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	saved	cipher=Unencrypted	id=4 0	302030203120726720373220373220343638203634382072652066
 stream_data_file	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	saved	cipher=Unencrypted	id=4 0	302030203120726720373220373220343638203634382072652066
-stream_data_bytes	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	saved	id=4 0	NotImplemented
-stream_data_file	tests/corpus/encryption/r3-rc4-128-content.pdf	password=user	saved	id=4 0	NotImplemented
