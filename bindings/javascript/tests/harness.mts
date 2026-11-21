@@ -218,7 +218,15 @@ async function respond(
     return;
   }
   const type = TYPES.get(extname(file)) ?? "application/octet-stream";
-  response.writeHead(200, { "cache-control": "no-store", "content-type": type }).end(body);
+  // Cross-origin isolation, for callbacks on a page's main thread (.architecture-decisions/long-operations.md).
+  response
+    .writeHead(200, {
+      "cache-control": "no-store",
+      "content-type": type,
+      "cross-origin-embedder-policy": "require-corp",
+      "cross-origin-opener-policy": "same-origin",
+    })
+    .end(body);
 }
 
 /** Opens `html` in a fresh headless Chrome; its report `{ ok }`, or a rejection. */

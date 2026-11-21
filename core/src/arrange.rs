@@ -88,6 +88,8 @@ pub enum SplitBy {
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct SplitOptions {
+    /// Leaves out what a part cannot keep instead of failing with `LossRefused`.
+    pub allow_loss: bool,
     /// Where parts start.
     pub by: SplitBy,
     /// Pages per part, for [`SplitBy::Pages`].
