@@ -96,6 +96,8 @@ pub(crate) struct Objects<'store> {
 /// A document's shared state: its source, limits, where its objects are and its warnings.
 #[derive(Debug)]
 pub(crate) struct Store {
+    /// One more than the highest object number the cross-reference sections declare.
+    declared: u64,
     /// Bytes one stream may decode to.
     decoded_limit: u64,
     /// Nesting depth of arrays and dictionaries.
@@ -587,8 +589,9 @@ impl<'store> Objects<'store> {
         self.operation
     }
 
-    /// Object `id` read into memory, its strings decrypted, a stream's data left in the source;
-    /// null when free or missing (ISO 32000-2:2020, 7.3.10, 7.6.2).
+    /// Object `id` read into memory, its strings decrypted, a stream's data left in the source,
+    /// read decrypted, so without its own `Crypt` filter; null when free or missing
+    /// (ISO 32000-2:2020, 7.3.10, 7.4.10, 7.6.2).
     pub(crate) fn owned(self, id: ObjectId) -> Result<Object, PdfError> {
         let depth = self.depth_limit();
         if let Some(mut reader) = self.located(id)? {
@@ -604,13 +607,14 @@ impl<'store> Objects<'store> {
                 Object::Dictionary(entries)
                     if reader.next_token()? == Some(Token::Keyword(Keyword::Stream)) =>
                 {
-                    Object::Stream(
-                        entries
-                            .into_iter()
-                            .filter(|entry| entry.0 != b"Length")
-                            .collect(),
-                        Data::Stored(id),
-                    )
+                    let mut kept: Vec<_> = entries
+                        .into_iter()
+                        .filter(|entry| entry.0 != b"Length")
+                        .collect();
+                    if handler.is_some() {
+                        kept = without_crypt(kept);
+                    }
+                    Object::Stream(kept, Data::Stored(id))
                 }
                 other @ (Object::Array(_)
                 | Object::Boolean(_)
@@ -691,11 +695,10 @@ impl<'store> Objects<'store> {
                 let mut entries: Vec<(Vec<u8>, Object)> = Vec::new();
                 loop {
                     match reader.item()? {
-                        Token::DictionaryEnd => break Object::Dictionary(entries),
+                        Token::DictionaryEnd => break Object::Dictionary(last_values(entries)),
                         Token::Name(key) => {
                             let item = reader.item()?;
                             let value = self.read(reader, item, below, strings)?;
-                            entries.retain(|entry| entry.0 != key);
                             entries.push((key, value));
                         }
                         Token::ArrayEnd
@@ -803,17 +806,11 @@ impl<'store> Objects<'store> {
         self.store.security.as_ref()
     }
 
-    /// One more than the highest object number the cross-reference data declares or holds
-    /// (ISO 32000-2:2020, 7.5.5).
-    pub(crate) fn size(self) -> Result<u32, PdfError> {
-        let declared = match self.store.trailer {
-            Some(at) => self
-                .get(at, b"Size")?
-                .and_then(|size| size.integer())
-                .and_then(|size| u32::try_from(size).ok())
-                .unwrap_or_default(),
-            None => 0,
-        };
+    /// One more than the highest object number the cross-reference sections declare or the
+    /// rebuilt entries hold; a trailer's `Size` is not trusted (ISO 32000-2:2020, 7.5.4, 7.5.5,
+    /// 7.5.8).
+    pub(crate) fn size(self) -> u32 {
+        let declared = u32::try_from(self.store.declared).unwrap_or(u32::MAX);
         let held = self
             .store
             .rebuilt
@@ -822,7 +819,7 @@ impl<'store> Objects<'store> {
             .as_ref()
             .and_then(|entries| entries.last())
             .map_or(0, |entry| entry.number.saturating_add(1));
-        Ok(declared.max(held))
+        declared.max(held)
     }
 
     /// Entries of a table indexed by object number below `next`: [`ErrorCode::LimitExceeded`]
@@ -948,6 +945,7 @@ impl Store {
     ) -> Result<Self, PdfError> {
         let limits = policy.map_or_else(ResourcePolicy::defaults, Clone::clone);
         Ok(Self {
+            declared: 0,
             decoded_limit: limits.decoded_limit(),
             depth_limit: limits.depth_limit(),
             dictionary: Mutex::default(),
@@ -1039,6 +1037,7 @@ impl Store {
     ) -> Result<Self, PdfError> {
         let limits = policy.map_or_else(ResourcePolicy::defaults, Clone::clone);
         let mut store = Self {
+            declared: 0,
             decoded_limit: limits.decoded_limit(),
             depth_limit: limits.depth_limit(),
             dictionary: Mutex::default(),
@@ -1075,6 +1074,7 @@ impl Store {
     /// when `at_startxref` and the file has cross-reference data, else of the table
     /// (ISO 32000-2:2020, 7.5.4 and 7.5.5).
     fn rebuild(&mut self, at_startxref: bool, password: &str) -> Result<(), PdfError> {
+        self.declared = 0;
         let mut found = repair::scan(self.objects(OPEN), self.object_limit)?;
         let entries = repair::newest(found.take_entries());
         self.trailer = repair::trailer(self.objects(OPEN).through(&entries), found.trailers())?;
@@ -1105,7 +1105,9 @@ impl Store {
         if !xref::is_section(objects, newest).map_err(|error| (true, error))? {
             return Err((true, objects.malformed()));
         }
-        let (trailer, declared) = xref::walk(objects, newest).map_err(|error| (false, error))?;
+        let (trailer, declared, size) =
+            xref::walk(objects, newest).map_err(|error| (false, error))?;
+        self.declared = size;
         self.newest = newest;
         self.trailer = Some(trailer);
         self.security = decryption::open(self.objects(OPEN), trailer, password)
@@ -1143,4 +1145,72 @@ impl Store {
             .kept
             .clone()
     }
+}
+
+/// `entries` with each key once, at its last value's place and with that value
+/// (ISO 32000-2:2020, 7.3.7).
+fn last_values(entries: Vec<(Vec<u8>, Object)>) -> Vec<(Vec<u8>, Object)> {
+    let mut order: Vec<usize> = (0..entries.len()).collect();
+    order.sort_by(|&left, &right| {
+        let key = |at: usize| entries.get(at).map(|entry| entry.0.as_slice());
+        key(left).cmp(&key(right)).then(right.cmp(&left))
+    });
+    let mut kept = vec![false; entries.len()];
+    let mut previous: Option<&[u8]> = None;
+    for at in order {
+        let key = entries.get(at).map(|entry| entry.0.as_slice());
+        if key != previous
+            && let Some(flag) = kept.get_mut(at)
+        {
+            *flag = true;
+        }
+        previous = key;
+    }
+    entries
+        .into_iter()
+        .zip(kept)
+        .filter_map(|(entry, keep)| keep.then_some(entry))
+        .collect()
+}
+
+/// A stream's `entries` without a leading `Crypt` filter and its parameters (ISO 32000-2:2020,
+/// 7.4.10).
+fn without_crypt(entries: Vec<(Vec<u8>, Object)>) -> Vec<(Vec<u8>, Object)> {
+    let crypt =
+        |object: Option<&Object>| matches!(object, Some(Object::Name(name)) if name == b"Crypt");
+    let Some(filter) = entries
+        .iter()
+        .find(|entry| entry.0 == b"Filter")
+        .map(|entry| &entry.1)
+    else {
+        return entries;
+    };
+    let alone = crypt(Some(filter));
+    if !alone && !matches!(filter, Object::Array(items) if crypt(items.first())) {
+        return entries;
+    }
+    entries
+        .into_iter()
+        .filter_map(|(key, value)| {
+            if !matches!(key.as_slice(), b"Filter" | b"DecodeParms") {
+                return Some((key, value));
+            }
+            match value {
+                Object::Array(mut items) if !alone && !items.is_empty() => {
+                    drop(items.remove(0));
+                    (!items.is_empty()).then(|| (key, Object::Array(items)))
+                }
+                other @ (Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_)) => (!alone).then_some((key, other)),
+            }
+        })
+        .collect()
 }

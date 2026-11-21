@@ -38,7 +38,7 @@ use crate::objects::{
     StreamDataOptions, XrefEntries,
 };
 use crate::output::Sink;
-use crate::overlay::{Dictionary, Object, Overlay};
+use crate::overlay::{Dictionary, Object, Overlay, Reading};
 use crate::page::{self, Page};
 use crate::part::{self, Pages, Part};
 use crate::progress::Progress;
@@ -56,6 +56,10 @@ use crate::{ErrorCode, PdfError, Version};
 
 /// A4, 210 × 297 mm, in points to 4 decimals (ISO 216; ISO 32000-2:2020, 8.3.2.3).
 const A4: [f64; 2] = [595.2756, 841.8898];
+
+/// A part of fewer than one in this many of the source's pages is saved with a table of only the
+/// objects it reaches.
+const SPARSE: u64 = 8;
 
 /// The information dictionary's keys, as [`InfoDictionary`]'s fields are ordered, and whether
 /// each holds a date (ISO 32000-2:2020, 14.3.3).
@@ -115,6 +119,9 @@ pub struct Document {
     /// Whether a part of a split: a new file, whose saves write the source decrypted and a new
     /// file identifier (ISO 32000-2:2020, 7.6, 14.4).
     part: bool,
+    /// Whether a part of few of the source's pages, whose saves keep a table of only the objects
+    /// they reach.
+    sparse: bool,
     /// The shared state.
     store: Arc<Store>,
 }
@@ -198,6 +205,8 @@ struct Parts {
     next: u32,
     /// The document's pages.
     pages: Arc<Pages>,
+    /// The document split, unchanged while read.
+    reading: Reading,
     /// The document split.
     source: Document,
     /// The first pages of the parts, when not `count` pages each.
@@ -597,10 +606,11 @@ impl Document {
             (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
             (b"Pages".to_vec(), Object::Reference(pages)),
         ]))?;
-        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
+        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))])?;
         Ok(Self {
             overlay: Arc::new(overlay),
             part: false,
+            sparse: false,
             store: Arc::new(Store::create(policy, version)?),
         })
     }
@@ -940,7 +950,7 @@ impl Document {
                 .and_then(|total| i64::try_from(total).ok())
                 .ok_or_else(|| objects.malformed())?;
             changed.set(b"Count", Some(Object::Integer(total)));
-            overlay.set(id, changed);
+            overlay.set(id, changed)?;
         }
         Ok(Page::new(page, &self.store, &self.overlay))
     }
@@ -1044,10 +1054,11 @@ impl Document {
             return Err(PdfError::new(ErrorCode::NotSeekable, "Document::open"));
         }
         let store = Store::open(source, policy, options.strict, &options.password)?;
-        let next = store.objects("Document::open").size()?;
+        let next = store.objects("Document::open").size();
         Ok(Self {
             overlay: Arc::new(Overlay::new(next)),
             part: false,
+            sparse: false,
             store: Arc::new(store),
         })
     }
@@ -1270,6 +1281,7 @@ impl Document {
                         overlay: &self.overlay,
                         part: self.part,
                         progress,
+                        sparse: self.sparse,
                         version,
                     },
                     sink,
@@ -1384,7 +1396,7 @@ impl Document {
         }
         let empty = matches!(&info, Object::Dictionary(entries) if entries.is_empty());
         match id {
-            Some(found) if !empty => self.overlay.set(found, info),
+            Some(found) if !empty => self.overlay.set(found, info)?,
             _ if empty && trailer.iter().all(|entry| entry.0 != b"Info") => {}
             _ => {
                 trailer.retain(|entry| entry.0 != b"Info");
@@ -1392,7 +1404,7 @@ impl Document {
                     let added = self.overlay.add(info)?;
                     trailer.push((b"Info".to_vec(), Object::Reference(added)));
                 }
-                self.overlay.set_trailer(trailer);
+                self.overlay.set_trailer(trailer)?;
             }
         }
         Ok(())
@@ -1575,6 +1587,8 @@ impl Document {
     /// of 0 and `starts` empty, not ascending or past the last page fail with
     /// [`ErrorCode::InvalidArgument`];
     /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
+    /// The parts read this document: while they or the returned [`Documents`] live, its edits
+    /// fail with [`ErrorCode::Busy`].
     ///
     /// # Errors
     ///
@@ -1616,6 +1630,7 @@ impl Document {
                 count,
                 next: 0,
                 pages: Arc::new(pages),
+                reading: Reading::new(&self.overlay),
                 source: self.clone(),
                 starts,
             })),
@@ -1821,12 +1836,14 @@ impl Documents {
             return Ok(None);
         };
         let source = parts.source.clone();
-        let part = Part::new((&source.overlay, &source.store), &parts.pages, range)?;
+        let mut part = Part::new((&parts.reading, &source.store), &parts.pages, range)?;
         if !parts.allow_loss {
             part.refuse_links()?;
         }
         let (catalog, next) = (part.catalog(parts.allow_loss)?, part.next());
         parts.next = parts.next.saturating_add(1);
+        let sparse = u64::from(range.1.saturating_sub(range.0)).saturating_mul(SPARSE)
+            < u64::from(parts.pages.count());
         drop(parts);
         let objects = source.store.objects("Documents::next");
         let info = Object::Dictionary(source.overlay.trailer(objects)?).take(b"Info");
@@ -1834,10 +1851,11 @@ impl Documents {
         let root = overlay.add(Object::Dictionary(catalog))?;
         let mut trailer = vec![(b"Root".to_vec(), Object::Reference(root))];
         trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
-        overlay.set_trailer(trailer);
+        overlay.set_trailer(trailer)?;
         Ok(Some(Document {
             overlay: Arc::new(overlay),
             part: true,
+            sparse,
             store: Arc::clone(&source.store),
         }))
     }

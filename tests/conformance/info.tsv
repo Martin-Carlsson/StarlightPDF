@@ -92,3 +92,6 @@ info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
 info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
 info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=modified	none
 info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=modified	none
+# 7.5.4, 7.5.5, 14.3.3: an Info added under a trailer Size below the objects the table declares takes no number in use
+info_bytes	tests/corpus/save/small-size.pdf	set_title=Small	saved	key=title	Small
+info_file	tests/corpus/save/small-size.pdf	set_title=Small	saved	key=title	Small

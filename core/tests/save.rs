@@ -5,6 +5,7 @@ extern crate alloc;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
+use core::fmt::Write as _;
 use core::mem::take;
 use core::ops::Range;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -19,7 +20,7 @@ use std::sync::{Mutex, PoisonError};
 
 use starlightpdf::arrange::{SplitBy, SplitOptions};
 use starlightpdf::document::{Document, OpenOptions, SaveOptions};
-use starlightpdf::input::{FileSourceOptions, Source};
+use starlightpdf::input::{BytesSourceOptions, FileSourceOptions, Source};
 use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::output::{Append, AppendSinkOptions, FileSinkOptions, MemorySinkOptions, Sink};
 use starlightpdf::progress::Progress;
@@ -859,6 +860,17 @@ fn number(text: &str) -> Value {
     Value::Number(normalize(text.as_bytes()))
 }
 
+/// The first kid of `file`'s page tree root, a page here (7.7.3).
+fn first_page(file: &File) -> Result<Dictionary, String> {
+    let tree = file.dictionary(file.get(&file.root()?, "Pages"))?;
+    let kid = file
+        .get(&tree, "Kids")
+        .array()
+        .and_then(|kids| kids.first().cloned())
+        .ok_or("no kid")?;
+    file.dictionary(kid)
+}
+
 /// Opens the file at `path`.
 fn open(path: &Path) -> Result<Document, String> {
     let mut options = FileSourceOptions::default();
@@ -1187,6 +1199,80 @@ fn emptied_info_is_left_out() -> Result<(), String> {
     ensure(
         !file.trailer.contains_key(b"Info".as_slice()),
         "trailer keeps Info",
+    )
+}
+
+/// A dictionary of tens of thousands of keys, each repeated, saves each key once with its last
+/// value (ISO 32000-2:2020, 7.3.7).
+#[test]
+fn a_repeated_key_keeps_its_last_value() -> Result<(), String> {
+    const KEYS: u32 = 40_000;
+    let mut text = String::from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10]");
+    for pass in 0..2 {
+        for key in 0..KEYS {
+            write!(text, " /K{key} {}", key + pass).map_err(|error| error.to_string())?;
+        }
+    }
+    text.push_str(" >>");
+    let mut bytes = b"%PDF-2.0\n".to_vec();
+    let mut offsets = Vec::new();
+    for body in [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        text.as_str(),
+    ] {
+        offsets.push(bytes.len());
+        bytes.extend(format!("{} 0 obj\n{body}\nendobj\n", offsets.len()).into_bytes());
+    }
+    let table = bytes.len();
+    bytes.extend(b"xref\n0 4\n0000000000 65535 f\r\n");
+    for offset in offsets {
+        bytes.extend(format!("{offset:010} 00000 n\r\n").into_bytes());
+    }
+    bytes.extend(
+        format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{table}\n%%EOF\n").into_bytes(),
+    );
+    let mut options = BytesSourceOptions::default();
+    options.bytes = Arc::new(bytes);
+    let document = Source::from_bytes(&options)
+        .and_then(|source| Document::open(&source, None, &OpenOptions::default()))
+        .map_err(|error| failure(&error))?;
+    let saved = save(&document)?;
+    let keys = saved
+        .windows(3)
+        .filter(|window| window.starts_with(b"/K") && window.get(2).is_some_and(u8::is_ascii_digit))
+        .count();
+    ensure(keys == 40_000, &format!("{keys} keys written, not {KEYS}"))?;
+    let file = parse(&saved)?;
+    let page = first_page(&file)?;
+    ensure(
+        (0..KEYS).all(|key| {
+            page.get(format!("K{key}").as_bytes()) == Some(&number(&(key + 1).to_string()))
+        }),
+        "a key lost its last value",
+    )
+}
+
+/// An Info added to a file whose trailer `Size` is below its objects' numbers takes no number in
+/// use: the page stays a page (ISO 32000-2:2020, 7.5.4, 7.5.5, 14.3.3).
+#[test]
+fn a_small_size_loses_no_object() -> Result<(), String> {
+    let document = open(&corpus("save/small-size.pdf"))?;
+    let mut options = SetInfoDictionaryOptions::default();
+    options.title = Some(String::from("Small"));
+    document
+        .set_info_dictionary(&options)
+        .map_err(|error| failure(&error))?;
+    let file = parse(&save(&document)?)?;
+    let page = first_page(&file)?;
+    ensure(
+        file.get(&page, "MediaBox") == Value::Array(["0", "0", "300", "400"].map(number).to_vec()),
+        "the page lost its MediaBox",
+    )?;
+    let info = file.dictionary(file.get(&file.trailer, "Info"))?;
+    ensure(
+        file.get(&info, "Title") == Value::String(b"Small".to_vec()),
+        "the Info lost its Title",
     )
 }
 

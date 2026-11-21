@@ -53,5 +53,10 @@ name = "rebuild"
 path = "fuzz_targets/rebuild.rs"
 test = false
 
+[[bin]]
+name = "save"
+path = "fuzz_targets/save.rs"
+test = false
+
 [lints]
 workspace = true

@@ -7,7 +7,7 @@ use core::fmt::{self, Debug, Formatter};
 use std::sync::{Mutex, PoisonError};
 
 use crate::objects::{ObjectId, XrefKind};
-use crate::overlay::{Dictionary, Object, Overlay, View};
+use crate::overlay::{Dictionary, Object, Overlay, Reading, View};
 use crate::store::{Objects, Store};
 use crate::syntax::{At, Token, Value};
 use crate::{ErrorCode, PdfError};
@@ -65,13 +65,20 @@ struct Level {
 pub(crate) struct Pages {
     /// Whether a page has annotations.
     annotated: bool,
+    /// The document's catalog.
+    catalog: Object,
     /// The number of pages.
     count: u32,
     /// Per object number: a page's index plus 1, [`NODE`] with the index of the first page
     /// under it for a page tree node, else 0.
     index: Vec<u32>,
+    /// The page tree node looked up last and the attributes it and its ancestors give.
+    inherited: Mutex<Option<(u32, Dictionary)>>,
     /// The root page tree node.
     top: ObjectId,
+    /// Where the last walk stopped, which a walk from there or later goes on from, so parts
+    /// taken in order read each node once.
+    walked: Mutex<Option<Cursor>>,
 }
 
 /// Pages `first..end` of a document under new page tree nodes numbered from `base`.
@@ -79,26 +86,26 @@ pub(crate) struct Pages {
 pub(crate) struct Part {
     /// The first new node's number.
     base: u32,
+    /// The new node built last and its number.
+    built: Mutex<Option<(u32, Object)>>,
     /// The document's catalog.
     catalog: Object,
     /// One past the part's last page.
     end: u32,
     /// The part's first page.
     first: u32,
-    /// The page tree node looked up last and the attributes it and its ancestors give.
-    inherited: Mutex<Option<(u32, Dictionary)>>,
     /// New nodes per level, the pages' parents first, the root last.
     levels: Vec<u32>,
+    /// The part's pages, when [`Part::refuse_links`] has listed them.
+    listed: Option<Vec<ObjectId>>,
     /// The document's pages.
     pages: Arc<Pages>,
-    /// The document's changes.
-    source: Arc<Overlay>,
+    /// The document's changes, unchanged while read.
+    source: Reading,
     /// The document's shared state.
     store: Arc<Store>,
     /// One more than the highest object number the source holds.
     stored: u32,
-    /// Where the last walk stopped; new nodes are read in order.
-    walked: Mutex<Option<Cursor>>,
 }
 
 impl Debug for Pages {
@@ -214,7 +221,7 @@ impl Pages {
         let Some(Object::Reference(top)) = catalog.get(b"Pages") else {
             return Err(malformed());
         };
-        let size = objects.slots(overlay.next())?;
+        let size = objects.slots(overlay.next().max(objects.size()))?;
         // Reserved whole, so no growth holds two copies.
         let mut index = Vec::new();
         index.try_reserve_exact(size).map_err(|_error| limit())?;
@@ -249,9 +256,12 @@ impl Pages {
         }
         Ok(Self {
             annotated,
+            catalog,
             count,
             index,
+            inherited: Mutex::new(None),
             top,
+            walked: Mutex::new(None),
         })
     }
 
@@ -275,7 +285,7 @@ impl Pages {
 
     /// Gives `visit` the pages from `from` to before `until`, in order, reading only the page
     /// tree nodes that hold them, through `overlay`, from where `cursor` stopped when it stopped
-    /// at `from`, and leaves `cursor` where it stops (ISO 32000-2:2020, 7.7.3.2).
+    /// at or before `from`, and leaves `cursor` where it stops (ISO 32000-2:2020, 7.7.3.2).
     fn walk(
         &self,
         (objects, overlay): (Objects<'_>, &Overlay),
@@ -286,7 +296,7 @@ impl Pages {
         let malformed = || objects.malformed();
         let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
         let mut stack = match cursor.take() {
-            Some(found) if found.next == from => found.stack,
+            Some(found) if found.next <= from => found.stack,
             Some(_) | None => vec![Level::new(objects, overlay, self.top)?],
         };
         while let Some(level) = stack.last_mut() {
@@ -354,7 +364,8 @@ impl Part {
     /// page (ISO 32000-2:2020, 7.7.3.4).
     fn ancestors(&self, objects: Objects<'_>, start: ObjectId) -> Result<Dictionary, PdfError> {
         let last = || {
-            self.inherited
+            self.pages
+                .inherited
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
         };
@@ -646,13 +657,11 @@ impl Part {
     /// A part of `pages`, those from `first` to before `end`, of the document of `source` and
     /// `store`.
     pub(crate) fn new(
-        (source, store): (&Arc<Overlay>, &Arc<Store>),
+        (source, store): (&Reading, &Arc<Store>),
         pages: &Arc<Pages>,
         (first, end): (u32, u32),
     ) -> Result<Self, PdfError> {
         let objects = store.objects(OPERATION);
-        let trailer = Object::Dictionary(source.trailer(objects)?);
-        let catalog = source.entry(objects, &trailer, b"Root")?;
         let mut levels = Vec::new();
         let mut below = end.saturating_sub(first);
         loop {
@@ -672,16 +681,16 @@ impl Part {
             .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, OPERATION))?;
         Ok(Self {
             base,
-            catalog,
+            built: Mutex::new(None),
+            catalog: pages.catalog.clone(),
             end,
             first,
-            inherited: Mutex::new(None),
             levels,
+            listed: None,
             pages: Arc::clone(pages),
-            source: Arc::clone(source),
+            source: source.again(),
             store: Arc::clone(store),
-            stored: objects.size()?,
-            walked: Mutex::new(None),
+            stored: objects.size(),
         })
     }
 
@@ -710,12 +719,25 @@ impl Part {
         let start = index.saturating_mul(FANOUT);
         let stop = start.saturating_add(FANOUT).min(below);
         let mut kids = Vec::new();
-        if level == 1 {
+        if let Some(listed) = self.listed.as_ref().filter(|_| level == 1) {
+            let range = usize::try_from(start).ok().zip(usize::try_from(stop).ok());
+            kids.extend(
+                range
+                    .and_then(|(from, until)| listed.get(from..until))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|&id| Object::Reference(id)),
+            );
+        } else if level == 1 {
             let range = (
                 self.first.saturating_add(start),
                 self.first.saturating_add(stop),
             );
-            let mut walked = self.walked.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut walked = self
+                .pages
+                .walked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             self.pages
                 .walk((objects, &self.source), range, &mut walked, &mut |id| {
                     kids.push(Object::Reference(id));
@@ -847,18 +869,25 @@ impl Part {
     }
 
     /// Fails with [`ErrorCode::LossRefused`] when an annotation of a page of the part links to
-    /// a page outside it (ISO 32000-2:2020, 12.5.6.5, 12.6.4.2).
-    pub(crate) fn refuse_links(&self) -> Result<(), PdfError> {
+    /// a page outside it, listing the part's pages (ISO 32000-2:2020, 12.5.6.5, 12.6.4.2).
+    pub(crate) fn refuse_links(&mut self) -> Result<(), PdfError> {
         if !self.pages.annotated {
             return Ok(());
         }
         let objects = self.store.objects(OPERATION);
         let source = &*self.source;
+        let mut listed = Vec::new();
+        let mut walked = self
+            .pages
+            .walked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         self.pages.walk(
             (objects, source),
             (self.first, self.end),
-            &mut None,
+            &mut walked,
             &mut |id| {
+                listed.push(id);
                 let page = source.resolve(objects, id)?;
                 if let Object::Array(annotations) = source.entry(objects, &page, b"Annots")? {
                     for annotation in annotations {
@@ -869,7 +898,10 @@ impl Part {
                 }
                 Ok(())
             },
-        )
+        )?;
+        drop(walked);
+        self.listed = Some(listed);
+        Ok(())
     }
 
     /// The new root node's number.
@@ -895,7 +927,18 @@ impl View for Part {
         let found = match edited {
             Some(own) => Some(own),
             None => match self.locate(number) {
-                Some((level, index)) => Some((0, self.node(objects, level, index)?)),
+                Some((level, index)) => {
+                    let mut built = self.built.lock().unwrap_or_else(PoisonError::into_inner);
+                    let node = if let Some(last) = built.as_ref().filter(|last| last.0 == number) {
+                        last.1.clone()
+                    } else {
+                        let made = self.node(objects, level, index)?;
+                        *built = Some((number, made.clone()));
+                        made
+                    };
+                    drop(built);
+                    Some((0, node))
+                }
                 None => self.raw(objects, number)?,
             },
         };

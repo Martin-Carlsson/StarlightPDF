@@ -543,3 +543,6 @@ page_count_bytes	tests/corpus/repair/xref-missing.pdf	saved	1
 page_count_file	tests/corpus/repair/xref-missing.pdf	saved	1
 page_count_bytes	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	saved	cipher=Unencrypted	1
 page_count_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	saved	cipher=Unencrypted	1
+# 7.5.4, 7.5.5: a trailer Size below the objects the table declares loses none: page object 3 under Size 3
+page_count_bytes	tests/corpus/save/small-size.pdf	saved	1
+page_count_file	tests/corpus/save/small-size.pdf	saved	1

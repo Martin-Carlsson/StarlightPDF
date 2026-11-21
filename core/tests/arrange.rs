@@ -241,6 +241,33 @@ fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// While a split's cursor or a part of it lives, which read the document, its edits fail with
+/// `Busy`; after, they succeed (handles ADR: many readers or one writer).
+#[test]
+fn edits_fail_while_a_split_reads_the_document() -> Result<(), Box<dyn Error>> {
+    let document = corpus("split/pages.pdf")?;
+    let parts = document.split(&by_pages(2))?;
+    let part = parts.next()?.ok_or("no part")?;
+    let busy = |found: &Document| {
+        found
+            .insert_blank_page(&InsertBlankPageOptions::default())
+            .err()
+            .map(|error| error.code())
+    };
+    if busy(&document) != Some(ErrorCode::Busy) {
+        return Err("an edit succeeded beside a live split".into());
+    }
+    drop(parts);
+    if busy(&document) != Some(ErrorCode::Busy) {
+        return Err("an edit succeeded beside a live part".into());
+    }
+    drop(part);
+    if busy(&document).is_some() {
+        return Err("an edit failed after the split ended".into());
+    }
+    Ok(())
+}
+
 /// Appending pages to a flat page tree reads no page already there.
 #[test]
 fn appending_pages_reads_no_other_page() -> Result<(), Box<dyn Error>> {
@@ -257,19 +284,23 @@ fn appending_pages_reads_no_other_page() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Splitting a flat page tree and saving the part reads the root node's kids a bounded number of
-/// times, not once per new node (ISO 32000-2:2020, 7.7.3.2).
+/// Splitting a flat page tree into one part or a part per page and saving every part reads the
+/// root node's kids a bounded number of times, not once per new node or part
+/// (ISO 32000-2:2020, 7.7.3.2).
 #[test]
 fn splitting_a_flat_tree_reads_its_kids_a_few_times() -> Result<(), Box<dyn Error>> {
-    let flat = Arc::new(Flat::new());
-    let parts = open_flat(&flat)?.split(&by_pages(4_096))?;
-    let part = parts.next()?.ok_or("no part")?;
-    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
-    let _report = part.save(&sink, None, &SaveOptions::default())?;
-    let read = flat.root_served.load(Ordering::Relaxed);
-    let root = flat.root.len();
-    if read > 8 * root {
-        return Err(format!("{read} bytes of a {root}-byte root read").into());
+    for count in [4_096, 1] {
+        let flat = Arc::new(Flat::new());
+        let parts = open_flat(&flat)?.split(&by_pages(count))?;
+        while let Some(part) = parts.next()? {
+            let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+            let _report = part.save(&sink, None, &SaveOptions::default())?;
+        }
+        let read = flat.root_served.load(Ordering::Relaxed);
+        let root = flat.root.len();
+        if read > 8 * root {
+            return Err(format!("by {count}: {read} bytes of a {root}-byte root read").into());
+        }
     }
     Ok(())
 }

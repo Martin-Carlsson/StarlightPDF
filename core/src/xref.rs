@@ -33,9 +33,9 @@ struct Chain {
 enum Lookup {
     /// The entry asked for.
     Entry(XrefEntry),
-    /// No such entry: the section's trailer and its entries, declared or, for
-    /// [`Want::Count`], in use.
-    Trailer(At, u64),
+    /// No such entry: the section's trailer, its entries, declared or, for [`Want::Count`], in
+    /// use, and one more than the highest object number it declares.
+    Trailer(At, u64, u64),
 }
 
 /// What is asked of a section.
@@ -97,7 +97,7 @@ pub(crate) fn entry(
     loop {
         let trailer = match section(objects, offset, Want::Entry(number))? {
             Lookup::Entry(entry) => return Ok(Some(entry)),
-            Lookup::Trailer(trailer, _) => trailer,
+            Lookup::Trailer(trailer, ..) => trailer,
         };
         if let Some(hybrid) = offset_at(objects, trailer, b"XRefStm")?
             && let Lookup::Entry(entry) = section(objects, hybrid, Want::Entry(number))?
@@ -117,7 +117,7 @@ pub(crate) fn entry(
 /// The entries in use the sections along the `Prev` chain from `newest` hold, an object
 /// counted once per section that lists it.
 pub(crate) fn in_use(objects: Objects<'_>, newest: u64) -> Result<u64, PdfError> {
-    walk_for(objects, newest, Want::Count).map(|(_, used)| used)
+    walk_for(objects, newest, Want::Count).map(|(_, used, _)| used)
 }
 
 /// Whether a cross-reference table or stream starts at `offset` (ISO 32000-2:2020, 7.5.4 and 7.5.8).
@@ -242,7 +242,7 @@ fn section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfE
         offset.saturating_add(u64::try_from(XREF.len()).unwrap_or_default()),
         objects.operation(),
     );
-    let mut total: u64 = 0;
+    let (mut total, mut size): (u64, u64) = (0, 0);
     loop {
         let first = match reader.token()? {
             Token::Keyword(Keyword::Trailer) => {
@@ -250,7 +250,7 @@ fn section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfE
                     .head(objects.depth_limit())?
                     .dictionary()
                     .ok_or_else(malformed)?;
-                return Ok(Lookup::Trailer(trailer, total));
+                return Ok(Lookup::Trailer(trailer, total, size));
             }
             Token::Integer(first) => first,
             Token::ArrayEnd
@@ -275,6 +275,9 @@ fn section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfE
             .checked_mul(entry_len)
             .and_then(|len| start.checked_add(len))
             .ok_or_else(malformed)?;
+        if entries > 0 {
+            size = size.max(first_number.saturating_add(entries));
+        }
         let number_at = |index: u64| u32::try_from(first_number.saturating_add(index));
         if let Want::Entry(wanted) = want
             && let Some(index) = u64::from(wanted).checked_sub(first_number)
@@ -349,54 +352,58 @@ fn stream_section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Looku
         return Err(objects.malformed());
     }
     if want == Want::Trailer {
-        let declared = xref_stream::declared(objects, dictionary)?;
-        return Ok(Lookup::Trailer(dictionary, declared));
+        let (declared, size) = xref_stream::declared(objects, dictionary)?;
+        return Ok(Lookup::Trailer(dictionary, declared, size));
     }
     let (start, length) = objects.extent(&mut reader, dictionary, false)?;
     let mut data = decoder(objects, None, start, length, dictionary, true)?;
     match want {
         Want::Entry(number) => Ok(
             xref_stream::lookup(objects, dictionary, &mut *data, number)?
-                .map_or(Lookup::Trailer(dictionary, 0), Lookup::Entry),
+                .map_or(Lookup::Trailer(dictionary, 0, 0), Lookup::Entry),
         ),
         Want::Count | Want::Trailer => Ok(Lookup::Trailer(
             dictionary,
             xref_stream::count(objects, dictionary, &mut *data)?,
+            0,
         )),
     }
 }
 
-/// The newest trailer and the entries the sections along the `Prev` chain from `newest` declare
-/// (ISO 32000-2:2020, 7.5.6 and 7.5.8.4).
-pub(crate) fn walk(objects: Objects<'_>, newest: u64) -> Result<(At, u64), PdfError> {
+/// The newest trailer, the entries the sections along the `Prev` chain from `newest` declare
+/// and one more than the highest object number they declare, whatever a trailer's `Size` says
+/// (ISO 32000-2:2020, 7.5.4, 7.5.6 and 7.5.8).
+pub(crate) fn walk(objects: Objects<'_>, newest: u64) -> Result<(At, u64, u64), PdfError> {
     walk_for(objects, newest, Want::Trailer)
 }
 
-/// The newest trailer and the sum over the sections along the `Prev` chain of what `want`
-/// counts.
-fn walk_for(objects: Objects<'_>, newest: u64, want: Want) -> Result<(At, u64), PdfError> {
+/// The newest trailer, the sum over the sections along the `Prev` chain of what `want` counts
+/// and one more than the highest object number they declare.
+fn walk_for(objects: Objects<'_>, newest: u64, want: Want) -> Result<(At, u64, u64), PdfError> {
     let mut chain = Chain::new(newest);
     let mut offset = newest;
     let mut first = None;
-    let mut total: u64 = 0;
+    let (mut total, mut size): (u64, u64) = (0, 0);
     loop {
-        let Lookup::Trailer(trailer, entries) = section(objects, offset, want)? else {
+        let Lookup::Trailer(trailer, entries, end) = section(objects, offset, want)? else {
             return Err(objects.malformed());
         };
         total = total.saturating_add(entries);
+        size = size.max(end);
         let newest_trailer = *first.get_or_insert(trailer);
         if let Some(hybrid) = offset_at(objects, trailer, b"XRefStm")? {
-            let Lookup::Trailer(_, more) = section(objects, hybrid, want)? else {
+            let Lookup::Trailer(_, more, beyond) = section(objects, hybrid, want)? else {
                 return Err(objects.malformed());
             };
             total = total.saturating_add(more);
+            size = size.max(beyond);
         }
         match offset_at(objects, trailer, b"Prev")? {
             Some(prev) => {
                 chain.step(prev, objects.operation())?;
                 offset = prev;
             }
-            None => return Ok((newest_trailer, total)),
+            None => return Ok((newest_trailer, total, size)),
         }
     }
 }

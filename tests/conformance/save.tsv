@@ -63,6 +63,9 @@ save_file	tests/corpus/page-count/one-page.pdf	break_signatures	ok
 # a progress callback returning false cancels
 save_bytes	tests/corpus/page-count/one-page.pdf	cancel	Cancelled
 save_file	tests/corpus/page-count/one-page.pdf	cancel	Cancelled
-# 7.5.5: a trailer Size past the policy's objects sizes no table
-save_bytes	tests/corpus/save/huge-size.pdf	LimitExceeded
-save_file	tests/corpus/save/huge-size.pdf	LimitExceeded
+# 7.5.4, 7.5.5: a trailer Size past the objects the table declares is not trusted and sizes no table
+save_bytes	tests/corpus/save/huge-size.pdf	ok
+save_file	tests/corpus/save/huge-size.pdf	ok
+# 7.5.4: an object number past the policy's objects sizes no table
+save_bytes	tests/corpus/save/huge-number.pdf	LimitExceeded
+save_file	tests/corpus/save/huge-number.pdf	LimitExceeded

@@ -90,15 +90,18 @@ pub(crate) fn count(
     Ok(used)
 }
 
-/// The entries the stream whose dictionary is at `dictionary` declares: the sum of its
-/// subsections' counts.
-pub(crate) fn declared(objects: Objects<'_>, dictionary: At) -> Result<u64, PdfError> {
+/// The entries the stream whose dictionary is at `dictionary` declares, the sum of its
+/// subsections' counts, and one more than the highest object number they declare.
+pub(crate) fn declared(objects: Objects<'_>, dictionary: At) -> Result<(u64, u64), PdfError> {
     let mut subsections = Subsections::of(objects, dictionary)?;
-    let mut total: u64 = 0;
-    while let Some((_, entries)) = subsections.next()? {
+    let (mut total, mut size): (u64, u64) = (0, 0);
+    while let Some((first, entries)) = subsections.next()? {
         total = total.saturating_add(entries);
+        if entries > 0 {
+            size = size.max(first.saturating_add(entries));
+        }
     }
-    Ok(total)
+    Ok((total, size))
 }
 
 /// The entry of object `number`, the next `widths` bytes of `data`; a type but 1 or 2 is free

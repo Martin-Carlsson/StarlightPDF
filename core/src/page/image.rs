@@ -188,7 +188,7 @@ pub(super) fn draw(
     resources.push((b"XObject".to_vec(), Object::Dictionary(xobjects)));
     dictionary.set(b"Resources", Some(Object::Dictionary(resources)));
     dictionary.set(b"Contents", Some(contents));
-    overlay.set(page.id, dictionary);
+    overlay.set(page.id, dictionary)?;
     Ok(())
 }
 

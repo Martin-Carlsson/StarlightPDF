@@ -4,6 +4,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::mem::replace;
+use core::ops::Deref;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::objects::{ObjectId, XrefKind};
@@ -31,6 +32,8 @@ struct Edits {
     next: u32,
     /// Changed and added objects, by number.
     objects: BTreeMap<u32, (u16, Object)>,
+    /// The [`Reading`]s alive: while any is, changes fail with [`ErrorCode::Busy`].
+    readers: usize,
     /// The trailer's `Root` and `Info` entries, when changed.
     trailer: Option<Dictionary>,
 }
@@ -68,6 +71,10 @@ pub(crate) struct Overlay {
     /// What objects look like through this overlay, when not as stored.
     view: Option<Box<dyn View>>,
 }
+
+/// An overlay read by a split's parts, which fails changes with [`ErrorCode::Busy`] while alive.
+#[derive(Debug)]
+pub(crate) struct Reading(Arc<Overlay>);
 
 /// Objects computed or rewritten on read.
 pub(crate) trait View: Debug + Send + Sync {
@@ -145,7 +152,7 @@ impl Object {
 impl Overlay {
     /// Adds `object` under a new number, generation 0.
     pub(crate) fn add(&self, object: Object) -> Result<ObjectId, PdfError> {
-        let mut edits = self.edits();
+        let mut edits = self.writable("Overlay::add")?;
         let number = edits.next;
         edits.next = number
             .checked_add(1)
@@ -259,16 +266,18 @@ impl Overlay {
     }
 
     /// Replaces object `id`.
-    pub(crate) fn set(&self, id: ObjectId, object: Object) {
+    pub(crate) fn set(&self, id: ObjectId, object: Object) -> Result<(), PdfError> {
         let _old = self
-            .edits()
+            .writable("Overlay::set")?
             .objects
             .insert(id.number, (id.generation, object));
+        Ok(())
     }
 
     /// Replaces the trailer's `Root` and `Info` with those of `trailer`.
-    pub(crate) fn set_trailer(&self, trailer: Dictionary) {
-        self.edits().trailer = Some(trailer);
+    pub(crate) fn set_trailer(&self, trailer: Dictionary) -> Result<(), PdfError> {
+        self.writable("Overlay::set_trailer")?.trailer = Some(trailer);
+        Ok(())
     }
 
     /// The trailer's `Root` and `Info`, changed here or read from `objects`; none without a
@@ -293,5 +302,44 @@ impl Overlay {
             view: Some(view),
             ..Self::new(next)
         }
+    }
+
+    /// The state, locked to change; [`ErrorCode::Busy`] while a [`Reading`] is alive.
+    fn writable(&self, operation: &'static str) -> Result<MutexGuard<'_, Edits>, PdfError> {
+        let edits = self.edits();
+        if edits.readers > 0 {
+            return Err(PdfError::new(ErrorCode::Busy, operation));
+        }
+        Ok(edits)
+    }
+}
+
+impl Reading {
+    /// The same overlay, read until dropped.
+    pub(crate) fn again(&self) -> Self {
+        Self::new(&self.0)
+    }
+
+    /// `overlay`, read until dropped.
+    pub(crate) fn new(overlay: &Arc<Overlay>) -> Self {
+        let mut edits = overlay.edits();
+        edits.readers = edits.readers.saturating_add(1);
+        drop(edits);
+        Self(Arc::clone(overlay))
+    }
+}
+
+impl Deref for Reading {
+    type Target = Overlay;
+
+    fn deref(&self) -> &Overlay {
+        &self.0
+    }
+}
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        let mut edits = self.0.edits();
+        edits.readers = edits.readers.saturating_sub(1);
     }
 }

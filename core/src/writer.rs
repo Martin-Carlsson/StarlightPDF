@@ -1,7 +1,7 @@
 //! A rewrite of the objects reachable from the trailer, renumbered from 1 in the order reached
 //! (ISO 32000-2:2020, 7.5).
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::crypto::md5::Md5;
 use crate::metadata::text;
@@ -31,10 +31,10 @@ const STEP: usize = 1024;
 const LATER: u32 = 1 << 31;
 
 /// The new number of each source or overlay object reached, and, per new number, the old number
-/// until written, then its offset: 9 bytes per object.
+/// until written, then its offset: 9 bytes per object, or for a small part per object reached.
 struct Numbers<'run> {
-    /// New numbers by old number, [`LATER`] marking a generation not 0; 0 when not reached.
-    new: Vec<u32>,
+    /// New numbers by old number, [`LATER`] marking a generation not 0.
+    new: Table,
     /// The source's objects.
     objects: Objects<'run>,
     /// The changes.
@@ -67,8 +67,20 @@ pub(crate) struct Rewrite<'run> {
     pub part: bool,
     /// Told of progress, and may cancel.
     pub progress: Option<&'run dyn Progress>,
+    /// Few of the objects are reached: the table holds only those.
+    pub sparse: bool,
     /// The header's version.
     pub version: Version,
+}
+
+/// New numbers by old number below a size; 0 when not reached.
+struct Table {
+    /// One per old number, unless sparse.
+    dense: Vec<u32>,
+    /// The old numbers below which there are entries.
+    size: u32,
+    /// Those reached, when sparse.
+    sparse: Option<BTreeMap<u32, u32>>,
 }
 
 impl Numbers<'_> {
@@ -76,16 +88,18 @@ impl Numbers<'_> {
     /// a number no object has, or of another generation than the object's (ISO 32000-2:2020,
     /// 7.3.10).
     fn number(&mut self, id: ObjectId) -> Result<Option<u32>, PdfError> {
-        let Some(slot) = usize::try_from(id.number)
-            .ok()
-            .filter(|&number| number > 0)
-            .and_then(|number| self.new.get_mut(number))
-        else {
-            return Ok(None);
-        };
         let current = |numbers: &Self| numbers.overlay.generation(numbers.objects, id.number);
-        if *slot != 0 {
-            let reached = *slot;
+        if id.number == 0 {
+            return Ok(None);
+        }
+        let Some(reached) = self.new.get(id.number) else {
+            // An object past the table would be lost.
+            return match current(self)? {
+                Some(_) => Err(PdfError::new(ErrorCode::Malformed, OPERATION)),
+                None => Ok(None),
+            };
+        };
+        if reached != 0 {
             let valid = match (reached & LATER != 0, id.generation) {
                 (false, 0) => true,
                 (false, _) | (true, 0) => false,
@@ -102,17 +116,48 @@ impl Numbers<'_> {
             .ok()
             .filter(|number| number & LATER == 0)
             .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, OPERATION))?;
-        if let Some(found) = usize::try_from(id.number)
-            .ok()
-            .and_then(|at| self.new.get_mut(at))
-        {
-            *found = if id.generation == 0 {
+        self.new.set(
+            id.number,
+            if id.generation == 0 {
                 number
             } else {
                 number | LATER
-            };
-        }
+            },
+        );
         Ok(Some(number))
+    }
+}
+
+impl Table {
+    /// The entry of `number`; `None` past the size.
+    fn get(&self, number: u32) -> Option<u32> {
+        if number >= self.size {
+            return None;
+        }
+        Some(self.sparse.as_ref().map_or_else(
+            || {
+                usize::try_from(number)
+                    .ok()
+                    .and_then(|at| self.dense.get(at))
+                    .copied()
+                    .unwrap_or_default()
+            },
+            |reached| reached.get(&number).copied().unwrap_or_default(),
+        ))
+    }
+
+    /// Sets the entry of `number`, below the size.
+    fn set(&mut self, number: u32, value: u32) {
+        if let Some(reached) = self.sparse.as_mut() {
+            let _old = reached.insert(number, value);
+        } else if let Some(found) = usize::try_from(number)
+            .ok()
+            .and_then(|at| self.dense.get_mut(at))
+        {
+            *found = value;
+        } else {
+            // Past the size: `get` gave `None`, so nothing is set.
+        }
     }
 }
 
@@ -226,13 +271,21 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
     let broken = check(run, root)?;
     let total = u64::from(overlay.next().saturating_sub(1));
     report(run.progress, 0, total)?;
-    // Reserved whole, so no growth holds two copies.
-    let size = objects.slots(overlay.next())?;
+    let next = overlay.next().max(objects.size());
+    let size = objects.slots(next)?;
     let limit = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
-    let (mut new, mut slots) = (Vec::new(), Vec::new());
-    new.try_reserve_exact(size).map_err(|_error| limit())?;
-    slots.try_reserve_exact(size).map_err(|_error| limit())?;
-    new.resize(size, 0);
+    let (mut dense, mut slots) = (Vec::new(), Vec::new());
+    if !run.sparse {
+        // Reserved whole, so no growth holds two copies.
+        dense.try_reserve_exact(size).map_err(|_error| limit())?;
+        slots.try_reserve_exact(size).map_err(|_error| limit())?;
+        dense.resize(size, 0);
+    }
+    let new = Table {
+        dense,
+        size: next,
+        sparse: run.sparse.then(BTreeMap::new),
+    };
     let mut numbers = Numbers {
         new,
         objects,
