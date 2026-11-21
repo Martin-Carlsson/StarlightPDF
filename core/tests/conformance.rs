@@ -441,7 +441,8 @@ fn drawn(path: &str, case: &Case) -> Result<String, Failure> {
         let page = document.page(&options)?;
         (document, page)
     } else {
-        let document = Document::create(None, &CreateOptions::default())?;
+        let policy = case.policy.as_ref().map(ResourcePolicy::new).transpose()?;
+        let document = Document::create(policy.as_ref(), &CreateOptions::default())?;
         let page = document.insert_blank_page(&case.page)?;
         (document, page)
     };
@@ -541,6 +542,10 @@ fn image_read(document: &Document, index: u32, read: &str) -> Result<String, Fai
     }
     .ok_or_else(|| Failure::Case(format!("no XObject /{label} on the page")))?;
     let image = object_at(document, id)?;
+    if !matches!(entry(image.clone(), "Subtype"), Some(Object::Name(subtype)) if subtype == "Image")
+    {
+        return Err(Failure::Case(format!("/{label} is not an image XObject")));
+    }
     let field = |key: &str| entry(image.clone(), key);
     let digest = |found: Option<Object>| -> Result<String, Failure> {
         match found {
@@ -624,6 +629,7 @@ fn keys(family: &str) -> Option<(Vec<&'static str>, &'static [&'static str])> {
         "draw_image" => {
             return Some((
                 vec![
+                    "decoded_limit",
                     "draws",
                     "format",
                     "frame",
@@ -636,6 +642,7 @@ fn keys(family: &str) -> Option<(Vec<&'static str>, &'static [&'static str])> {
                     "page_height",
                     "page_width",
                     "read",
+                    "strict",
                     "width",
                     "x",
                     "y",
@@ -670,8 +677,9 @@ where
     text.split(',').map(|item| lookup(names, item)).collect()
 }
 
-/// The name the last `Do` in `page`'s content paints, and the CTM in effect there relative to default user space: the
-/// product of every `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4), each number rounded to 4 fraction digits.
+/// The name the last `Do` in `page`'s content paints, and the CTM in effect at each `Do` relative to default user space,
+/// `;`-separated: the product of every `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4), each number rounded to 4
+/// fraction digits.
 fn painted(document: &Document, page: Object) -> Result<(String, String), Failure> {
     let streams = match entry(page, "Contents") {
         Some(Object::Reference(id)) => vec![id],
@@ -696,6 +704,7 @@ fn painted(document: &Document, page: Object) -> Result<(String, String), Failur
     let mut current = [1.0_f64, 0.0_f64, 0.0_f64, 1.0_f64, 0.0_f64, 0.0_f64];
     let mut operands: Vec<String> = Vec::new();
     let mut last = None;
+    let mut ctms = Vec::new();
     for token in tokens(&text) {
         match token.as_str() {
             "q" => states.push(current),
@@ -725,12 +734,11 @@ fn painted(document: &Document, page: Object) -> Result<(String, String), Failur
                 let label = operands
                     .last()
                     .and_then(|operand| operand.strip_prefix('/'));
-                last = Some((
-                    String::from(
-                        label.ok_or_else(|| Failure::Case(String::from("Do takes a name")))?,
-                    ),
-                    current.map(round).join(" "),
-                ));
+                last =
+                    Some(String::from(label.ok_or_else(|| {
+                        Failure::Case(String::from("Do takes a name"))
+                    })?));
+                ctms.push(current.map(round).join(" "));
             }
             _ => {}
         }
@@ -741,7 +749,8 @@ fn painted(document: &Document, page: Object) -> Result<(String, String), Failur
             operands.push(token);
         }
     }
-    last.ok_or_else(|| Failure::Case(String::from("no Do in the page's content")))
+    let label = last.ok_or_else(|| Failure::Case(String::from("no Do in the page's content")))?;
+    Ok((label, ctms.join(";")))
 }
 
 /// The value `names` gives `value`, or `unknown`.

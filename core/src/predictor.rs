@@ -23,12 +23,12 @@ pub(crate) struct Predictor<P> {
     colors: usize,
     /// Components per row.
     components: usize,
-    /// The most bytes a row may hold.
-    limit: usize,
     /// The row being served, grown as its data arrives.
     current: Vec<u8>,
     /// The input.
     inner: P,
+    /// The most bytes a row may hold.
+    limit: usize,
     /// Bytes per pixel, at least 1, for PNG.
     pixel: usize,
     /// PNG, else TIFF.
@@ -65,10 +65,10 @@ impl<P: Pull> Predictor<P> {
                     Err(malformed())
                 };
             }
-            filled = filled.wrapping_add(read);
-            if filled > self.limit {
+            if self.width > self.limit {
                 return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
             }
+            filled = filled.wrapping_add(read);
         }
         if self.png {
             self.png_row(kind.first().copied().ok_or_else(malformed)?)?;
@@ -134,14 +134,14 @@ impl<P: Pull> Predictor<P> {
     /// # Errors
     ///
     /// [`ErrorCode::Malformed`] for a parameter out of range, [`ErrorCode::LimitExceeded`] for
-    /// more than [`MAX_COLORS`] colors; reading a row of more than `limit` bytes fails with it.
+    /// more than [`MAX_COLORS`] colors; reading rows of more than `row_limit` bytes fails with it.
     pub(crate) fn with_parameters(
         inner: P,
         predictor: i64,
         colors: i64,
         bits_per_component: i64,
         columns: i64,
-        limit: u64,
+        row_limit: u64,
     ) -> Result<Self, PdfError> {
         let png = match predictor {
             2 => false,
@@ -155,29 +155,29 @@ impl<P: Pull> Predictor<P> {
         let colors_count = positive(colors).ok_or_else(malformed)?;
         let columns_count = positive(columns).ok_or_else(malformed)?;
         let bits = positive(bits_per_component).ok_or_else(malformed)?;
-        let exceeded = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
+        let limit = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
         if colors_count > MAX_COLORS {
-            return Err(exceeded());
+            return Err(limit());
         }
-        let pixel_bits = colors_count.checked_mul(bits).ok_or_else(exceeded)?;
+        let pixel_bits = colors_count.checked_mul(bits).ok_or_else(limit)?;
         let row = pixel_bits
             .checked_mul(columns_count)
             .and_then(|row_bits| row_bits.checked_add(7))
-            .ok_or_else(exceeded)?
+            .ok_or_else(limit)?
             >> 3_u32;
-        let width = usize::try_from(row).ok().ok_or_else(exceeded)?;
+        let width = usize::try_from(row).ok().ok_or_else(limit)?;
         Ok(Self {
             bits: u32::try_from(bits).ok().ok_or_else(malformed)?,
-            colors: usize::try_from(colors_count).ok().ok_or_else(exceeded)?,
+            colors: usize::try_from(colors_count).ok().ok_or_else(limit)?,
             components: usize::try_from(colors_count.saturating_mul(columns_count))
                 .ok()
-                .ok_or_else(exceeded)?,
+                .ok_or_else(limit)?,
             current: Vec::new(),
             inner,
-            limit: usize::try_from(limit).unwrap_or(usize::MAX),
+            limit: usize::try_from(row_limit).unwrap_or(usize::MAX),
             pixel: usize::try_from(pixel_bits.wrapping_add(7) >> 3_u32)
                 .ok()
-                .ok_or_else(exceeded)?,
+                .ok_or_else(limit)?,
             png,
             previous: Vec::new(),
             served: 0,

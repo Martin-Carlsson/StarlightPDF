@@ -45,14 +45,20 @@ SAVE = {
 }
 SPLIT = {"allow_loss", "by", "count", "starts"}
 DRAW = {
+    "decoded_limit",
+    "draws",
     "format",
+    "frame",
     "height",
     "ignore_orientation",
+    "index",
     "mask",
+    "on",
     "opacity",
     "page_height",
     "page_width",
     "read",
+    "strict",
     "width",
     "x",
     "y",
@@ -591,8 +597,8 @@ def rounded(value: float) -> str:
     return "0" if fixed == "-0" else fixed
 
 
-def matrix(document: starlightpdf.Document, page_object: Obj) -> str:
-    """Return the CTM at the `Do`: the product of each `cm` in effect (8.3.4)."""
+def painted(document: starlightpdf.Document, page_object: Obj) -> tuple[str, str]:
+    """Return the name the last `Do` paints and the CTM at each `Do` (8.3.4)."""
     contents = entry(page_object, "Contents")
     refs = contents if isinstance(contents, list) else [contents]
     content = b"\n".join(
@@ -603,6 +609,8 @@ def matrix(document: starlightpdf.Document, page_object: Obj) -> str:
     states: list[list[float]] = []
     current = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
     operands: list[str] = []
+    last: str | None = None
+    ctms: list[str] = []
     for word in tokens(content.decode("latin-1")):
         if word == "q":
             states.append(current)
@@ -620,28 +628,34 @@ def matrix(document: starlightpdf.Document, page_object: Obj) -> str:
                 me * cb + mf * cd + cf,
             ]
         elif word == "Do":
-            return " ".join(rounded(value) for value in current)
+            last = operands[-1].removeprefix("/")
+            ctms.append(" ".join(rounded(value) for value in current))
         if word[:1].isalpha() or word[:1] in {"'", '"'}:
             operands.clear()
         else:
             operands.append(word)
-    msg = "no Do in the page's content"
-    raise ValueError(msg)
+    if last is None:
+        msg = "no Do in the page's content"
+        raise ValueError(msg)
+    return last, ";".join(ctms)
 
 
-def image_read(document: starlightpdf.Document, read: str) -> str:
-    """Return what `read` gives of the image on the first page."""
+def image_read(document: starlightpdf.Document, index: int, read: str) -> str:
+    """Return what `read` gives of the image the last `Do` paints on kid `index`."""
     catalog = document.catalog
     root = object_at(document, Ref(catalog.number, catalog.generation))
     kids = resolve(document, entry(resolve(document, entry(root, "Pages")), "Kids"))
-    page_object = resolve(document, kids[0] if isinstance(kids, list) else None)
+    page_object = resolve(document, kids[index] if isinstance(kids, list) else None)
+    label, ctm = painted(document, page_object)
     resources = resolve(document, entry(page_object, "Resources"))
-    xobjects = resolve(document, entry(resources, "XObject"))
-    found = next(iter(xobjects.values()), None) if isinstance(xobjects, dict) else None
+    found = entry(resolve(document, entry(resources, "XObject")), label)
     if not isinstance(found, Ref):
-        msg = "no image XObject on the page"
+        msg = f"no XObject /{label} on the page"
         raise TypeError(msg)
     image = object_at(document, found)
+    if entry(image, "Subtype") != Name("Image"):
+        msg = f"/{label} is not an image XObject"
+        raise TypeError(msg)
 
     def digest(value: Obj | None) -> str:
         if not isinstance(value, Ref):
@@ -654,7 +668,8 @@ def image_read(document: starlightpdf.Document, read: str) -> str:
         return number(float(text(entry(image, key))))
 
     reads: dict[str, Callable[[], str]] = {
-        "matrix": lambda: matrix(document, page_object),
+        "matrix": lambda: ctm,
+        "decode": lambda: decode_array(entry(image, "Decode")),
         "size": lambda: f"{integer('Width')} {integer('Height')}",
         "bits": lambda: integer("BitsPerComponent"),
         "color_space": lambda: color_space(document, entry(image, "ColorSpace")),
@@ -669,6 +684,16 @@ def image_read(document: starlightpdf.Document, read: str) -> str:
     return reads[read]()
 
 
+def decode_array(value: Obj | None) -> str:
+    """Return the `Decode` numbers, or `none` (ISO 32000-2:2020, 8.9.5.2)."""
+    if value is None:
+        return "none"
+    if not isinstance(value, list):
+        msg = "Decode is not an array"
+        raise TypeError(msg)
+    return " ".join(number(float(text(item))) for item in value)
+
+
 def filters(value: Obj | None) -> str:
     """Return the `Filter` names, or `none` (ISO 32000-2:2020, 7.4)."""
     if value is None:
@@ -681,6 +706,7 @@ def filters(value: Obj | None) -> str:
 IMAGE_READS = {
     "bits",
     "color_space",
+    "decode",
     "filter",
     "icc_sha256",
     "mask_samples_sha256",
@@ -692,31 +718,42 @@ IMAGE_READS = {
 
 
 def drawn(args: list[str]) -> str:
-    """Draw the image first in `args` on a new page, save, reopen and read."""
+    """Draw the image first in `args` `draws=` times on a page; save, reopen, read."""
     path, *options = args
     given = parse(options, DRAW, {"read"})
     if given["read"] not in IMAGE_READS:
         msg = f"bad read {given['read']!r}"
         raise ValueError(msg)
-    document = starlightpdf.Document.create()
-    new = document.insert_blank_page(
-        width=optional(given.get("page_width")),
-        height=optional(given.get("page_height")),
-    )
+    index = int(given.get("index", "0"))
+    if "on" in given:
+        document = open_document(source("bytes", given["on"]), given)
+        new = document.page(index=index)
+    else:
+        limits = {key: int(given[key]) for key in LIMITS if key in given}
+        document = starlightpdf.Document.create(
+            starlightpdf.ResourcePolicy(**limits) if limits else None
+        )
+        new = document.insert_blank_page(
+            width=optional(given.get("page_width")),
+            height=optional(given.get("page_height")),
+        )
     mask = source("bytes", given["mask"]) if "mask" in given else None
-    new.draw_image(
-        source("bytes", path),
-        mask,
-        None,
-        x=float(given.get("x", "0")),
-        y=float(given.get("y", "0")),
-        width=optional(given.get("width")),
-        height=optional(given.get("height")),
-        ignore_orientation="ignore_orientation" in given,
-        format=given.get("format"),
-        opacity=optional(given.get("opacity")),
-    )
-    return image_read(reopen(twice(document, {}), {}), given["read"])
+    image = source("bytes", path)
+    for _ in range(max(int(given.get("draws", "1")), 1)):
+        new.draw_image(
+            image,
+            mask,
+            None,
+            x=float(given.get("x", "0")),
+            y=float(given.get("y", "0")),
+            width=optional(given.get("width")),
+            height=optional(given.get("height")),
+            ignore_orientation="ignore_orientation" in given,
+            format=given.get("format"),
+            frame=int(given.get("frame", "0")),
+            opacity=optional(given.get("opacity")),
+        )
+    return image_read(reopen(twice(document, {}), given), index, given["read"])
 
 
 OPERATIONS: dict[str, Callable[[list[str]], str]] = {

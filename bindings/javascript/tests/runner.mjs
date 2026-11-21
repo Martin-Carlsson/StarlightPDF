@@ -1,7 +1,7 @@
 // Runs the conformance suite (tests/conformance/*.tsv) through the package, in Node.js or a browser.
 
 /**
- * @import { Api, Boundary, Document, DrawImageOptions, InfoDictionary, ObjectId, Page, SaveOptions, SaveReport, Sink, Source, SplitOptions } from "./api.mts"
+ * @import { Api, Boundary, Document, DrawImageOptions, InfoDictionary, ObjectId, Page, ResourcePolicy, SaveOptions, SaveReport, Sink, Source, SplitOptions } from "./api.mts"
  * @typedef {object} Environment Where case files come from.
  * @property {(path: string) => Promise<Uint8Array>} bytes The bytes of the file at `path`.
  * @property {(path: string) => Promise<Source | string>} file A source over the file at `path`, or the outcome.
@@ -44,14 +44,20 @@ const SAVE = [
 const SPLIT = ["allow_loss", "by", "count", "starts"];
 /** The keys `draw_image` takes. */
 const DRAW = [
+  "decoded_limit",
+  "draws",
   "format",
+  "frame",
   "height",
   "ignore_orientation",
+  "index",
   "mask",
+  "on",
   "opacity",
   "page_height",
   "page_width",
   "read",
+  "strict",
   "width",
   "x",
   "y",
@@ -62,6 +68,7 @@ const INFO = ["author", "created", "creator", "keywords", "modified", "producer"
 const IMAGE_READS = new Set([
   "bits",
   "color_space",
+  "decode",
   "filter",
   "icc_sha256",
   "mask_samples_sha256",
@@ -375,13 +382,17 @@ async function twice(api, document, given) {
   return first;
 }
 
-/** Opens `made` with the open options `given`. @type {(api: Api, made: Source, given: Map<string, string>) => Promise<Document>} */
-async function open(api, made, given) {
+/** The resource policy of the limits `given`, or null. @type {(api: Api, given: Map<string, string>) => Promise<ResourcePolicy | null>} */
+async function policyOf(api, given) {
   const limits = Object.fromEntries(
     LIMITS.filter(([key]) => given.has(key)).map(([key, name]) => [name, integer(given.get(key))]),
   );
-  const policy = Object.keys(limits).length === 0 ? null : await api.ResourcePolicy.create(limits);
-  return api.Document.open(made, policy, {
+  return Object.keys(limits).length === 0 ? null : api.ResourcePolicy.create(limits);
+}
+
+/** Opens `made` with the open options `given`. @type {(api: Api, made: Source, given: Map<string, string>) => Promise<Document>} */
+async function open(api, made, given) {
+  return api.Document.open(made, await policyOf(api, given), {
     password: given.get("password") ?? "",
     strict: given.has("strict"),
   });
@@ -670,8 +681,8 @@ async function icc(document, value) {
   return family === "Indexed" ? icc(document, second) : undefined;
 }
 
-/** The CTM at the `Do` painting the image: the product of every `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4). @type {(api: Api, document: Document, pageObject: Obj) => Promise<string>} */
-async function matrix(api, document, pageObject) {
+/** The name the last `Do` paints and the CTM at each `Do`, `;`-separated: the product of every `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4). @type {(api: Api, document: Document, pageObject: Obj) => Promise<[string, string]>} */
+async function painted(api, document, pageObject) {
   const contents = entry(pageObject, "Contents");
   const items = contents !== undefined && "array" in contents ? contents.array : [contents];
   const decoder = new TextDecoder("latin1");
@@ -686,6 +697,10 @@ async function matrix(api, document, pageObject) {
   let current = [1, 0, 0, 1, 0, 0];
   /** @type {string[]} */
   const operands = [];
+  /** @type {string | undefined} */
+  let last;
+  /** @type {string[]} */
+  const ctms = [];
   for (const word of tokens(content)) {
     if (word === "q") {
       states.push(current);
@@ -703,7 +718,8 @@ async function matrix(api, document, pageObject) {
         me * cb + mf * cd + cf,
       ];
     } else if (word === "Do") {
-      return current.map(rounded).join(" ");
+      last = (operands.at(-1) ?? "").replace(/^\//u, "");
+      ctms.push(current.map(rounded).join(" "));
     }
     if (/^[A-Za-z'"]/u.test(word)) {
       operands.length = 0;
@@ -711,7 +727,21 @@ async function matrix(api, document, pageObject) {
       operands.push(word);
     }
   }
-  throw new Error("no Do in the page's content");
+  if (last === undefined) {
+    throw new Error("no Do in the page's content");
+  }
+  return [last, ctms.join(";")];
+}
+
+/** The `Decode` numbers space-separated, or `none` (ISO 32000-2:2020, 8.9.5.2). @type {(value: Obj | undefined) => string} */
+function decodeArray(value) {
+  if (value === undefined) {
+    return "none";
+  }
+  if (!("array" in value)) {
+    throw new Error("Decode is not an array");
+  }
+  return value.array.map((item) => decimal(Number(text(item)))).join(" ");
 }
 
 /** The `Filter` names space-separated, or `none` (ISO 32000-2:2020, 7.4). @type {(value: Obj | undefined) => string} */
@@ -722,18 +752,22 @@ function filters(value) {
   return ("array" in value ? value.array : [value]).map(text).join(" ");
 }
 
-/** What `read` gives of the one image on the first page, found from the catalog. @type {(api: Api, document: Document, read: string) => Promise<string>} */
-async function imageRead(api, document, read) {
+/** What `read` gives of the image the last `Do` paints on kid `index` of the root page tree node. @type {(api: Api, document: Document, index: number, read: string) => Promise<string>} */
+async function imageRead(api, document, index, read) {
   const root = await objectAt(document, await document.catalog());
   const kids = await resolve(document, entry(await resolve(document, entry(root, "Pages")), "Kids"));
-  const pageObject = await resolve(document, "array" in kids ? kids.array[0] : undefined);
+  const pageObject = await resolve(document, "array" in kids ? kids.array[index] : undefined);
+  const [label, ctm] = await painted(api, document, pageObject);
   const resources = await resolve(document, entry(pageObject, "Resources"));
-  const xobjects = await resolve(document, entry(resources, "XObject"));
-  const found = "dict" in xobjects ? [...xobjects.dict.values()][0] : undefined;
+  const found = entry(await resolve(document, entry(resources, "XObject")), label);
   if (found === undefined || !("ref" in found)) {
-    throw new Error("no image XObject on the page");
+    throw new Error(`no XObject /${label} on the page`);
   }
   const image = await objectAt(document, found.ref);
+  const subtype = entry(image, "Subtype");
+  if (subtype === undefined || !("name" in subtype) || subtype.name !== "Image") {
+    throw new Error(`/${label} is not an image XObject`);
+  }
   /** @type {(id: ObjectId | undefined) => Promise<string>} */
   const digest = async (id) => (id === undefined ? "none" : sha256(await streamBytes(api, document, id, true)));
   /** @type {(key: string) => string} */
@@ -741,7 +775,9 @@ async function imageRead(api, document, read) {
   const mask = entry(image, "SMask");
   switch (read) {
     case "matrix":
-      return matrix(api, document, pageObject);
+      return ctm;
+    case "decode":
+      return decodeArray(entry(image, "Decode"));
     case "size":
       return `${number("Width")} ${number("Height")}`;
     case "bits":
@@ -775,28 +811,40 @@ async function drawn(api, environment, args) {
   const [pageWidth, pageHeight] = ["page_width", "page_height"].map((key) =>
     given.has(key) ? real(given.get(key)) : undefined,
   );
-  const document = await api.Document.create();
-  const created = await document.insertBlankPage({
-    ...(pageHeight === undefined ? {} : { height: pageHeight }),
-    ...(pageWidth === undefined ? {} : { width: pageWidth }),
-  });
+  const on = given.get("on");
+  const index = given.has("index") ? integer(given.get("index")) : 0;
+  const document =
+    on === undefined
+      ? await api.Document.create(await policyOf(api, given))
+      : await open(api, await api.Source.fromBytes(await environment.bytes(on)), given);
+  const created =
+    on === undefined
+      ? await document.insertBlankPage({
+          ...(pageHeight === undefined ? {} : { height: pageHeight }),
+          ...(pageWidth === undefined ? {} : { width: pageWidth }),
+        })
+      : await document.page({ index });
   const mask = given.has("mask") ? await api.Source.fromBytes(await environment.bytes(given.get("mask") ?? "")) : null;
   /** @type {(key: string) => number | undefined} */
   const optional = (key) => (given.has(key) ? real(given.get(key)) : undefined);
-  const [x, y, width, height, opacity] = ["x", "y", "width", "height", "opacity"].map(optional);
+  const [x, y, width, height, opacity, frame] = ["x", "y", "width", "height", "opacity", "frame"].map(optional);
   const format = given.get("format");
   /** @type {DrawImageOptions} */
   const drawing = {
     ignoreOrientation: given.has("ignore_orientation"),
     ...(format === undefined ? {} : { format }),
+    ...(frame === undefined ? {} : { frame }),
     ...(height === undefined ? {} : { height }),
     ...(opacity === undefined ? {} : { opacity }),
     ...(width === undefined ? {} : { width }),
     ...(x === undefined ? {} : { x }),
     ...(y === undefined ? {} : { y }),
   };
-  await created.drawImage(await api.Source.fromBytes(await environment.bytes(path)), mask, null, drawing);
-  return imageRead(api, await reopen(api, await twice(api, document, new Map()), new Map()), read);
+  const image = await api.Source.fromBytes(await environment.bytes(path));
+  for (let draw = 0; draw < Math.max(given.has("draws") ? integer(given.get("draws")) : 1, 1); draw += 1) {
+    await created.drawImage(image, mask, null, drawing);
+  }
+  return imageRead(api, await reopen(api, await twice(api, document, new Map()), given), index, read);
 }
 
 /**

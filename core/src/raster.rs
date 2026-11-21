@@ -36,7 +36,6 @@ struct Cursor<'source> {
 }
 
 /// The filter of an image's stored data.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Filter {
     /// `DCTDecode` (ISO 32000-2:2020, 7.4.8).
     Dct,
@@ -159,7 +158,6 @@ impl<'source> Cursor<'source> {
             Ok(_) | Err(_) => {
                 self.next = self.offset().saturating_add(count);
                 self.end = 0;
-                self.position = 0;
             }
         }
     }
@@ -176,14 +174,14 @@ impl Image {
         self.components
     }
 
-    /// An ICC profile not of the image's colour space was left out.
-    pub(crate) const fn dropped_profile(&self) -> bool {
-        self.dropped_profile
-    }
-
     /// The image needs `Decode` `[1 0]` per component (8.9.5.2).
     pub(crate) const fn decode_inverted(&self) -> bool {
         self.inverted
+    }
+
+    /// An ICC profile not of the image's colour space was left out.
+    pub(crate) const fn dropped_profile(&self) -> bool {
+        self.dropped_profile
     }
 
     /// The filter of the stored data; `None`: unfiltered samples (8.9.3).
@@ -254,7 +252,7 @@ impl Image {
         }
     }
 
-    /// Writes the soft mask's samples in pieces; nothing without one.
+    /// Writes the soft mask's samples in pieces, of an image with one ([`Image::mask`]).
     ///
     /// # Errors
     ///
@@ -359,9 +357,6 @@ impl Pull for Ranges<'_> {
             return Ok(0);
         };
         let count = self.source.read(self.offset, part, self.operation)?;
-        if count == 0 {
-            return Err(PdfError::new(ErrorCode::Malformed, self.operation));
-        }
         let step = u64::try_from(count).unwrap_or(0);
         self.offset = self.offset.saturating_add(step);
         self.left = self.left.saturating_sub(step);

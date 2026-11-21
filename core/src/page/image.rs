@@ -493,7 +493,6 @@ fn xobject(overlay: &Overlay, image: Image) -> Result<ObjectId, PdfError> {
     let bits = Object::Integer(i64::from(shared.bits()));
     let head = |family: Object, depth: Object| {
         vec![
-            entry(b"Type", name(b"XObject")),
             entry(b"Subtype", name(b"Image")),
             entry(b"Width", width.clone()),
             entry(b"Height", height.clone()),

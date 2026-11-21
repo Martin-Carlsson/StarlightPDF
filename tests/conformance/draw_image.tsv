@@ -1,9 +1,11 @@
 # operation	arguments	expected
 # create, insert_blank_page (page_width=, page_height=; default A4), or with on= open that PDF and take page index= (default 0),
 #   a kid of its root page tree node; draw_image with the arguments draws= times (default 1); save, reopen, then read= of the
-#   image the page's last Do paints, the XObject its operand names:
-# matrix: the six operands a b c d e f of the CTM in effect at that Do, relative to the page's default user
-#   space (ISO 32000-2:2020, 8.3.4, 8.4.4 cm); each number rounded to 4 fraction digits, trailing zeros and point dropped, -0 as 0.
+#   image the page's last Do paints, the XObject its operand names, which must be an image. decoded_limit= and strict apply to
+#   the documents made, opened and reopened:
+# matrix: for each Do on the page in order, ;-separated, the six operands a b c d e f of the CTM in effect at it, relative to the
+#   page's default user space (ISO 32000-2:2020, 8.3.4, 8.4.4 cm); each number rounded to 4 fraction digits, trailing zeros and
+#   point dropped, -0 as 0. The existing content keeps its CTM; a drawn image's CTM holds no cm of the content before it.
 # size: Width Height; bits: BitsPerComponent (8.9.5.1); filter: the Filter names space-separated, or none (7.4).
 # color_space: DeviceGray, DeviceRGB, DeviceCMYK, ICCBased N, or Indexed <base> <hival> <lookup bytes as lowercase hex> (8.6).
 # raw_sha256: of the image stream's stored bytes; samples_sha256: of its bytes decoded through every filter (8.9.3 layout: rows
@@ -38,9 +40,12 @@ draw_image	tests/corpus/images/baseline-rgb.jpg	read=decode	none
 # ITU-T T.81, B.1.1.2, B.1.1.3: fill bytes FF may precede a marker; TEM (FF 01) stands alone, without a length
 draw_image	tests/corpus/images/fill-bytes.jpg	read=size	13 9
 draw_image	tests/corpus/images/tem.jpg	read=size	13 9
+# A 6000-byte APP15 segment (B.2.4.6) is skipped whole
+draw_image	tests/corpus/images/large-segment.jpg	read=size	13 9
 # Malformed (T.81, B.1.1, B.2): no SOI first; EOI before the frame; a byte other than FF where a marker belongs; a segment
 #   length cut short; two frame headers; a frame header whose length is not 8 + 3 Nf, or of width 0. The ICC_PROFILE segments
-#   (ICC.1:2010, B.4) are Malformed when their counts differ or a sequence number repeats.
+#   (ICC.1:2010, B.4) are Malformed when their counts differ or a sequence number repeats, and a profile shorter than its
+#   128-byte header (ICC.1:2010, 7.2) is Malformed.
 draw_image	tests/corpus/images/not-soi.jpg	format=Jpeg	read=size	Malformed
 draw_image	tests/corpus/images/eoi-before-frame.jpg	read=size	Malformed
 draw_image	tests/corpus/images/junk-between-segments.jpg	read=size	Malformed
@@ -50,6 +55,7 @@ draw_image	tests/corpus/images/frame-length.jpg	read=size	Malformed
 draw_image	tests/corpus/images/width-zero.jpg	read=size	Malformed
 draw_image	tests/corpus/images/icc-count-mismatch.jpg	read=size	Malformed
 draw_image	tests/corpus/images/icc-duplicate.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-short.jpg	read=size	Malformed
 # Unsupported (ISO 32000-2:2020, 7.4.8, DCTDecode: 8-bit Huffman baseline or progressive): arithmetic coding (SOF9), 12-bit samples
 draw_image	tests/corpus/images/arithmetic.jpg	read=size	Unsupported
 draw_image	tests/corpus/images/precision-12.jpg	read=size	Unsupported
@@ -163,6 +169,8 @@ draw_image	tests/corpus/images/c2-b8.png	read=icc_sha256	none
 draw_image	tests/corpus/images/c2-b8.png	format=Png	read=samples_sha256	3e728b34388fecf22866cc9ef1349065e586b9726e16984e8af74bcc4e8b6390
 # A row wider than 65,536 pixels: 70,000 x 1, 1 bit, row bytes (i * 37 + 11) mod 256 for i in 0..8750
 draw_image	tests/corpus/images/c0-b1-wide.png	read=samples_sha256	b1c7308503781f87a08f8d0234f2591657d7af05f2c42e5652ace238277f423f
+# An IDAT chunk of over 8 KiB: 64x64 RGB, samples x(n+1) = (1103515245 x(n) + 12345) mod 2^31 from x(0) = 1, each x(n) >> 23
+draw_image	tests/corpus/images/c2-b8-large.png	read=samples_sha256	c275b422af2ea335051b216f25d07d66297a69673d8445a64345966cc0162dea
 # ISO/IEC 15948:2004, 11.3.2.1: tRNS gives an SMask of 8 bits per sample (ISO 32000-2:2020, 11.6.5.3): for colour types 0 and 2
 #   0 where a pixel equals the key (all 16 bits compared) and 255 elsewhere; for colour type 3 the entry's alpha, 255 past its end.
 draw_image	tests/corpus/images/c0-b16-trns.png	read=samples_sha256	e81724292edc4ab27b6adfc823c5481657b0c0f2caa70a42c89cc0c0c4c6ee52
@@ -196,6 +204,10 @@ draw_image	tests/corpus/images/c3-b8-trns-interlaced.png	read=mask_samples_sha25
 # ISO 32000-2:2020, 8.6.5.5: an embedded ICC profile (ICC.1, made for these tests) is kept as ICCBased: JPEG APP2 ICC_PROFILE
 #   segments (ICC.1:2010, B.4), here also split over two, and the PNG iCCP chunk (ISO/IEC 15948:2004, 11.3.3.3).
 draw_image	tests/corpus/images/icc-rgb.jpg	read=color_space	ICCBased 3
+# A 532-byte profile past decoded_limit=300 is LimitExceeded
+draw_image	tests/corpus/images/icc-rgb.jpg	decoded_limit=300	read=color_space	LimitExceeded
+# 77 bytes of samples, 11 a row, past decoded_limit=50 are LimitExceeded
+draw_image	tests/corpus/images/c0-b8.png	decoded_limit=50	read=size	LimitExceeded
 draw_image	tests/corpus/images/icc-rgb.jpg	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
 draw_image	tests/corpus/images/icc-rgb.jpg	read=raw_sha256	8c51af595852c4d4535832d8333ca7926401a69d98a765f20f6d8ddf5b3d39cb
 draw_image	tests/corpus/images/icc-grey.jpg	read=color_space	ICCBased 1
@@ -204,6 +216,8 @@ draw_image	tests/corpus/images/icc-grey.jpg	read=raw_sha256	99196f5f2f905628da34
 draw_image	tests/corpus/images/icc-two-segments.jpg	read=color_space	ICCBased 3
 draw_image	tests/corpus/images/icc-two-segments.jpg	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
 draw_image	tests/corpus/images/icc-two-segments.jpg	read=raw_sha256	c0bbf9b31bac954be2d4c74ee4c74bee70db7e2aa936ed8c82af6055eb8c41b8
+# The RGB profile padded with zeros to 6000 bytes, its size field set to match, in one segment
+draw_image	tests/corpus/images/icc-large.jpg	read=icc_sha256	e35a8960ada40cd3277f7d38b4e1aa20b4bfcd171dfabf09f5e62b189c0a6e09
 draw_image	tests/corpus/images/icc-rgb.png	read=color_space	ICCBased 3
 draw_image	tests/corpus/images/icc-rgb.png	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
 draw_image	tests/corpus/images/icc-rgb.png	read=samples_sha256	2530e40e29ba7fb8de5cd160726d62dec7b812180397f956ee3d625e0dffe3ee
@@ -214,6 +228,8 @@ draw_image	tests/corpus/images/icc-grey.png	read=samples_sha256	dcba62ca3cc5494f
 #   space applies (ISO 32000-2:2020, 8.6.5.5: N must match the profile). Grey images carrying the RGB profile:
 draw_image	tests/corpus/images/icc-mismatch.jpg	read=color_space	DeviceGray
 draw_image	tests/corpus/images/icc-mismatch.png	read=color_space	DeviceGray
+# The warning fails a page of a document opened strict
+draw_image	tests/corpus/images/icc-mismatch.jpg	on=tests/corpus/images/pages.pdf	strict	read=color_space	Malformed
 # Placement, ISO 32000-2:2020, 8.3.2.3, 8.9.4: x, y are the image's top-left corner in points from the top-left of the displayed page;
 #   both sizes stretch, one keeps the ratio, none puts 1 pixel on 1 point (72 DPI). baseline-rgb.jpg is 13x9, c2-b8.png 9x6.
 draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	13 0 0 9 10 71
@@ -228,18 +244,20 @@ draw_image	tests/corpus/images/c2-b8.png	page_width=200	page_height=100	x=10	y=2
 draw_image	tests/corpus/images/c6-b8-interlaced.png	page_width=200	page_height=100	x=10	y=20	read=matrix	11 0 0 13 10 67
 # pages.pdf: a root node of MediaBox [0 0 200 100] and Resources /XObject /Im1 (a 2x2 image), whose kids are 0: Rotate 90;
 #   1: Rotate 180; 2: Rotate 270; 3: MediaBox [0 0 300 200], CropBox [50 20 250 120]; 4: as 3 and Rotate 90; 5: UserUnit 2;
-#   6: Contents "2 0 0 2 0 0 cm /Im1 Do", leaving its cm in effect. The displayed page turns the box clockwise by Rotate
-#   (7.7.3.3); a displayed point is 1 / UserUnit units (14.11.2). The 13x9 image at displayed x 10, y 20 spans displayed
-#   10..23 by 20..29; e.g. Rotate 90 maps displayed (dx, dy) to user (dy, dx), Rotate 180 to (200 - dx, dy), Rotate 270 to
-#   (200 - dy, 100 - dx), the crop box to (50 + dx, 120 - dy), both to (50 + dy, 20 + dx), UserUnit 2 to (dx / 2, 100 - dy / 2).
+#   6: Contents "2 0 0 2 0 0 cm /Im1 Do", leaving its cm in effect; 7: UserUnit -2, not positive, so the default 1. The displayed
+#   page turns the box clockwise by Rotate (7.7.3.3); a displayed point is 1 / UserUnit units (14.11.2). The 13x9 image at
+#   displayed x 10, y 20 spans displayed 10..23 by 20..29; Rotate 90 maps displayed (dx, dy) to user (dy, dx), Rotate 180 to
+#   (200 - dx, dy), Rotate 270 to (200 - dy, 100 - dx), the crop box to (50 + dx, 120 - dy), both to (50 + dy, 20 + dx),
+#   UserUnit 2 to (dx / 2, 100 - dy / 2).
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=0	x=10	y=20	read=matrix	0 13 -9 0 29 10
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=1	x=10	y=20	read=matrix	-13 0 0 -9 190 29
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=2	x=10	y=20	read=matrix	0 -13 9 0 171 90
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=3	x=10	y=20	read=matrix	13 0 0 9 60 91
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=4	x=10	y=20	read=matrix	0 13 -9 0 79 30
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=5	x=10	y=20	read=matrix	6.5 0 0 4.5 5 85.5
-draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	read=matrix	13 0 0 9 10 71
-draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	draws=2	read=matrix	13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=7	x=10	y=20	read=matrix	13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	read=matrix	2 0 0 2 0 0;13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	draws=2	read=matrix	2 0 0 2 0 0;13 0 0 9 10 71;13 0 0 9 10 71
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	read=size	13 9
 draw_image	tests/corpus/images/c2-b8.png	on=tests/corpus/images/pages.pdf	index=6	draws=2	read=size	9 6
 # Exif 2.32 (CIPA DC-008-2019), 4.6.4 A, tag 274 Orientation, in JPEG APP1 (big-endian TIFF header for even values, little-endian for
@@ -271,6 +289,50 @@ draw_image	tests/corpus/images/other.gif	format=Gif	read=matrix	Unsupported
 draw_image	tests/corpus/images/other.bmp	read=matrix	Unsupported
 draw_image	tests/corpus/images/damaged.jpg	read=matrix	Malformed
 draw_image	tests/corpus/images/damaged.png	read=matrix	Malformed
+# ISO/IEC 15948:2004, 5.6: IDAT chunks are consecutive, and one PLTE precedes them and tRNS; an empty IDAT after a tEXt chunk, or
+#   a PLTE after the IDAT of an RGB image, twice, or after tRNS, is Malformed
+draw_image	tests/corpus/images/idat-after-other-chunk.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-after-idat.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-after-trns.png	read=size	Malformed
+# 11.2.3: a PLTE of no entries, or of 3 for a bit depth of 1, is Malformed
+draw_image	tests/corpus/images/plte-empty.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-too-many.png	read=size	Malformed
+# 11.2.3: a PLTE chunk in a greyscale image is Malformed
+draw_image	tests/corpus/images/plte-in-grey.png	read=size	Malformed
+# 5.6: iCCP precedes PLTE; one after it is Malformed
+draw_image	tests/corpus/images/iccp-after-plte.png	read=size	Malformed
+# 11.3.3.3: an iCCP profile name of 1 to 79 bytes; an empty one is Malformed
+draw_image	tests/corpus/images/iccp-empty-name.png	read=size	Malformed
+# 5.6, 11.3.3.3: a second iCCP, or one of compression method 1, is Malformed
+draw_image	tests/corpus/images/iccp-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/iccp-method.png	read=size	Malformed
+# 5.6, 11.3.2.1: one tRNS, before IDAT, of 2 bytes for greyscale, none for alpha, at most an entry per palette entry
+draw_image	tests/corpus/images/trns-length.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-after-idat.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-in-alpha.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-too-long.png	read=size	Malformed
+# 5.4: an unknown critical chunk (first letter upper-case) is Unsupported
+draw_image	tests/corpus/images/unknown-critical-chunk.png	read=size	Unsupported
+# 11.2.4: image data of 6 rows for a height of 7 is Malformed
+draw_image	tests/corpus/images/rows-missing.png	read=size	Malformed
+# 5.3: an IHDR chunk whose CRC differs by a bit is Malformed
+draw_image	tests/corpus/images/crc.png	read=size	Malformed
+# 5.3: a chunk whose length (1,698,693,120) runs past the file's end (fuzzing found it slow) is Malformed
+draw_image	tests/corpus/images/chunk-past-end.png	read=size	Malformed
+# 11.2.2: a height of 0 is Malformed
+draw_image	tests/corpus/images/height-zero.png	read=size	Malformed
+# 5.6, 11.2.2: a second IHDR, an IHDR length other than 13, or interlace method 2, is Malformed; 5.4: so is a chunk type
+#   holding a digit
+draw_image	tests/corpus/images/ihdr-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/ihdr-length.png	read=size	Malformed
+draw_image	tests/corpus/images/interlace-2.png	read=size	Malformed
+draw_image	tests/corpus/images/chunk-type.png	read=size	Malformed
+# 5.2: a signature whose CR became LF is Malformed
+draw_image	tests/corpus/images/bad-signature.png	format=Png	read=size	Malformed
+# 11.2.3: index 5 into a palette of 2 entries is Malformed
+draw_image	tests/corpus/images/palette-index.png	read=size	Malformed
 draw_image	tests/corpus/images/c2-b8.png	format=Jpeg	read=matrix	Malformed
 # Not implemented yet: a separate soft mask and opacity; a file of one image has no frame 1
 draw_image	tests/corpus/images/c2-b8.png	mask=tests/corpus/images/c0-b8.png	read=matrix	NotImplemented

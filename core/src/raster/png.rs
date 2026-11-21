@@ -132,9 +132,6 @@ impl Pull for Idat<'_> {
             return Ok(0);
         };
         let count = self.source.read(self.position, part, READ)?;
-        if count == 0 {
-            return Err(malformed());
-        }
         let step = u64::try_from(count).unwrap_or(0);
         self.position = self.position.saturating_add(step);
         self.left = self.left.saturating_sub(step);
@@ -414,15 +411,12 @@ impl Png {
         row.saturating_mul(u64::from(self.height))
     }
 
-    /// Writes the soft mask's samples a row at a time; nothing without one.
+    /// Writes the soft mask's samples a row at a time.
     pub(super) fn write_mask(
         &self,
         source: &Source,
         out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
     ) -> Result<(), PdfError> {
-        if self.mask().is_none() {
-            return Ok(());
-        }
         let bits = u32::from(self.bits);
         let channels = self.channels();
         let size = usize::from(self.bits >> 3_u32);
@@ -625,9 +619,8 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
     png.limit = limit;
     let mut chunks = Chunks::default();
     loop {
-        if cursor.fill(&mut header)? != header.len() {
-            return Err(malformed());
-        }
+        // A cut file fails at the chunk's CRC.
+        let _: usize = cursor.fill(&mut header)?;
         let length = number(header.get(..4).unwrap_or_default());
         let kind = header.get(4..).unwrap_or_default();
         if length > MAX || !kind.iter().all(u8::is_ascii_alphabetic) {
