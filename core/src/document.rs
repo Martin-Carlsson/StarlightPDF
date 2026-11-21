@@ -1367,13 +1367,16 @@ impl Document {
         for (key, value) in changes {
             info.set(key, value);
         }
+        let empty = matches!(&info, Object::Dictionary(entries) if entries.is_empty());
         match id {
-            Some(found) => self.overlay.set(found, info),
-            None if matches!(&info, Object::Dictionary(entries) if entries.is_empty()) => {}
-            None => {
-                let added = self.overlay.add(info)?;
+            Some(found) if !empty => self.overlay.set(found, info),
+            _ if empty && trailer.iter().all(|entry| entry.0 != b"Info") => {}
+            _ => {
                 trailer.retain(|entry| entry.0 != b"Info");
-                trailer.push((b"Info".to_vec(), Object::Reference(added)));
+                if !empty {
+                    let added = self.overlay.add(info)?;
+                    trailer.push((b"Info".to_vec(), Object::Reference(added)));
+                }
                 self.overlay.set_trailer(trailer);
             }
         }

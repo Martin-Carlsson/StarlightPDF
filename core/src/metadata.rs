@@ -91,7 +91,7 @@ pub(crate) fn iso_date(text: &str) -> Option<String> {
         _ => return None,
     };
     let [month, day, hour, minute, second] = fields;
-    valid(month, day, hour, minute, second)
+    valid([year, month, day], hour, minute, second)
         .then(|| format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{zone}"))
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn pdf_date(text: &str) -> Option<String> {
         }
         _ => return None,
     };
-    valid(month, day, hour, minute, second)
+    valid([year, month, day], hour, minute, second)
         .then(|| format!("D:{year:04}{month:02}{day:02}{hour:02}{minute:02}{second:02}{zone}"))
 }
 
@@ -183,7 +183,14 @@ fn digits(bytes: &[u8]) -> Option<u32> {
     })
 }
 
-/// Whether the fields name a time of day on a day that months can have (ISO 8601).
-const fn valid(month: u32, day: u32, hour: u32, minute: u32, second: u32) -> bool {
-    matches!(month, 1..=12) && matches!(day, 1..=31) && hour < 24 && minute < 60 && second < 60
+/// Whether the fields name a time of day on a day of the Gregorian calendar (ISO 8601).
+const fn valid([year, month, day]: [u32; 3], hour: u32, minute: u32, second: u32) -> bool {
+    let leap = year.is_multiple_of(4) && !year.is_multiple_of(100) || year.is_multiple_of(400);
+    let days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    matches!(month, 1..=12) && day >= 1 && day <= days && hour < 24 && minute < 60 && second < 60
 }

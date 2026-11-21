@@ -195,11 +195,7 @@ impl Sink {
         if options.file.as_os_str().is_empty() {
             return Err(PdfError::new(ErrorCode::InvalidArgument, FROM_FILE));
         }
-        let target = match fs::canonicalize(&options.file) {
-            Ok(resolved) => resolved,
-            Err(error) if error.kind() == ErrorKind::NotFound => options.file.clone(),
-            Err(error) => return Err(PdfError::io(&error, FROM_FILE)),
-        };
+        let target = resolve(&options.file).map_err(|error| PdfError::io(&error, FROM_FILE))?;
         let file = Arc::new(FileTarget {
             pending: Mutex::new(None),
             target,
@@ -247,4 +243,25 @@ impl Sink {
             .append(bytes)
             .map_err(|error| PdfError::io(&error, operation))
     }
+}
+
+/// `path` with its symbolic links resolved, a dangling one followed to where it leads.
+fn resolve(path: &Path) -> io::Result<PathBuf> {
+    /// Links followed before giving up, as Linux's `SYMLOOP_MAX`.
+    const LINKS: u32 = 40;
+    let mut current = path.to_path_buf();
+    for _ in 0..LINKS {
+        match fs::canonicalize(&current) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            other => return other,
+        }
+        if !fs::symlink_metadata(&current).is_ok_and(|found| found.file_type().is_symlink()) {
+            return Ok(current);
+        }
+        let to = fs::read_link(&current)?;
+        current = current
+            .parent()
+            .map_or_else(|| to.clone(), |dir| dir.join(&to));
+    }
+    Err(io::Error::from(ErrorKind::InvalidInput))
 }

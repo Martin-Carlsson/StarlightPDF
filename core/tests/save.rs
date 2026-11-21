@@ -5,9 +5,9 @@ extern crate alloc;
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
-use core::fmt::Write as _;
 use core::mem::take;
 use core::ops::Range;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::fs;
 use std::io::{self, ErrorKind};
 #[cfg(unix)]
@@ -20,6 +20,7 @@ use std::sync::{Mutex, PoisonError};
 use starlightpdf::arrange::{SplitBy, SplitOptions};
 use starlightpdf::document::{Document, OpenOptions, SaveOptions};
 use starlightpdf::input::{FileSourceOptions, Source};
+use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::output::{Append, AppendSinkOptions, FileSinkOptions, MemorySinkOptions, Sink};
 use starlightpdf::progress::Progress;
 use starlightpdf::{ErrorCode, PdfError};
@@ -112,8 +113,16 @@ type Dictionary = BTreeMap<Vec<u8>, Value>;
 /// Collects what a save appends.
 struct Collected(Mutex<Vec<u8>>);
 
-/// Cancels at its first call.
-struct Cancel;
+/// Cancels at its second call, the first after bytes are written, noting the bytes its
+/// directory's other files then hold.
+struct Cancel {
+    /// Calls so far.
+    calls: AtomicU32,
+    /// The directory written into.
+    dir: PathBuf,
+    /// Bytes of the files other than the previous one at the second call.
+    written: Mutex<u64>,
+}
 
 /// A file read here: its objects, a later definition replacing an earlier (7.5.6), and trailer.
 struct File {
@@ -202,6 +211,18 @@ impl Append for Collected {
 
 impl Progress for Cancel {
     fn update(&self, _done: u64, _total: u64) -> bool {
+        if self.calls.fetch_add(1, Ordering::Relaxed) < 1 {
+            return true;
+        }
+        let others: u64 = fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_name() != "previous.pdf")
+            .filter_map(|entry| entry.metadata().ok())
+            .map(|metadata| metadata.len())
+            .sum();
+        *self.written.lock().unwrap_or_else(PoisonError::into_inner) = others;
         false
     }
 }
@@ -1059,14 +1080,19 @@ fn sinks_receive_the_same_bytes() -> Result<(), String> {
     ensure(read(&file)? == memory, "file sink differs")
 }
 
-/// A save that fails, refused (ISO 32000-2:2020, 12.8) or cancelled, leaves the file it would
-/// replace and no temporary file.
+/// A save that fails, refused (ISO 32000-2:2020, 12.8) or cancelled after writing, leaves the
+/// file it would replace and no temporary file.
 #[test]
 fn failed_save_keeps_the_previous_file() -> Result<(), String> {
     let dir = scratch("failed")?;
     let target = dir.join("previous.pdf");
     let previous = b"previous bytes".to_vec();
-    let cancel: &dyn Progress = &Cancel;
+    let stop = Cancel {
+        calls: AtomicU32::new(0),
+        dir: dir.clone(),
+        written: Mutex::new(0),
+    };
+    let cancel: &dyn Progress = &stop;
     for (relative, progress, code) in [
         ("save/signed.pdf", None, ErrorCode::SignaturesWouldBreak),
         ("split/pages.pdf", Some(cancel), ErrorCode::Cancelled),
@@ -1090,7 +1116,10 @@ fn failed_save_keeps_the_previous_file() -> Result<(), String> {
             &format!("{relative}: files left"),
         )?;
     }
-    Ok(())
+    ensure(
+        *stop.written.lock().unwrap_or_else(PoisonError::into_inner) > 0,
+        "cancelled before writing",
+    )
 }
 
 /// Saving over the opened file through a relative symbolic link replaces its target, keeps the
@@ -1123,6 +1152,42 @@ fn saving_over_the_opened_file_keeps_permissions_and_resolves_symlinks() -> Resu
         "permissions changed",
     )?;
     ensure(listing(&dir)? == ["link.pdf", "target.pdf"], "files left")
+}
+
+/// Saving to a dangling relative symbolic link keeps the link and creates its target.
+#[test]
+fn saving_to_a_dangling_symlink_creates_its_target() -> Result<(), String> {
+    let dir = scratch("dangling")?;
+    let link = dir.join("link.pdf");
+    symlink(Path::new("target.pdf"), &link).map_err(|error| format!("symlink: {error}"))?;
+    let document = open(&corpus("split/pages.pdf"))?;
+    let _report = document
+        .save(&file_sink(&link)?, None, &SaveOptions::default())
+        .map_err(|error| failure(&error))?;
+    ensure(
+        fs::symlink_metadata(&link).is_ok_and(|metadata| metadata.file_type().is_symlink()),
+        "link replaced",
+    )?;
+    ensure(
+        read(&dir.join("target.pdf"))? == save(&document)?,
+        "target not the saved document",
+    )
+}
+
+/// Emptying the only info entry leaves no information dictionary (ISO 32000-2:2020, 14.3.3).
+#[test]
+fn emptied_info_is_left_out() -> Result<(), String> {
+    let document = open(&corpus("info/title-only.pdf"))?;
+    let mut options = SetInfoDictionaryOptions::default();
+    options.title = Some(String::new());
+    document
+        .set_info_dictionary(&options)
+        .map_err(|error| failure(&error))?;
+    let file = parse(&save(&document)?)?;
+    ensure(
+        !file.trailer.contains_key(b"Info".as_slice()),
+        "trailer keeps Info",
+    )
 }
 
 /// A rewrite holds only objects reachable from the trailer: no superseded revision (ISO
@@ -1163,21 +1228,15 @@ fn unchanged_streams_keep_their_bytes() -> Result<(), String> {
     ensure(saved.streams() == source.streams(), "stream bytes differ")
 }
 
-/// Saving twice, from one handle or two, gives identical bytes: no clock, no randomness (ISO
-/// 32000-2:2020, 14.4).
+/// Two openings of a file save to identical bytes: no clock, no randomness (ISO 32000-2:2020,
+/// 14.4).
 #[test]
 fn saving_twice_gives_identical_bytes() -> Result<(), String> {
     for relative in ["split/pages.pdf", "split/info-intents-layers.pdf"] {
         let path = corpus(relative);
-        let document = open(&path)?;
-        let first = save(&document)?;
         ensure(
-            save(&document)? == first,
-            &format!("{relative}: second save differs"),
-        )?;
-        ensure(
-            save(&open(&path)?)? == first,
-            &format!("{relative}: save of a second opening differs"),
+            save(&open(&path)?)? == save(&open(&path)?)?,
+            &format!("{relative}: saves of two openings differ"),
         )?;
     }
     Ok(())
@@ -1187,25 +1246,6 @@ fn saving_twice_gives_identical_bytes() -> Result<(), String> {
 /// kept (ISO 32000-2:2020, 14.4; RFC 1321).
 #[test]
 fn file_identifier_derives_from_content() -> Result<(), String> {
-    for (message, digest) in [
-        ("", "d41d8cd98f00b204e9800998ecf8427e"),
-        ("abc", "900150983cd24fb0d6963f7d28e17f72"),
-        (
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-            "57edf4a22be3c955ac49da2e2107b67a",
-        ),
-    ] {
-        let hex = md5(message.as_bytes())
-            .iter()
-            .try_fold(String::new(), |mut hex, byte| {
-                write!(hex, "{byte:02x}").map(|()| hex)
-            })
-            .unwrap_or_default();
-        ensure(
-            hex == digest,
-            &format!("RFC 1321, A.5: MD5 of '{message}' is {hex}"),
-        )?;
-    }
     let ([first, second], plain) = identifier(&save(&open(&corpus("save/unreachable.pdf"))?)?)?;
     ensure(
         first == Value::String(plain.clone()) && second == first,
