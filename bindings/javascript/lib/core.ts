@@ -18,27 +18,23 @@ import init, {
   Deviations,
   Document,
   Documents,
-  Layer,
   Page,
   ResourcePolicy,
   Sink,
   Source,
   headerVersion,
   libraryVersion,
+  unsupported,
 } from "./wasm/starlightpdf_javascript.js";
 import { add, appends, type Callback, inputs, updates } from "./table.js";
 
 /** Each operation's argument and result. */
 export interface Signatures {
-  addLayer: [{ document: number; options: { readonly name: string; readonly visible?: boolean } }, number];
   appendSink: [Callback<[Uint8Array]>, number];
   boundary: [{ kind: Boundary; page: number }, Rect];
   catalog: [number, ObjectId];
-  create: [{ readonly version?: readonly [number, number] }, number];
-  drawImage: [
-    { image: number; layer: number | null; mask: number | null; options: DrawImageOptions; page: number },
-    undefined,
-  ];
+  create: [{ options: { readonly version?: readonly [number, number] }; policy: number | null }, number];
+  drawImage: [{ image: number; mask: number | null; options: DrawImageOptions; page: number }, undefined];
   droppedWarnings: [number, number];
   encryption: [number, Encryption];
   free: [number, undefined];
@@ -64,6 +60,7 @@ export interface Signatures {
   split: [{ document: number; options: SplitOptions }, number];
   streamData: [{ decode: boolean; document: number; id: ObjectId; sink: number }, undefined];
   takeBytes: [number, Uint8Array];
+  unsupported: [{ message: string; operation: string }, never];
   warnings: [number, number];
 }
 
@@ -82,9 +79,8 @@ const pages = new Map<number, Page>();
 const policies = new Map<number, ResourcePolicy>();
 const sinks = new Map<number, Sink>();
 const cursors = new Map<number, Deviations>();
-const layers = new Map<number, Layer>();
 const parts = new Map<number, Documents>();
-const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors, layers, parts];
+const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors, parts];
 let last = 0;
 
 /** Holds `made` in `kind`; its handle. */
@@ -104,9 +100,6 @@ function get<T>(kind: Map<number, T>, handle: number): T {
 }
 
 const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } = {
-  addLayer({ document, options }) {
-    return hold(layers, get(documents, document).addLayer(options));
-  },
   appendSink(callback) {
     return hold(sinks, Sink.fromAppend(add(appends, callback)));
   },
@@ -116,13 +109,13 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   catalog(document) {
     return get(documents, document).catalog();
   },
-  create(options) {
-    return hold(documents, Document.create(options));
+  create({ options, policy }) {
+    const shared = policy === null ? undefined : get(policies, policy).share();
+    return hold(documents, Document.create(shared, options));
   },
-  drawImage({ image, layer, mask, options, page }) {
+  drawImage({ image, mask, options, page }) {
     const shared = mask === null ? undefined : get(sources, mask).share();
-    const into = layer === null ? undefined : get(layers, layer).share();
-    get(pages, page).drawImage(get(sources, image), shared, into, options);
+    get(pages, page).drawImage(get(sources, image), shared, options);
   },
   droppedWarnings(document) {
     return Number(get(documents, document).droppedWarnings());
@@ -204,6 +197,9 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   },
   takeBytes(sink) {
     return get(sinks, sink).takeBytes();
+  },
+  unsupported({ message, operation }) {
+    throw unsupported(operation, message);
   },
   warnings(document) {
     return hold(cursors, get(documents, document).warnings());

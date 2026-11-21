@@ -51,8 +51,13 @@ export function remote<A extends unknown[]>(fn: (...args: A) => boolean): Remote
   return { cells, port: port2 };
 }
 
-/** Calls callback `id` of `kind` with `args`, a remote one blocking until it answers; whether to go on. */
-function invoke<A extends unknown[]>(kind: Map<number, Callback<A>>, id: number, args: A): boolean {
+/** Calls callback `id` of `kind` with `args`, a remote one moving `transfer` and blocking; whether to go on. */
+function invoke<A extends unknown[]>(
+  kind: Map<number, Callback<A>>,
+  id: number,
+  args: A,
+  transfer: Transferable[] = [],
+): boolean {
   const callback = kind.get(id);
   if (callback === undefined) {
     throw new RangeError(`no callback ${id}`);
@@ -61,7 +66,7 @@ function invoke<A extends unknown[]>(kind: Map<number, Callback<A>>, id: number,
     return callback(...args);
   }
   Atomics.store(callback.cells, 0, 0);
-  callback.port.postMessage(args);
+  callback.port.postMessage(args, transfer);
   Atomics.wait(callback.cells, 0, 0);
   const answer = Atomics.load(callback.cells, 1);
   if (answer === THREW) {
@@ -72,7 +77,8 @@ function invoke<A extends unknown[]>(kind: Map<number, Callback<A>>, id: number,
 
 /** Appends a copy of `bytes`, a view of WebAssembly memory, with callback `id`. */
 export function append(id: number, bytes: Uint8Array): void {
-  invoke(appends, id, [bytes.slice()]);
+  const copy = bytes.slice();
+  invoke(appends, id, [copy], [copy.buffer]);
 }
 
 /** Reads input `id` from `offset` into `buffer`, a Blob only the part asked for; the count read. */

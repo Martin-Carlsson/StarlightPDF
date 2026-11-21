@@ -192,13 +192,14 @@ function chrome(): string {
   return found;
 }
 
-/** Serves `/repo/…` from the repository and the rest from `dir`; a POST to `/result` reports. */
+/** Serves `/repo/…` from the repository and the rest from `dir`, cross-origin `isolated`; a POST to `/result` reports. */
 async function respond(
   dir: string,
   request: IncomingMessage,
   response: ServerResponse,
   requests: string[],
   report: (body: unknown) => void,
+  isolated: boolean,
 ): Promise<void> {
   const path = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
   requests.push(path);
@@ -219,25 +220,21 @@ async function respond(
   }
   const type = TYPES.get(extname(file)) ?? "application/octet-stream";
   // Cross-origin isolation, for callbacks on a page's main thread (.architecture-decisions/long-operations.md).
-  response
-    .writeHead(200, {
-      "cache-control": "no-store",
-      "content-type": type,
-      "cross-origin-embedder-policy": "require-corp",
-      "cross-origin-opener-policy": "same-origin",
-    })
-    .end(body);
+  const isolation = isolated
+    ? { "cross-origin-embedder-policy": "require-corp", "cross-origin-opener-policy": "same-origin" }
+    : {};
+  response.writeHead(200, { "cache-control": "no-store", "content-type": type, ...isolation }).end(body);
 }
 
-/** Opens `html` in a fresh headless Chrome; its report `{ ok }`, or a rejection. */
-export async function browse(installed: Installed, html: string): Promise<Browsed> {
+/** Opens `html` in a fresh headless Chrome, served cross-origin `isolated`; its report `{ ok }`, or a rejection. */
+export async function browse(installed: Installed, html: string, isolated = true): Promise<Browsed> {
   pages += 1;
   const name = `page-${pages}.html`;
   await writeFile(join(installed.dir, name), html);
   const requests: string[] = [];
   const reported = Promise.withResolvers<unknown>();
   const server = createServer((request, response) => {
-    respond(installed.dir, request, response, requests, reported.resolve).catch(reported.reject);
+    respond(installed.dir, request, response, requests, reported.resolve, isolated).catch(reported.reject);
   });
   await new Promise<void>((done) => {
     server.listen(0, "127.0.0.1", done);

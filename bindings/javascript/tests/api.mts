@@ -2,8 +2,6 @@
 
 export type Source = object;
 
-export type Layer = object;
-
 export type ResourcePolicy = object;
 
 export interface ResourcePolicyOptions {
@@ -106,12 +104,11 @@ export interface Deviation {
 
 export interface Page {
   boundary(options?: { readonly kind?: Boundary }): Promise<Rect>;
-  drawImage(image: Source, mask?: Source | null, layer?: Layer | null, options?: DrawImageOptions): Promise<void>;
+  drawImage(image: Source, mask?: Source | null, layer?: null, options?: DrawImageOptions): Promise<void>;
   rotation(): Promise<number>;
 }
 
 export interface Document {
-  addLayer(options: { readonly name: string; readonly visible?: boolean }): Promise<Layer>;
   catalog(): Promise<ObjectId>;
   droppedWarnings(): Promise<number>;
   encryption(): Promise<Encryption>;
@@ -138,7 +135,10 @@ export interface PdfError extends Error {
 
 export interface Api {
   readonly Document: (abstract new (...args: never) => Document) & {
-    create(options?: { readonly version?: readonly [number, number] }): Promise<Document>;
+    create(
+      policy?: ResourcePolicy | null,
+      options?: { readonly version?: readonly [number, number] },
+    ): Promise<Document>;
     open(source: Source, policy?: ResourcePolicy | null, options?: OpenOptions): Promise<Document>;
   };
   readonly PdfError: abstract new (...args: never) => PdfError;

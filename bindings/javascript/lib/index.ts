@@ -48,7 +48,6 @@ const pending = new Set<(why: string) => void>();
 /** `name`'s failure as the core's `Io` because the package failed `why`. */
 function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): PdfError {
   const operations: Record<Name, string> = {
-    addLayer: "Document.addLayer",
     appendSink: "Sink.fromAppend",
     boundary: "Page.boundary",
     catalog: "Document.catalog",
@@ -76,6 +75,7 @@ function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): 
     split: "Document.split",
     streamData: "Document.streamData",
     takeBytes: "Sink.takeBytes",
+    unsupported: typeof arg === "object" && "operation" in arg ? arg.operation : "",
     warnings: "Document.warnings",
   };
   return new PdfError({
@@ -89,16 +89,12 @@ function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): 
   });
 }
 
-/**
- * `fn` as the core takes it, and what posting it moves; the first error it throws goes to `thrown`. On a page's main
- * thread the worker blocks while this thread answers, which needs cross-origin isolation, otherwise `Unsupported`
- * (.architecture-decisions/long-operations.md).
- */
-function passed<A extends unknown[]>(
+/** `fn` as the core takes it, and what posting it moves (.architecture-decisions/long-operations.md). */
+async function passed<A extends unknown[]>(
   fn: (...args: A) => boolean,
   thrown: unknown[],
   operation: string,
-): [Callback<A>, Transferable[]] {
+): Promise<[Callback<A>, Transferable[]]> {
   const guarded = (...args: A): boolean => {
     try {
       return fn(...args);
@@ -111,18 +107,22 @@ function passed<A extends unknown[]>(
     return [guarded, []];
   }
   if (!crossOriginIsolated) {
-    throw new PdfError({
-      code: "Unsupported",
-      ioCause: null,
+    return call("unsupported", {
       message: "a callback on a page's main thread needs cross-origin isolation",
-      number: 18, // The core's `ErrorCode::Unsupported`.
-      objectNumber: null,
-      offset: null,
       operation,
     });
   }
   const made = remote(guarded);
   return [made, [made.port]];
+}
+
+/** What `result` gives, or if it fails, the first of `thrown` or its error. */
+async function rethrown<T>(thrown: unknown[], result: Promise<T>): Promise<T> {
+  try {
+    return await result;
+  } catch (error) {
+    throw thrown.length > 0 ? thrown[0] : error;
+  }
 }
 
 /** Starts the worker, or why it failed; if it fails later, rejects every pending call. */
@@ -294,7 +294,7 @@ export class Sink {
       append(chunk);
       return true;
     };
-    const [made, transfer] = passed(appended, thrown, "Sink.fromAppend");
+    const [made, transfer] = await passed(appended, thrown, "Sink.fromAppend");
     const sink = hold(new Sink(), await call("appendSink", made, transfer));
     failures.set(sink, thrown);
     return sink;
@@ -440,18 +440,6 @@ export interface Deviation {
   readonly page: number | null;
 }
 
-/** A layer holding `handle`; set by `Layer`, whose constructor is private. */
-let newLayer: (handle: number) => Layer;
-
-/** A layer (optional content group). */
-export class Layer {
-  static {
-    newLayer = (handle) => hold(new Layer(), handle);
-  }
-
-  private constructor() {}
-}
-
 /** A page holding `handle`; set by `Page`, whose constructor is private. */
 let newPage: (handle: number) => Page;
 
@@ -468,16 +456,15 @@ export class Page {
     return call("boundary", { kind: options.kind ?? "Crop", page: handles.get(this) ?? 0 });
   }
 
-  /** Draws `image`, with soft mask `mask`, in `layer`. */
+  /** Draws `image`, with soft mask `mask`, in `layer`; no layer can exist yet. */
   async drawImage(
     image: Source,
     mask: Source | null = null,
-    layer: Layer | null = null,
+    _layer: null = null,
     options: DrawImageOptions = {},
   ): Promise<void> {
     return call("drawImage", {
       image: handles.get(image) ?? 0,
-      layer: layer === null ? null : (handles.get(layer) ?? 0),
       mask: mask === null ? null : (handles.get(mask) ?? 0),
       options,
       page: handles.get(this) ?? 0,
@@ -494,9 +481,13 @@ export class Page {
 export class Document {
   private constructor() {}
 
-  /** A new document with no pages, of PDF `version` `[major, minor]`, unset 2.0. */
-  static async create(options: { readonly version?: readonly [number, number] } = {}): Promise<Document> {
-    return hold(new Document(), await call("create", options));
+  /** A new document with no pages, with `policy`, or the default one, of PDF `version` `[major, minor]`, unset 2.0. */
+  static async create(
+    policy?: ResourcePolicy | null,
+    options: { readonly version?: readonly [number, number] } = {},
+  ): Promise<Document> {
+    const arg = { options, policy: policy === undefined || policy === null ? null : (handles.get(policy) ?? 0) };
+    return hold(new Document(), await call("create", arg));
   }
 
   /** Opens `source` with `policy`, or the default one. */
@@ -507,11 +498,6 @@ export class Document {
       source: handles.get(source) ?? 0,
     };
     return hold(new Document(), await call("open", arg));
-  }
-
-  /** Adds a layer, visible unless `visible` is `false`. */
-  async addLayer(options: { readonly name: string; readonly visible?: boolean }): Promise<Layer> {
-    return newLayer(await call("addLayer", { document: handles.get(this) ?? 0, options }));
   }
 
   /** The catalog's id. */
@@ -563,13 +549,9 @@ export class Document {
   async save(sink: Sink, progress: Progress | null = null, options: SaveOptions = {}): Promise<SaveReport> {
     const thrown = failures.get(sink) ?? [];
     thrown.length = 0;
-    const [made, transfer] = progress === null ? [null, []] : passed(progress, thrown, "Document.save");
-    try {
-      const arg = { document: handles.get(this) ?? 0, options, progress: made, sink: handles.get(sink) ?? 0 };
-      return await call("save", arg, transfer);
-    } catch (error) {
-      throw thrown.length > 0 ? thrown[0] : error;
-    }
+    const [made, transfer] = progress === null ? [null, []] : await passed(progress, thrown, "Document.save");
+    const arg = { document: handles.get(this) ?? 0, options, progress: made, sink: handles.get(sink) ?? 0 };
+    return rethrown(thrown, call("save", arg, transfer));
   }
 
   /** Sets the given entries; an empty one removes its entry. */
@@ -594,7 +576,7 @@ export class Document {
     };
   }
 
-  /** Writes a stream's stored data to `sink`, or with `decode` its decoded data. */
+  /** Writes a stream's stored data to `sink`, or with `decode` its decoded data; rethrows what `sink` throws. */
   async streamData(sink: Sink, options: { readonly decode?: boolean; readonly id: ObjectId }): Promise<void> {
     const arg = {
       decode: options.decode ?? false,
@@ -602,7 +584,9 @@ export class Document {
       id: objectId(options.id),
       sink: handles.get(sink) ?? 0,
     };
-    return call("streamData", arg);
+    const thrown = failures.get(sink) ?? [];
+    thrown.length = 0;
+    return rethrown(thrown, call("streamData", arg));
   }
 
   /** The deviations tolerated so far, up to the policy's limit. */

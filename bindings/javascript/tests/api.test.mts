@@ -60,6 +60,15 @@ test("failures reject with PdfError carrying the same details as in Python", asy
   deepEqual(missing.result, { code: "Io", ioCause: "NotFound" });
 });
 
+test("a callback on a page's main thread without cross-origin isolation fails Unsupported", async () => {
+  // ErrorCode::Unsupported is 18 (core/src/lib.rs, fixed forever).
+  deepEqual((await browse(await installed(), scenario("unisolated"), false)).result, [
+    false,
+    ["Unsupported", 18, "Sink.fromAppend"],
+    ["Unsupported", 18, "Document.save"],
+  ]);
+});
+
 test("once the page's worker fails to load, every call rejects", async () => {
   deepEqual((await browse(await installed(), scenario("broken"))).result, ["Io", "Io"]);
 });
