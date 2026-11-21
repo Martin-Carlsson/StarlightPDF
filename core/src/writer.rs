@@ -199,7 +199,7 @@ fn finish(
     };
     let first = match kept {
         Some(Object::Array(elements)) => match elements.into_iter().next() {
-            Some(Object::String(kept)) => kept,
+            Some(Object::String(element)) => element,
             Some(_) | None => digest.to_vec(),
         },
         Some(_) | None => digest.to_vec(),

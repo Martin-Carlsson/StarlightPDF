@@ -110,11 +110,11 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// The changes.
+    overlay: Arc<Overlay>,
     /// Whether a part of a split: a new file, whose saves write the source decrypted and a new
     /// file identifier (ISO 32000-2:2020, 7.6, 14.4).
     part: bool,
-    /// The changes.
-    overlay: Arc<Overlay>,
     /// The shared state.
     store: Arc<Store>,
 }
@@ -599,8 +599,8 @@ impl Document {
         ]))?;
         overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
         Ok(Self {
-            part: false,
             overlay: Arc::new(overlay),
+            part: false,
             store: Arc::new(Store::create(policy, version)?),
         })
     }
@@ -913,11 +913,16 @@ impl Document {
             (b"MediaBox".to_vec(), media.clone()),
         ];
         // Its own values where an ancestor would give others (7.7.3.4).
-        for (key, own) in [(b"CropBox".as_slice(), media), (b"Rotate", Object::Integer(0))] {
-            if path
-                .iter()
-                .any(|node| node.1.get(key).is_some_and(|found| !matches!(found, Object::Null)))
-            {
+        for (key, own) in [
+            (b"CropBox".as_slice(), media),
+            (b"Rotate", Object::Integer(0)),
+        ] {
+            if path.iter().any(|ancestor| {
+                ancestor
+                    .1
+                    .get(key)
+                    .is_some_and(|found| !matches!(found, Object::Null))
+            }) {
                 entries.push((key.to_vec(), own));
             }
         }
@@ -1041,8 +1046,8 @@ impl Document {
         let store = Store::open(source, policy, options.strict, &options.password)?;
         let next = store.objects("Document::open").size()?;
         Ok(Self {
-            part: false,
             overlay: Arc::new(Overlay::new(next)),
+            part: false,
             store: Arc::new(store),
         })
     }
@@ -1560,9 +1565,10 @@ impl Document {
     /// dictionary, output intents and layers; links between its pages lead to them
     /// (ISO 32000-2:2020, 7.7.3, 8.11.4, 12.3.2, 14.3.3, 14.11.5).
     ///
-    /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts and a
-    /// link to a page in another part fail with [`ErrorCode::LossRefused`] unless `allow_loss`,
-    /// which leaves them out; such a link keeps its appearance. A `count` of 0 and `starts` empty,
+    /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
+    /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
+    /// a link or open action to a page in another part fail with [`ErrorCode::LossRefused`]
+    /// unless `allow_loss`, which leaves them out; such a link keeps its appearance. A `count` of 0 and `starts` empty,
     /// not ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
     /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
     ///
@@ -1815,19 +1821,19 @@ impl Documents {
         if !parts.allow_loss {
             part.refuse_links()?;
         }
+        let (catalog, next) = (part.catalog(parts.allow_loss)?, part.next());
         parts.next = parts.next.saturating_add(1);
         drop(parts);
         let objects = source.store.objects("Documents::next");
         let info = Object::Dictionary(source.overlay.trailer(objects)?).take(b"Info");
-        let (catalog, next) = (part.catalog(), part.next());
         let overlay = Overlay::with_view(Box::new(part), next);
         let root = overlay.add(Object::Dictionary(catalog))?;
         let mut trailer = vec![(b"Root".to_vec(), Object::Reference(root))];
         trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
         overlay.set_trailer(trailer);
         Ok(Some(Document {
-            part: true,
             overlay: Arc::new(overlay),
+            part: true,
             store: Arc::clone(&source.store),
         }))
     }

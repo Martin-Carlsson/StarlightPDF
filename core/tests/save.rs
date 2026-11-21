@@ -1394,13 +1394,90 @@ fn allow_loss_keeps_the_appearance_of_an_outside_link() -> Result<(), String> {
     )
 }
 
+/// Every part carries the page mode, viewer preferences and extensions, page labels from its
+/// first page and an open action to a page it holds (ISO 32000-2:2020, 7.7.2, 12.2, 12.3.2,
+/// 12.4.2: pages 0 and 1 are labelled i and ii, 2 and 3 A-5 and A-6).
+#[test]
+fn split_parts_carry_catalog_entries() -> Result<(), String> {
+    let mut options = by_ranges(&[1, 3]);
+    options.allow_loss = true;
+    let saved = parts("split/open-action.pdf", &options)?;
+    ensure(saved.len() == 2, "not two parts")?;
+    let roman = |start| {
+        Value::Dictionary(Dictionary::from([
+            (b"S".to_vec(), name("r")),
+            (b"St".to_vec(), number(start)),
+        ]))
+    };
+    let lettered = |start| {
+        Value::Dictionary(Dictionary::from([
+            (b"P".to_vec(), Value::String(b"A-".to_vec())),
+            (b"S".to_vec(), name("D")),
+            (b"St".to_vec(), number(start)),
+        ]))
+    };
+    let labels = [
+        vec![number("0"), roman("2"), number("1"), lettered("5")],
+        vec![number("0"), lettered("6")],
+    ];
+    for (at, (bytes, nums)) in saved.iter().zip(labels).enumerate() {
+        let file = parse(bytes)?;
+        let root = file.root()?;
+        ensure(
+            file.get(&root, "PageMode") == name("UseThumbs"),
+            "page mode",
+        )?;
+        let preferences = file.dictionary(file.get(&root, "ViewerPreferences"))?;
+        ensure(
+            file.get(&preferences, "HideToolbar") == Value::Bool(true),
+            "viewer preferences",
+        )?;
+        let adobe =
+            file.dictionary(file.get(&file.dictionary(file.get(&root, "Extensions"))?, "ADBE"))?;
+        ensure(
+            file.get(&adobe, "ExtensionLevel") == number("3"),
+            "extensions",
+        )?;
+        let page_labels = file.dictionary(file.get(&root, "PageLabels"))?;
+        let found: Vec<Value> = file
+            .get(&page_labels, "Nums")
+            .array()
+            .ok_or("no Nums")?
+            .into_iter()
+            .map(|item| {
+                file.dictionary(item.clone())
+                    .map_or(item, Value::Dictionary)
+            })
+            .collect();
+        ensure(found == nums, &format!("part {at}: page labels"))?;
+        let tree = file.dictionary(file.get(&root, "Pages"))?;
+        let kids = file.get(&tree, "Kids").array().ok_or("no Kids")?;
+        let action = file.get(&root, "OpenAction");
+        if at == 0 {
+            ensure(
+                action == Value::Array(vec![kids.get(1).cloned().ok_or("no page")?, name("Fit")]),
+                "open action",
+            )?;
+        } else {
+            ensure(action == Value::Null, "open action to another part kept")?;
+        }
+    }
+    Ok(())
+}
+
 /// A reference whose generation is not its object's is null (ISO 32000-2:2020, 7.3.10).
 #[test]
 fn references_to_another_generation_are_null() -> Result<(), String> {
     let bytes = save(&open(&corpus("save/generations.pdf"))?)?;
     ensure(!holds(&bytes, "wrong-generation"), "a newer reference kept")?;
-    ensure(!holds(&bytes, "newer-generation"), "an older reference kept")?;
-    ensure(holds(&bytes, "right-generation"), "a matching reference lost")
+    ensure(
+        !holds(&bytes, "newer-generation"),
+        "an older reference kept",
+    )?;
+    ensure(
+        holds(&bytes, "right-generation"),
+        "a matching reference lost",
+    )
 }
 
 /// Whether `byte` is a regular character (7.2.3).

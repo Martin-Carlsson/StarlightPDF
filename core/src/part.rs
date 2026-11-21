@@ -1,7 +1,7 @@
 //! A part of a split: a run of a document's pages under a page tree of its own, its objects
 //! rewritten as read so that it reaches no other page (ISO 32000-2:2020, 7.7.3).
 
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::sync::{Mutex, PoisonError};
@@ -12,13 +12,20 @@ use crate::store::{Objects, Store};
 use crate::syntax::{At, Token, Value};
 use crate::{ErrorCode, PdfError};
 
-/// The catalog entries a part keeps (ISO 32000-2:2020, 7.7.2, 8.11.4, 14.11.5).
-const CARRIED: [&[u8]; 5] = [
+/// The catalog entries a part keeps as they are (ISO 32000-2:2020, 7.7.2, 8.11.4, 14.3.2,
+/// 14.11.5, 12.6.4.8).
+const CARRIED: [&[u8]; 11] = [
+    b"Extensions",
     b"Lang",
+    b"MarkInfo",
+    b"Metadata",
     b"OCProperties",
     b"OutputIntents",
     b"PageLayout",
+    b"PageMode",
+    b"URI",
     b"Version",
+    b"ViewerPreferences",
 ];
 
 /// Kids read from the source at a time.
@@ -104,6 +111,31 @@ impl Debug for Pages {
 }
 
 impl Level {
+    /// Reads the next batch when none is left.
+    fn fill(&mut self, objects: Objects<'_>) -> Result<(), PdfError> {
+        let Some(at) = self.at.filter(|_| self.batch.is_empty()) else {
+            return Ok(());
+        };
+        let mut reader = objects.reader(at)?;
+        self.at = None;
+        while self.batch.len() < BATCH {
+            match reader.item()? {
+                Token::Reference(id) => self.batch.push_back(id),
+                Token::ArrayEnd => return Ok(()),
+                Token::ArrayStart
+                | Token::DictionaryEnd
+                | Token::DictionaryStart
+                | Token::Integer(_)
+                | Token::Keyword(_)
+                | Token::Name(_)
+                | Token::Real(_)
+                | Token::String(_) => return Err(objects.malformed()),
+            }
+        }
+        self.at = Some(At::new(reader.position(), at.packed()));
+        Ok(())
+    }
+
     /// The kids of page tree node `id` of the document of `objects` and `overlay`; read from the
     /// source a batch at a time unless the overlay holds the node (ISO 32000-2:2020, 7.7.3.2).
     fn new(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<Self, PdfError> {
@@ -139,31 +171,6 @@ impl Level {
         };
         level.fill(objects)?;
         Ok(level)
-    }
-
-    /// Reads the next batch when none is left.
-    fn fill(&mut self, objects: Objects<'_>) -> Result<(), PdfError> {
-        let Some(at) = self.at.filter(|_| self.batch.is_empty()) else {
-            return Ok(());
-        };
-        let mut reader = objects.reader(at)?;
-        self.at = None;
-        while self.batch.len() < BATCH {
-            match reader.item()? {
-                Token::Reference(id) => self.batch.push_back(id),
-                Token::ArrayEnd => return Ok(()),
-                Token::ArrayStart
-                | Token::DictionaryEnd
-                | Token::DictionaryStart
-                | Token::Integer(_)
-                | Token::Keyword(_)
-                | Token::Name(_)
-                | Token::Real(_)
-                | Token::String(_) => return Err(objects.malformed()),
-            }
-        }
-        self.at = Some(At::new(reader.position(), at.packed()));
-        Ok(())
     }
 
     /// The next kid, taken.
@@ -374,18 +381,43 @@ impl Part {
         Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
     }
 
-    /// The new catalog: the page tree and the carried entries (ISO 32000-2:2020, 7.7.2).
-    pub(crate) fn catalog(&self) -> Dictionary {
+    /// The new catalog: the page tree, the carried entries, the page labels from the part's
+    /// first page and an open action into the part; one leading elsewhere fails with
+    /// [`ErrorCode::LossRefused`] unless `allow_loss`, which leaves it out; `MarkInfo` goes with
+    /// the structure tree (ISO 32000-2:2020, 7.7.2, 12.3.2, 12.4.2, 14.7.1).
+    pub(crate) fn catalog(&self, allow_loss: bool) -> Result<Dictionary, PdfError> {
+        let objects = self.store.objects(OPERATION);
         let mut entries = vec![
             (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
             (b"Pages".to_vec(), reference(self.root())),
         ];
+        let tagged = self
+            .catalog
+            .get(b"StructTreeRoot")
+            .is_some_and(|tree| !matches!(tree, Object::Null));
         for key in CARRIED {
-            if let Some(value) = self.catalog.get(key) {
+            if let Some(value) = self.catalog.get(key)
+                && !(key == b"MarkInfo" && tagged)
+            {
                 entries.push((key.to_vec(), value));
             }
         }
-        entries
+        let labels = self.labels(objects)?;
+        if !labels.is_empty() {
+            entries.push((
+                b"PageLabels".to_vec(),
+                Object::Dictionary(vec![(b"Nums".to_vec(), Object::Array(labels))]),
+            ));
+        }
+        let action = self.source.entry(objects, &self.catalog, b"OpenAction")?;
+        if !matches!(action, Object::Null) {
+            match self.open(objects, action)? {
+                Some(kept) => entries.push((b"OpenAction".to_vec(), kept)),
+                None if allow_loss => {}
+                None => return Err(PdfError::new(ErrorCode::LossRefused, OPERATION)),
+            }
+        }
+        Ok(entries)
     }
 
     /// `object` without references to pages and page tree nodes outside the part.
@@ -424,6 +456,67 @@ impl Part {
             .into_iter()
             .map(|(key, value)| Ok((key, self.clean(objects, value)?)))
             .collect()
+    }
+
+    /// The part's page label ranges, keys and dictionaries of a number tree's `Nums`: the range
+    /// of its first page from 0, its `St` moved on, then those starting in the part
+    /// (ISO 32000-2:2020, 7.9.7, 12.4.2).
+    fn labels(&self, objects: Objects<'_>) -> Result<Vec<Object>, PdfError> {
+        let source = &*self.source;
+        let malformed = || objects.malformed();
+        let mut labels = Vec::new();
+        let mut stack = vec![source.entry(objects, &self.catalog, b"PageLabels")?];
+        let mut seen = BTreeSet::new();
+        let mut before: Option<(i64, Object)> = None;
+        let (first, end) = (i64::from(self.first), i64::from(self.end));
+        while let Some(node) = stack.pop() {
+            if stack.len() >= usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
+            }
+            if let Object::Array(kids) = source.entry(objects, &node, b"Kids")? {
+                for kid in kids.into_iter().rev() {
+                    let id = target(&kid).ok_or_else(malformed)?;
+                    if !seen.insert(id.number) {
+                        return Err(malformed());
+                    }
+                    stack.push(source.resolve(objects, id)?);
+                }
+                continue;
+            }
+            let Object::Array(pairs) = source.entry(objects, &node, b"Nums")? else {
+                continue;
+            };
+            let mut items = pairs.into_iter();
+            while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                let Object::Integer(start) = source.direct(objects, key)? else {
+                    return Err(malformed());
+                };
+                let label = source.direct(objects, value)?;
+                if start <= first {
+                    before = Some((start, label));
+                } else if start < end {
+                    labels.push(Object::Integer(start.saturating_sub(first)));
+                    labels.push(label);
+                } else {
+                    break;
+                }
+            }
+        }
+        if let Some((start, mut label)) = before {
+            let at = match label.get(b"St") {
+                Some(Object::Integer(found)) => found,
+                Some(_) | None => 1,
+            };
+            label.set(
+                b"St",
+                Some(Object::Integer(
+                    at.saturating_add(first.saturating_sub(start)),
+                )),
+            );
+            labels.insert(0, label);
+            labels.insert(0, Object::Integer(0));
+        }
+        Ok(labels)
     }
 
     /// `entries` with a destination named or to a page of the part made explicit, a link to a
@@ -654,6 +747,28 @@ impl Part {
             .saturating_add(index)
     }
 
+    /// The open action `action` when it leads to a page of the part: a destination made
+    /// explicit or a `GoTo` action to one, without a next action (ISO 32000-2:2020, 12.3.2,
+    /// 12.6.2, 12.6.4.2).
+    fn open(&self, objects: Objects<'_>, action: Object) -> Result<Option<Object>, PdfError> {
+        let Object::Dictionary(_) = action else {
+            return Ok(match self.aim(objects, action)? {
+                Some((explicit, false)) => Some(explicit),
+                Some((_, true)) | None => None,
+            });
+        };
+        let Some(destination) = goto(&action).filter(|_| action.get(b"Next").is_none()) else {
+            return Ok(None);
+        };
+        Ok(match self.aim(objects, destination)? {
+            Some((explicit, false)) => Some(Object::Dictionary(vec![
+                (b"S".to_vec(), Object::Name(b"GoTo".to_vec())),
+                (b"D".to_vec(), explicit),
+            ])),
+            Some((_, true)) | None => None,
+        })
+    }
+
     /// Whether object `number` is a page or page tree node of the document outside the part.
     fn outside(&self, number: u32) -> bool {
         self.pages.tag(number) != 0 && self.position(number).is_none()
@@ -733,8 +848,11 @@ impl Part {
         }
         let objects = self.store.objects(OPERATION);
         let source = &*self.source;
-        self.pages
-            .walk((objects, source), (self.first, self.end), &mut None, &mut |id| {
+        self.pages.walk(
+            (objects, source),
+            (self.first, self.end),
+            &mut None,
+            &mut |id| {
                 let page = source.resolve(objects, id)?;
                 if let Object::Array(annotations) = source.entry(objects, &page, b"Annots")? {
                     for annotation in annotations {
@@ -744,7 +862,8 @@ impl Part {
                     }
                 }
                 Ok(())
-            })
+            },
+        )
     }
 
     /// The new root node's number.
@@ -802,9 +921,10 @@ const fn reference(number: u32) -> Object {
 }
 
 /// Fails with [`ErrorCode::LossRefused`] when a part of the document of `objects` and `overlay`
-/// would lose its encryption, when `encrypted`, its form fields, structure tree, bookmarks,
-/// attachments or document scripts (ISO 32000-2:2020, 7.6, 7.7.2, 7.11.4, 12.3.3, 12.6.3,
-/// 12.6.4.17, 12.7, 14.7).
+/// would lose its encryption, when `encrypted`, or an entry of its catalog: form fields, a
+/// structure tree, bookmarks, name trees but destinations, threads, associated files,
+/// document actions or any other entry a part neither keeps nor rewrites (ISO 32000-2:2020,
+/// 7.6, 7.7.2, 7.7.4, 12.3.3, 12.4.3, 12.6.3, 12.7, 14.7, 14.13).
 pub(crate) fn refuse(
     objects: Objects<'_>,
     overlay: &Overlay,
@@ -816,22 +936,37 @@ pub(crate) fn refuse(
             .map(|found| !matches!(found, Object::Null))
     };
     let trailer = Object::Dictionary(overlay.trailer(objects)?);
-    let catalog = overlay.entry(objects, &trailer, b"Root")?;
-    let form = overlay.entry(objects, &catalog, b"AcroForm")?;
-    let fields = matches!(
-        overlay.entry(objects, &form, b"Fields")?,
-        Object::Array(items) if !items.is_empty()
-    );
-    let outlines = overlay.entry(objects, &catalog, b"Outlines")?;
-    let names = overlay.entry(objects, &catalog, b"Names")?;
-    if encrypted
-        || fields
-        || held(&catalog, b"StructTreeRoot")?
-        || held(&outlines, b"First")?
-        || held(&names, b"EmbeddedFiles")?
-        || held(&names, b"JavaScript")?
-        || held(&catalog, b"AA")?
-    {
+    let Object::Dictionary(catalog) = overlay.entry(objects, &trailer, b"Root")? else {
+        return Err(objects.malformed());
+    };
+    let mut lost = encrypted;
+    for (key, held_value) in catalog {
+        let value = overlay.direct(objects, held_value)?;
+        lost |= match key.as_slice() {
+            b"Dests" | b"OpenAction" | b"PageLabels" | b"Pages" | b"Type" => false,
+            b"AcroForm" => matches!(
+                overlay.entry(objects, &value, b"Fields")?,
+                Object::Array(items) if !items.is_empty()
+            ),
+            b"Names" => match value {
+                Object::Dictionary(trees) => trees
+                    .into_iter()
+                    .any(|(tree, root)| tree != b"Dests" && !matches!(root, Object::Null)),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => false,
+            },
+            b"Outlines" => held(&value, b"First")?,
+            other => !CARRIED.contains(&other) && !matches!(value, Object::Null),
+        };
+    }
+    if lost {
         return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
     }
     Ok(())
@@ -859,7 +994,10 @@ fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, 
         if !matches!(object, Object::Dictionary(_)) {
             return Err(objects.malformed());
         }
-        return Ok((object.get(b"Kids").is_some(), object.get(b"Annots").is_some()));
+        return Ok((
+            object.get(b"Kids").is_some(),
+            object.get(b"Annots").is_some(),
+        ));
     }
     let dictionary = objects.dictionary(Some(Value::Reference(id)))?;
     Ok((
@@ -867,4 +1005,3 @@ fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, 
         objects.get(dictionary, b"Annots")?.is_some(),
     ))
 }
-

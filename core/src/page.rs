@@ -166,10 +166,9 @@ impl Page {
             objects.deviation("7.7.3.3", "MediaBox missing", None)?;
             LETTER
         };
-        let crop = match self.rectangle(objects, b"CropBox", true)? {
-            Some(found) => clip(found, media),
-            None => media,
-        };
+        let crop = self
+            .rectangle(objects, b"CropBox", true)?
+            .map_or(media, |found| clip(found, media));
         let key: &[u8] = match options.kind {
             Boundary::Art => b"ArtBox",
             Boundary::Bleed => b"BleedBox",
@@ -177,10 +176,10 @@ impl Page {
             Boundary::Media => return Ok(rect(media)),
             Boundary::Trim => b"TrimBox",
         };
-        Ok(rect(match self.rectangle(objects, key, false)? {
-            Some(found) => clip(found, media),
-            None => crop,
-        }))
+        Ok(rect(
+            self.rectangle(objects, key, false)?
+                .map_or(crop, |found| clip(found, media)),
+        ))
     }
 
     /// Deletes the page.
@@ -362,6 +361,31 @@ impl Page {
         }
     }
 
+    /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay
+    /// when it holds changes (ISO 32000-2:2020, 7.7.3.4, 7.9.5).
+    fn rectangle(
+        &self,
+        objects: Objects<'_>,
+        key: &[u8],
+        inherit: bool,
+    ) -> Result<Option<[f64; 4]>, PdfError> {
+        if self.overlay.is_changed() {
+            return held(objects, &self.overlay, self.id, key, inherit)?
+                .map(|found| held_rectangle(objects, &self.overlay, found))
+                .transpose();
+        }
+        let found = if inherit {
+            inherited(objects, self.id, key)?
+        } else {
+            own(
+                objects,
+                objects.dictionary(Some(Value::Reference(self.id)))?,
+                key,
+            )?
+        };
+        found.map(|value| rectangle(objects, &value)).transpose()
+    }
+
     /// Rasterizes the page with its annotations and fields.
     ///
     /// Not implemented: fails with [`ErrorCode::NotImplemented`].
@@ -427,31 +451,6 @@ impl Page {
         }
         objects.deviation("7.7.3.3", "Rotate not a multiple of 90", None)?;
         Ok(0)
-    }
-
-    /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay
-    /// when it holds changes (ISO 32000-2:2020, 7.7.3.4, 7.9.5).
-    fn rectangle(
-        &self,
-        objects: Objects<'_>,
-        key: &[u8],
-        inherit: bool,
-    ) -> Result<Option<[f64; 4]>, PdfError> {
-        if self.overlay.is_changed() {
-            return held(objects, &self.overlay, self.id, key, inherit)?
-                .map(|found| held_rectangle(objects, &self.overlay, found))
-                .transpose();
-        }
-        let found = if inherit {
-            inherited(objects, self.id, key)?
-        } else {
-            own(
-                objects,
-                objects.dictionary(Some(Value::Reference(self.id)))?,
-                key,
-            )?
-        };
-        found.map(|value| rectangle(objects, &value)).transpose()
     }
 
     /// Scales the page and its content.
@@ -861,7 +860,11 @@ fn fixed(text: &str, scale: usize, width: usize) -> Vec<u8> {
 }
 
 /// The pages under the page tree node `node`: its `Count`, 1 for a page (ISO 32000-2:2020, 7.7.3).
-pub(crate) fn count(objects: Objects<'_>, overlay: &Overlay, node: &Object) -> Result<u64, PdfError> {
+pub(crate) fn count(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    node: &Object,
+) -> Result<u64, PdfError> {
     if node.get(b"Kids").is_none() {
         return Ok(1);
     }
@@ -947,7 +950,9 @@ fn held(
             return Ok(Some(found));
         }
         match node.get(b"Parent") {
-            Some(Object::Reference(parent)) if inherit => node = overlay.resolve(objects, parent)?,
+            Some(Object::Reference(parent)) if inherit => {
+                node = overlay.resolve(objects, parent)?;
+            }
             Some(_) | None => return Ok(None),
         }
     }

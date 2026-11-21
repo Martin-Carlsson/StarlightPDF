@@ -12,7 +12,9 @@ use std::path::PathBuf;
 
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::document::{CreateOptions, Document, OpenOptions, PageOptions, SaveOptions};
-use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
+use starlightpdf::input::{
+    BytesSourceOptions, FileSourceOptions, ReadAt, ReadAtSourceOptions, Source,
+};
 use starlightpdf::output::{MemorySinkOptions, Sink};
 use starlightpdf::page::{Boundary, BoundaryOptions, Page};
 use starlightpdf::{ErrorCode, PdfError};
@@ -22,6 +24,17 @@ const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/corpus");
 
 /// Pages of [`Flat`].
 const PAGES: usize = 4_096;
+
+/// The crop boxes and rotations of split/pages.pdf's pages (ISO 32000-2:2020, 7.7.3.4: the
+/// root gives `MediaBox` 0 0 612 792 and `Rotate` 90, the node over pages 1 and 2 `CropBox`
+/// 10 10 600 780 and `Rotate` 180).
+const SOURCE_PAGES: [&str; 5] = [
+    "0 0 612 792 90",
+    "10 10 590 770 180",
+    "20 20 280 380 270",
+    "0 0 420 595 0",
+    "50 50 450 650 90",
+];
 
 /// A PDF whose root page tree node holds every page; counts the bytes it serves, in all and
 /// from the root node.
@@ -42,9 +55,9 @@ impl Flat {
     fn new() -> Self {
         let mut bytes = b"%PDF-2.0\n".to_vec();
         let mut offsets = Vec::new();
-        let mut object = |bytes: &mut Vec<u8>, number: usize, text: &str| {
-            offsets.push(bytes.len());
-            bytes.extend(format!("{number} 0 obj\n{text}\nendobj\n").into_bytes());
+        let mut object = |file: &mut Vec<u8>, number: usize, text: &str| {
+            offsets.push(file.len());
+            file.extend(format!("{number} 0 obj\n{text}\nendobj\n").into_bytes());
         };
         object(&mut bytes, 1, "<< /Type /Catalog /Pages 2 0 R >>");
         let kids: Vec<String> = (3..PAGES + 3).map(|kid| format!("{kid} 0 R")).collect();
@@ -144,6 +157,15 @@ fn corpus(relative: &str) -> Result<Document, PdfError> {
     Document::open(&Source::from_file(&options)?, None, &OpenOptions::default())
 }
 
+/// Fails unless `found` is `expected`.
+fn same(found: &[String], expected: &[&str]) -> Result<(), Box<dyn Error>> {
+    if found == expected {
+        Ok(())
+    } else {
+        Err(format!("{found:?}, not {expected:?}").into())
+    }
+}
+
 /// Opens `flat`.
 fn open_flat(flat: &Arc<Flat>) -> Result<Document, PdfError> {
     let read_at: Arc<dyn ReadAt> = Arc::<Flat>::clone(flat);
@@ -159,24 +181,13 @@ fn by_pages(count: u32) -> SplitOptions {
     options
 }
 
-/// The crop boxes and rotations of split/pages.pdf's pages (ISO 32000-2:2020, 7.7.3.4: the
-/// root gives MediaBox 0 0 612 792 and Rotate 90, the node over pages 1 and 2 CropBox
-/// 10 10 600 780 and Rotate 180).
-const SOURCE_PAGES: [&str; 5] = [
-    "0 0 612 792 90",
-    "10 10 590 770 180",
-    "20 20 280 380 270",
-    "0 0 420 595 0",
-    "50 50 450 650 90",
-];
-
 /// A part's pages read before saving are its own (ISO 32000-2:2020, 7.7.3).
 #[test]
 fn a_parts_pages_are_its_own_before_saving() -> Result<(), Box<dyn Error>> {
     let parts = corpus("split/pages.pdf")?.split(&by_pages(2))?;
     let _first = parts.next()?;
     let second = parts.next()?.ok_or("no part")?;
-    assert_eq!(every(&second)?, SOURCE_PAGES.get(2..4).unwrap_or_default());
+    same(&every(&second)?, SOURCE_PAGES.get(2..4).unwrap_or_default())?;
     Ok(())
 }
 
@@ -186,9 +197,9 @@ fn a_parts_pages_are_its_own_before_saving() -> Result<(), Box<dyn Error>> {
 fn created_pages_read_before_saving() -> Result<(), Box<dyn Error>> {
     let document = Document::create(None, &CreateOptions::default())?;
     let inserted = document.insert_blank_page(&blank(200.0, 100.0, None))?;
-    assert_eq!(describe(&inserted, Boundary::Media)?, "0 0 200 100 0");
+    same(&[describe(&inserted, Boundary::Media)?], &["0 0 200 100 0"])?;
     drop(document.insert_blank_page(&blank(300.0, 400.0, Some(0)))?);
-    assert_eq!(every(&document)?, ["0 0 300 400 0", "0 0 200 100 0"]);
+    same(&every(&document)?, &["0 0 300 400 0", "0 0 200 100 0"])?;
     Ok(())
 }
 
@@ -202,13 +213,17 @@ fn inserted_pages_keep_their_index_size_and_rotation() -> Result<(), Box<dyn Err
     let mut expected = SOURCE_PAGES.to_vec();
     expected.insert(2, "0 0 200 100 0");
     expected.insert(0, "0 0 300 400 0");
-    assert_eq!(every(&document)?, expected);
+    same(&every(&document)?, &expected)?;
     let sink = Sink::in_memory(&MemorySinkOptions::default())?;
     let _report = document.save(&sink, None, &SaveOptions::default())?;
-    let mut options = starlightpdf::input::BytesSourceOptions::default();
+    let mut options = BytesSourceOptions::default();
     options.bytes = Arc::new(sink.take_bytes()?);
-    let saved = Document::open(&Source::from_bytes(&options)?, None, &OpenOptions::default())?;
-    assert_eq!(every(&saved)?, expected);
+    let saved = Document::open(
+        &Source::from_bytes(&options)?,
+        None,
+        &OpenOptions::default(),
+    )?;
+    same(&every(&saved)?, &expected)?;
     Ok(())
 }
 
@@ -217,11 +232,11 @@ fn inserted_pages_keep_their_index_size_and_rotation() -> Result<(), Box<dyn Err
 #[test]
 fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
     let parts = corpus("split/outside-link.pdf")?.split(&by_pages(1))?;
-    for _ in 0..2 {
-        assert_eq!(
-            parts.next().map(|part| part.is_some()).map_err(|error| error.code()),
-            Err(ErrorCode::LossRefused)
-        );
+    for _ in 0_u8..2 {
+        let code = parts.next().err().map(|error| error.code());
+        if code != Some(ErrorCode::LossRefused) {
+            return Err(format!("{code:?}, not LossRefused").into());
+        }
     }
     Ok(())
 }
@@ -232,12 +247,13 @@ fn appending_pages_reads_no_other_page() -> Result<(), Box<dyn Error>> {
     let flat = Arc::new(Flat::new());
     let document = open_flat(&flat)?;
     let before = flat.served.load(Ordering::Relaxed);
-    for _ in 0..64 {
+    for _ in 0_u8..64 {
         drop(document.insert_blank_page(&InsertBlankPageOptions::default())?);
     }
     let read = flat.served.load(Ordering::Relaxed).saturating_sub(before);
-    assert!(read < flat.bytes.len(), "{read} bytes read");
-    assert_eq!(document.page_count()?, 4_160);
+    if read >= flat.bytes.len() || document.page_count()? != 4_160 {
+        return Err(format!("{read} bytes read").into());
+    }
     Ok(())
 }
 
@@ -252,6 +268,8 @@ fn splitting_a_flat_tree_reads_its_kids_a_few_times() -> Result<(), Box<dyn Erro
     let _report = part.save(&sink, None, &SaveOptions::default())?;
     let read = flat.root_served.load(Ordering::Relaxed);
     let root = flat.root.len();
-    assert!(read <= 8 * root, "{read} bytes of a {root}-byte root read");
+    if read > 8 * root {
+        return Err(format!("{read} bytes of a {root}-byte root read").into());
+    }
     Ok(())
 }
