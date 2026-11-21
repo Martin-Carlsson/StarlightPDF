@@ -410,11 +410,11 @@ impl Part {
             {
                 continue;
             }
-            match source.direct(objects, held)? {
+            match followed(objects, source, held)? {
                 Object::Array(more) => actions.extend(more.into_iter().rev()),
                 action @ Object::Dictionary(_) => {
-                    if let Some(Object::String(key)) = goto(&action)
-                        .map(|found| source.direct(objects, found))
+                    if let Some(Object::String(key)) = goto(objects, source, &action)?
+                        .map(|found| followed(objects, source, found))
                         .transpose()?
                     {
                         keys.push(key);
@@ -441,12 +441,16 @@ impl Part {
         objects: Objects<'_>,
         destination: Object,
     ) -> Result<Option<(Object, bool)>, PdfError> {
-        let mut found = self.source.direct(objects, destination)?;
+        let mut found = followed(objects, &self.source, destination)?;
         if matches!(found, Object::Name(_) | Object::String(_)) {
             found = self.named(objects, found)?;
         }
         if matches!(found, Object::Dictionary(_)) {
-            found = self.source.entry(objects, &found, b"D")?;
+            found = followed(
+                objects,
+                &self.source,
+                found.get(b"D").unwrap_or(Object::Null),
+            )?;
         }
         let Object::Array(items) = found else {
             return Ok(None);
@@ -509,7 +513,9 @@ impl Part {
     ) -> Result<bool, PdfError> {
         let source = &*self.source;
         let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
-        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
+        if let Object::Dictionary(triggers) =
+            followed(objects, source, holder.get(b"AA").unwrap_or(Object::Null))?
+        {
             actions.extend(triggers.into_iter().map(|entry| entry.1));
         }
         while let Some(held) = actions.pop() {
@@ -518,10 +524,10 @@ impl Part {
             {
                 continue;
             }
-            match source.direct(objects, held)? {
+            match followed(objects, source, held)? {
                 Object::Array(more) => actions.extend(more),
                 action @ Object::Dictionary(_) => {
-                    if let Some(destination) = goto(&action)
+                    if let Some(destination) = goto(objects, source, &action)?
                         && let Some((_, true)) = self.aim(objects, destination)?
                     {
                         return Ok(true);
@@ -775,7 +781,7 @@ impl Part {
     /// without its field (ISO 32000-2:2020, 12.3.2, 12.5.6.5, 12.6.4.2, 12.7.4.1).
     fn link(&self, objects: Objects<'_>, entries: Dictionary) -> Result<Dictionary, PdfError> {
         let mut object = Object::Dictionary(entries);
-        if let Some(destination) = goto(&object)
+        if let Some(destination) = goto(objects, &self.source, &object)?
             && let Some((explicit, outside)) = self.aim(objects, destination)?
         {
             object.set(b"D", (!outside).then_some(explicit));
@@ -820,10 +826,12 @@ impl Part {
         {
             return Ok(true);
         }
-        let Some(action) = object.get(b"A") else {
-            return Ok(false);
-        };
-        let Some(destination) = goto(&self.source.direct(objects, action)?) else {
+        let action = followed(
+            objects,
+            &self.source,
+            object.get(b"A").unwrap_or(Object::Null),
+        )?;
+        let Some(destination) = goto(objects, &self.source, &action)? else {
             return Ok(false);
         };
         Ok(matches!(self.aim(objects, destination)?, Some((_, true))))
@@ -845,7 +853,7 @@ impl Part {
             | Object::Reference(_)
             | Object::Stream(..) => None,
         };
-        self.source.direct(objects, found.unwrap_or(Object::Null))
+        followed(objects, &self.source, found.unwrap_or(Object::Null))
     }
 
     /// Adds to `keys` the strings by which `holder`, an annotation or a page, names
@@ -860,13 +868,15 @@ impl Part {
         let source = &*self.source;
         if let Some(Object::String(key)) = holder
             .get(b"Dest")
-            .map(|found| source.direct(objects, found))
+            .map(|found| followed(objects, source, found))
             .transpose()?
         {
             gathered.0.push(key);
         }
         let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
-        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
+        if let Object::Dictionary(triggers) =
+            followed(objects, source, holder.get(b"AA").unwrap_or(Object::Null))?
+        {
             actions.extend(triggers.into_iter().map(|entry| entry.1));
         }
         self.actions(objects, actions, gathered)
@@ -1004,7 +1014,7 @@ impl Part {
                 Some((_, true)) | None => None,
             });
         };
-        let Some(destination) = alone(&action) else {
+        let Some(destination) = alone(objects, &self.source, &action)? else {
             return Ok(None);
         };
         Ok(match self.aim(objects, destination)? {
@@ -1274,22 +1284,43 @@ impl View for Part {
     }
 }
 
-/// The destination of `object` when it is a `GoTo` action (ISO 32000-2:2020, 12.6.4.2).
-fn goto(object: &Object) -> Option<Object> {
-    match object.get(b"S") {
-        Some(Object::Name(kind)) if kind == b"GoTo" => object.get(b"D"),
-        Some(_) | None => None,
-    }
+/// The destination of `object` of the document of `objects` and `overlay` when it is a `GoTo`
+/// action (ISO 32000-2:2020, 7.3.10, 12.6.4.2).
+fn goto(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    object: &Object,
+) -> Result<Option<Object>, PdfError> {
+    Ok(
+        match followed(objects, overlay, object.get(b"S").unwrap_or(Object::Null))? {
+            Object::Name(kind) if kind == b"GoTo" => object.get(b"D"),
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        },
+    )
 }
 
-/// The destination of `action` when it is a `GoTo` action without a next action
-/// (ISO 32000-2:2020, 12.6.2, 12.6.4.2).
-fn alone(action: &Object) -> Option<Object> {
-    goto(action).filter(|_| {
-        action
-            .get(b"Next")
-            .is_none_or(|next| matches!(next, Object::Null))
-    })
+/// The destination of `action` of the document of `objects` and `overlay` when it is a `GoTo`
+/// action without a next action (ISO 32000-2:2020, 7.3.10, 12.6.2, 12.6.4.2).
+fn alone(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    action: &Object,
+) -> Result<Option<Object>, PdfError> {
+    let next = followed(
+        objects,
+        overlay,
+        action.get(b"Next").unwrap_or(Object::Null),
+    )?;
+    Ok(goto(objects, overlay, action)?.filter(|_| matches!(next, Object::Null)))
 }
 
 /// Gives `visit` each annotation of `page` of the document of `objects` and `source`
@@ -1341,8 +1372,7 @@ pub(crate) fn refuse(
     encrypted: bool,
 ) -> Result<(), PdfError> {
     let held = |object: &Object, key: &[u8]| {
-        overlay
-            .entry(objects, object, key)
+        followed(objects, overlay, object.get(key).unwrap_or(Object::Null))
             .map(|found| !matches!(found, Object::Null))
     };
     let trailer = Object::Dictionary(overlay.trailer(objects)?);
@@ -1354,7 +1384,7 @@ pub(crate) fn refuse(
         lost |= match key.as_slice() {
             b"Dests" | b"PageLabels" | b"Pages" | b"Type" => false,
             b"OpenAction" => match followed(objects, overlay, value)? {
-                action @ Object::Dictionary(_) => alone(&action).is_none(),
+                action @ Object::Dictionary(_) => alone(objects, overlay, &action)?.is_none(),
                 Object::Array(_)
                 | Object::Boolean(_)
                 | Object::Integer(_)
@@ -1366,10 +1396,12 @@ pub(crate) fn refuse(
                 | Object::String(_) => false,
             },
             b"AcroForm" => matches!(
-                overlay.entry(objects, &overlay.direct(objects, value)?, b"Fields")?,
+                followed(objects, overlay, followed(objects, overlay, value)?
+                        .get(b"Fields")
+                        .unwrap_or(Object::Null))?,
                 Object::Array(items) if !items.is_empty()
             ),
-            b"Names" => match overlay.direct(objects, value)? {
+            b"Names" => match followed(objects, overlay, value)? {
                 Object::Dictionary(trees) => trees
                     .into_iter()
                     .any(|(tree, root)| tree != b"Dests" && !matches!(root, Object::Null)),
@@ -1383,9 +1415,9 @@ pub(crate) fn refuse(
                 | Object::Stream(..)
                 | Object::String(_) => false,
             },
-            b"Outlines" => held(&overlay.direct(objects, value)?, b"First")?,
+            b"Outlines" => held(&followed(objects, overlay, value)?, b"First")?,
             other if CARRIED.contains(&other) => false,
-            _ => !matches!(overlay.direct(objects, value)?, Object::Null),
+            _ => !matches!(followed(objects, overlay, value)?, Object::Null),
         };
     }
     if lost {

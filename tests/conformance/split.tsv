@@ -96,6 +96,11 @@ split_bytes	tests/corpus/split/open-script-indirect.pdf	by=Pages	count=1	LossRef
 split_file	tests/corpus/split/open-script-indirect.pdf	by=Pages	count=1	LossRefused
 split_bytes	tests/corpus/split/open-script-indirect.pdf	by=Pages	count=1	allow_loss	1 1
 split_file	tests/corpus/split/open-script-indirect.pdf	by=Pages	count=1	allow_loss	1 1
+# 7.3.10, 12.3.3, 12.6.4.2: bookmarks, and a link's GoTo action to another part, each behind a reference to a reference
+split_bytes	tests/corpus/split/references-to-references.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/references-to-references.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/references-to-references.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/references-to-references.pdf	by=Pages	count=1	allow_loss	1 1
 # 12.4.3: article threads
 split_bytes	tests/corpus/split/threads.pdf	by=Pages	count=2	LossRefused
 split_file	tests/corpus/split/threads.pdf	by=Pages	count=2	LossRefused
