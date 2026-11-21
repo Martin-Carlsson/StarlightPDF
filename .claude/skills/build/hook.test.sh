@@ -16,7 +16,8 @@ export CLAUDE_PROJECT_DIR="${proj}"
 # exit gh.merge.code (default 0); a pr edit with nothing. issue edit N
 # --add-label building claims N. With gh.issues ("NUMBER BUILDING" lines),
 # issue list prints it after a delay (search lags); issue view N, whether N is claimed.
-# Else prints gh.out (default pass), exits gh.code (default 0), writes gh.err to stderr.
+# Else prints gh.out (default pass), exits gh.code (default 0), writes gh.err to stderr; stop's
+# pr checks rows come from here: "BUCKET<TAB>WORKFLOW<TAB>NAME" lines, or the bucket alone.
 mkdir "${tmp}/bin"
 cat >"${tmp}/bin/gh" <<'END'
 #!/bin/sh
@@ -192,7 +193,7 @@ check "check: passes" 0 'pass true'
 gh_says 'pass\npending\n' 8 ''
 run "pending CI check refuses" 2 'pending'
 expect test ! -e "${dir}/done"
-expect grep -qx 'pr checks https://example.test/1 --json bucket --jq .\[\].bucket' "${tmp}/gh.log"
+expect grep -qxF 'pr checks https://example.test/1 --json bucket,workflow,name --jq .[] | [.bucket, .workflow, .name] | @tsv' "${tmp}/gh.log"
 gh_says 'pass\nskipping\n' 0 ''
 run "skipping CI check counts as green" 2 'hook.sh merge'
 expect test ! -e "${dir}/done"
@@ -648,7 +649,7 @@ refusals=$(cat "${tmp}/b/a.out" "${tmp}/b/b.out" | grep -c '^build: ') || true
 [ "${refusals}" -eq 1 ] || good=0
 expect -n "next: second run finds none eligible" test "${good}" -eq 1
 
-# Start N: refuse an issue blocked by an open issue (exit 1), ask about
+# Start N: refuse an issue blocked by an open issue (exit 1), refuse
 # one labelled building by another build (exit 3).
 # The label query prints true or false.
 snapshot() {
@@ -689,7 +690,7 @@ start_is "start: open blocker names it and stops" 1 40 \
 # Another build's issue 77 is not issue 7.
 reset 'status: working\nissue: 77 t\n'
 gh_says 'true\n' 0 ''
-start_is "start: building elsewhere asks" 3 7
+start_is "start: building elsewhere refuses" 3 7
 
 reset 'status: working\nissue: 7 t\n'
 gh_says 'true\n' 0 ''
@@ -740,7 +741,8 @@ pr_ready() {
   echo "${head}" >"${tmp}/gh.head"
   echo 'All checks pass pass https://example.test/runs/7' >"${tmp}/gh.checks"
   echo feature >"${tmp}/gh.labels"
-  printf '%s\r\n' '## Merge impact' '' '- **API:** none' '- **Dependencies:** none' '- **Affects:** docs' >"${tmp}/gh.body"
+  printf '%s\r\n' '## Merge impact' '' '- **API:** none' '- **Dependencies:** none' \
+    '- **Decisions made by the build:** none' '- **Affects:** docs' >"${tmp}/gh.body"
   echo "verdict: safe ${head} docs-only-reason" >>"${state}"
 }
 # pr_docs: a ready pull request that changes README.md only.
@@ -791,7 +793,7 @@ unset_verdict() {
 pr_docs
 good=1
 merges
-for want in "${url}" README.md feature https://example.test/runs/7 "$(git -C "${proj}" rev-parse --short=7 HEAD)" docs-only-reason; do
+for want in "${url}" README.md feature '- **Decisions made by the build:** none' https://example.test/runs/7 "$(git -C "${proj}" rev-parse --short=7 HEAD)" docs-only-reason; do
   grep -qF -- "${want}" "${tmp}/out" || good=0
 done
 expect -n "merge merges when every condition holds" test "${good}" -eq 1
@@ -873,6 +875,21 @@ stops "api and dependencies"
 sed 's/^- \*\*Dependencies:\*\* none/- **Dependencies:** none yet/' "${tmp}/body" >"${tmp}/gh.body"
 stops "api and dependencies"
 expect -n "merge condition api and dependencies" test "${good}" -eq 1
+
+# Decisions: the body's exact none line.
+pr_docs
+good=1
+cp "${tmp}/gh.body" "${tmp}/body"
+sed 's/^\(- \*\*Decisions made by the build:\*\*\) none/\1 kept the old result in a strict twin/' "${tmp}/body" >"${tmp}/gh.body"
+stops decisions
+grep -v '^- \*\*Decisions made by the build:\*\*' "${tmp}/body" >"${tmp}/gh.body"
+stops decisions
+{
+  cat "${tmp}/body"
+  echo '- **Decisions made by the build:** kept X'
+} >"${tmp}/gh.body"
+stops decisions
+expect -n "merge leaves a pull request that lists a decision made by the build" test "${good}" -eq 1
 
 # CI: the gate check passed on the head commit.
 pr_docs
@@ -1033,6 +1050,23 @@ for want in 2 2 2 0; do
   if [ "${want}" -eq 2 ]; then stop_says 2 'origin/main'; else stop_says 0 ''; fi
 done
 expect -n "stop gives way on the fourth head behind main" test "${good}" -eq 1
+
+# Code scanning: an alert alone does not hold the stop back; the comment and the merge command follow, and merge refuses.
+good=1
+pr_docs
+echo 'CodeQL fail https://example.test/runs/9' >>"${tmp}/gh.checks"
+grep -v '^comment:' "${state}" >"${tmp}/state" || true
+mv "${tmp}/state" "${state}"
+alert='pass\tContinuous integration\tAll checks pass\nskipping\tContinuous integration\tReport a failed nightly\nfail\t\tCodeQL\n'
+gh_says "${alert}fail\tCodeQL\tAnalyze (rust)\n" 1 ''
+stop_says 2 'CI failing'
+gh_says "${alert}" 1 ''
+stop_says 2 'comment:'
+echo "comment: ${url}#c" >>"${state}"
+stop_says 2 'hook.sh merge'
+stops ci
+stop_says 0 ''
+expect -n "a build ends unmerged when only a code scanning alert fails CI" test "${good}" -eq 1
 
 # Tool: during a build, only the merge command merges.
 # tool_says WANT PATTERN TOOL INPUT_FIELDS: good=0 unless the tool hook exits WANT with output matching PATTERN.

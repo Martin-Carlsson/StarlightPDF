@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hooks for the build skill. Usage: hook.sh stop|tool|check|ready|next|start N|merge|unneeded CMD
-# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green, a comment is recorded and merge has run on the current head and, for the first three heads behind main, found it up to date.
+# stop: refuse until every check passes on the current files, a PR is recorded, its CI is green but for a code scanning alert, a comment is recorded and merge has run on the current head and, for the first three heads behind main, found it up to date.
 #       Gives way once after 30 refusals with no check run in between.
 #       Passes, uncounted, while its input lists a running or pending subagent.
 # tool: refuse tool calls after 24 hours without the user, and Bash calls running gh pr merge.
@@ -186,7 +186,12 @@ if [ "$1" = merge ]; then
     ok 'api and dependencies' "labels: ${labels}; body: ${api}, ${deps}"
   fi
 
-  ci=$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | "\(.name) \(.bucket) \(.link)"' | grep '^All checks pass ') || ci=
+  key='- **Decisions made by the build:**'
+  none="${key} none"
+  d=$(printf '%s\n' "${body}" | grep -F -- "${key}" | sort -u)
+  if [ "${d}" = "${none}" ]; then ok decisions "body: ${none}"; else no decisions "body: ${d:-lacks ${none}}"; fi
+
+  ci=$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | "\(.name) \(.bucket) \(.link)"' | grep -E '^(All checks pass|CodeQL fail) ') || ci=
   if [ -n "${ci}" ] && ! printf '%s\n' "${ci}" | grep -qv '^All checks pass pass '; then ok ci "${ci}"; else no ci "${ci:-no check named All checks pass}"; fi
 
   main=$(git rev-parse --short=7 origin/main) || true
@@ -453,7 +458,7 @@ fi
 pr=$(sed -n 's/^pr: //p' "${state}" | head -n 1)
 err=$(mktemp "${dir}/gh.XXXXXX")
 code=0
-buckets=$(gh pr checks "${pr}" --json bucket --jq '.[].bucket' 2>"${err}") || code=$?
+buckets=$(gh pr checks "${pr}" --json bucket,workflow,name --jq '.[] | [.bucket, .workflow, .name] | @tsv' 2>"${err}") || code=$?
 msg=$(cat "${err}")
 rm -f "${err}"
 if [ "${code}" -ne 0 ] && [ -z "${buckets}" ]; then
@@ -462,6 +467,8 @@ if [ "${code}" -ne 0 ] && [ -z "${buckets}" ]; then
     *) refuse "gh failed: ${msg}" ;;
   esac
 fi
+# A code scanning alert is a failing check named CodeQL in no workflow; alone, it is left to the merge command.
+buckets=$(printf '%s\n' "${buckets}" | awk -F '\t' '$0 != "fail\t\tCodeQL" { print $1 }')
 case ${buckets} in
   *fail* | *cancel*) refuse "CI failing on ${pr}; delegate the fix, then follow the new run" ;;
   *pending*) refuse "CI pending on ${pr}; wait with: gh pr checks ${pr} --watch >/dev/null; gh pr checks ${pr}" ;;

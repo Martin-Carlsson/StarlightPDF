@@ -10,5 +10,15 @@
   },
   "enabledPlugins": {
     "build-voyage@starlightpdf": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt --check *)",
+      "Bash(rustfmt --check *)",
+      "Bash(shellcheck *)",
+      "Bash(shasum *)",
+      "Bash(cargo metadata *)",
+      "Bash(cargo tree *)"
+    ]
   }
 }
