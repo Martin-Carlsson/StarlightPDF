@@ -13,7 +13,7 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyNone};
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::compliance::Standard;
 use starlightpdf::document::{
@@ -22,7 +22,6 @@ use starlightpdf::document::{
 use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::images::ImageFormat;
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions};
-use starlightpdf::layers::AddLayerOptions;
 use starlightpdf::limits::ResourcePolicyOptions;
 use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::objects::{ObjectOptions, StreamDataOptions};
@@ -31,7 +30,7 @@ use starlightpdf::page::{Boundary, BoundaryOptions};
 use starlightpdf::progress::Progress;
 use starlightpdf::rendering::ColorSpace;
 use starlightpdf::security::{Cipher, Permission};
-use starlightpdf::{Version, compliance, document, input, layers, limits, objects, output, page};
+use starlightpdf::{Version, compliance, document, input, limits, objects, output, page};
 
 /// Each boundary's name.
 const BOUNDARIES: [(Boundary, &str); 5] = [
@@ -126,7 +125,12 @@ const SAVE_MODES: [(SaveMode, &str); 3] = [
 ];
 
 /// Each split's name.
-const SPLITS: [(SplitBy, &str); 2] = [(SplitBy::Pages, "Pages"), (SplitBy::Ranges, "Ranges")];
+const SPLITS: [(SplitBy, &str); 4] = [
+    (SplitBy::Bookmarks, "Bookmarks"),
+    (SplitBy::Pages, "Pages"),
+    (SplitBy::Ranges, "Ranges"),
+    (SplitBy::Size, "Size"),
+];
 
 /// Each standard's name.
 const STANDARDS: [(Standard, &str); 21] = [
@@ -420,10 +424,6 @@ struct Rect {
     y: f64,
 }
 
-/// A layer.
-#[pyclass(frozen, module = "starlightpdf")]
-struct Layer(layers::Layer);
-
 /// A page.
 #[pyclass(frozen, module = "starlightpdf")]
 struct Page(page::Page);
@@ -446,19 +446,22 @@ impl Page {
             .map_err(|error| to_py(&error))
     }
 
-    /// Draws `image`, `mask` its soft mask, in `layer`; `x`, `y` in points from the top-left.
+    /// Draws `image`, `mask` its soft mask, in `layer`, of which none can exist yet; `x`, `y` in points from the
+    /// top-left.
     #[pyo3(signature = (image, mask = None, layer = None, **keywords))]
     fn draw_image(
         &self,
         image: &Source,
         mask: Option<&Source>,
-        layer: Option<&Layer>,
+        layer: Option<&Bound<'_, PyNone>>,
         keywords: Option<Bound<'_, PyDict>>,
     ) -> PyResult<()> {
+        let _: Option<&Bound<'_, PyNone>> = layer;
         let given = Keywords::new(
             keywords,
             &[
                 "format",
+                "frame",
                 "height",
                 "ignore_orientation",
                 "opacity",
@@ -472,6 +475,7 @@ impl Page {
             .get::<Option<String>>("format", None)?
             .map(|format| value(&IMAGE_FORMATS, &format))
             .transpose()?;
+        options.frame = given.get("frame", 0)?;
         options.height = given.get("height", None)?;
         options.ignore_orientation = given.get("ignore_orientation", false)?;
         options.opacity = given.get("opacity", None)?;
@@ -479,12 +483,7 @@ impl Page {
         options.x = given.get("x", 0.0_f64)?;
         options.y = given.get("y", 0.0_f64)?;
         self.0
-            .draw_image(
-                &image.0,
-                mask.map(|each| &each.0),
-                layer.map(|each| &each.0),
-                &options,
-            )
+            .draw_image(&image.0, mask.map(|each| &each.0), None, &options)
             .map_err(|error| to_py(&error))
     }
 
@@ -626,18 +625,6 @@ struct Document {
 
 #[pymethods]
 impl Document {
-    /// Adds a layer, visible by default unless `visible` is false.
-    #[pyo3(signature = (*, name = "", visible = true))]
-    fn add_layer(&self, name: &str, visible: bool) -> PyResult<Layer> {
-        let mut options = AddLayerOptions::default();
-        name.clone_into(&mut options.name);
-        options.visible = visible;
-        self.document
-            .add_layer(&options)
-            .map(Layer)
-            .map_err(|error| to_py(&error))
-    }
-
     /// The catalog's id.
     #[getter]
     fn catalog(&self) -> PyResult<ObjectId> {
@@ -989,7 +976,6 @@ fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Documents>()?;
     module.add_class::<Encryption>()?;
     module.add_class::<InfoDictionary>()?;
-    module.add_class::<Layer>()?;
     module.add_class::<ObjectId>()?;
     module.add_class::<Page>()?;
     module.add_class::<Rect>()?;

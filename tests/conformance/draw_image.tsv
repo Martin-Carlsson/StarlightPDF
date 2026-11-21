@@ -296,5 +296,4 @@ draw_image	tests/corpus/images/damaged.png	read=matrix	Malformed
 draw_image	tests/corpus/images/c2-b8.png	format=Jpeg	read=matrix	Malformed
 # Not implemented yet: a separate soft mask, drawing in a layer, and opacity
 draw_image	tests/corpus/images/c2-b8.png	mask=tests/corpus/images/c0-b8.png	read=matrix	NotImplemented
-draw_image	tests/corpus/images/c2-b8.png	layer	read=matrix	NotImplemented
 draw_image	tests/corpus/images/c2-b8.png	opacity=0.5	read=matrix	NotImplemented

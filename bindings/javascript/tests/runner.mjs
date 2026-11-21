@@ -19,16 +19,7 @@ const LIMITS = [
 /** The keys every operation that opens a file takes. */
 const OPEN = new Set(["password", "strict", ...LIMITS.map(([key]) => key)]);
 /** The keys without a value. */
-const FLAGS = new Set([
-  "allow_loss",
-  "break_signatures",
-  "cancel",
-  "decode",
-  "ignore_orientation",
-  "layer",
-  "saved",
-  "strict",
-]);
+const FLAGS = new Set(["allow_loss", "break_signatures", "cancel", "decode", "ignore_orientation", "saved", "strict"]);
 /** Each `box=` value. */
 const BOXES = new Set(["Art", "Bleed", "Crop", "Media", "Trim"]);
 /** The save options' keys. */
@@ -56,7 +47,6 @@ const DRAW = [
   "format",
   "height",
   "ignore_orientation",
-  "layer",
   "mask",
   "opacity",
   "page_height",
@@ -791,7 +781,6 @@ async function drawn(api, environment, args) {
     ...(pageWidth === undefined ? {} : { width: pageWidth }),
   });
   const mask = given.has("mask") ? await api.Source.fromBytes(await environment.bytes(given.get("mask") ?? "")) : null;
-  const layer = given.has("layer") ? await document.addLayer({ name: "layer" }) : null;
   /** @type {(key: string) => number | undefined} */
   const optional = (key) => (given.has(key) ? real(given.get(key)) : undefined);
   const [x, y, width, height, opacity] = ["x", "y", "width", "height", "opacity"].map(optional);
@@ -806,7 +795,7 @@ async function drawn(api, environment, args) {
     ...(x === undefined ? {} : { x }),
     ...(y === undefined ? {} : { y }),
   };
-  await created.drawImage(await api.Source.fromBytes(await environment.bytes(path)), mask, layer, drawing);
+  await created.drawImage(await api.Source.fromBytes(await environment.bytes(path)), mask, null, drawing);
   return imageRead(api, await reopen(api, await twice(api, document, new Map()), new Map()), read);
 }
 

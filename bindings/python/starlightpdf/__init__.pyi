@@ -9,7 +9,6 @@ __all__ = [
     "Documents",
     "Encryption",
     "InfoDictionary",
-    "Layer",
     "ObjectId",
     "Page",
     "PdfError",
@@ -78,16 +77,13 @@ class Rect:
     def height(self) -> float: ...
 
 @final
-class Layer: ...
-
-@final
 class Page:
     def boundary(self, *, kind: str = "Crop") -> Rect: ...
     def draw_image(
         self,
         image: Source,
         mask: Source | None = None,
-        layer: Layer | None = None,
+        layer: None = None,
         *,
         x: float = 0.0,
         y: float = 0.0,
@@ -95,6 +91,7 @@ class Page:
         height: float | None = None,
         ignore_orientation: bool = False,
         format: str | None = None,  # noqa: A002 runtime keyword name
+        frame: int = 0,
         opacity: float | None = None,
     ) -> None: ...
     @property
@@ -197,7 +194,6 @@ class Document:
         subject: str | None = None,
         title: str | None = None,
     ) -> None: ...
-    def add_layer(self, *, name: str = "", visible: bool = True) -> Layer: ...
     def insert_blank_page(
         self,
         *,

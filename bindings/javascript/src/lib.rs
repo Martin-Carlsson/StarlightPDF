@@ -18,7 +18,6 @@ use starlightpdf::document::{
 use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::images::ImageFormat;
 use starlightpdf::input::{ReadAt, ReadAtSourceOptions};
-use starlightpdf::layers::AddLayerOptions;
 use starlightpdf::limits::ResourcePolicyOptions;
 use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::objects::{ObjectId, ObjectOptions, StreamDataOptions};
@@ -27,7 +26,7 @@ use starlightpdf::page::{Boundary, BoundaryOptions};
 use starlightpdf::progress::Progress;
 use starlightpdf::rendering::ColorSpace;
 use starlightpdf::security::{Cipher, Permission};
-use starlightpdf::{compliance, document, input, layers, limits, output, page};
+use starlightpdf::{compliance, document, input, limits, output, page};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
@@ -65,7 +64,7 @@ const COLOR_SPACES: [(ColorSpace, &str); 3] = [
 ];
 
 /// Each image format and its name.
-const IMAGE_FORMATS: [(ImageFormat, &str); 36] = [
+const IMAGE_FORMATS: [(ImageFormat, &str); 37] = [
     (ImageFormat::Arw, "Arw"),
     (ImageFormat::Avif, "Avif"),
     (ImageFormat::Bmp, "Bmp"),
@@ -102,6 +101,7 @@ const IMAGE_FORMATS: [(ImageFormat, &str); 36] = [
     (ImageFormat::WebP, "WebP"),
     (ImageFormat::Wmf, "Wmf"),
     (ImageFormat::Xbm, "Xbm"),
+    (ImageFormat::Xpm, "Xpm"),
 ];
 
 /// Each save mode and its name.
@@ -347,38 +347,8 @@ impl Documents {
     }
 }
 
-/// A layer.
-#[wasm_bindgen]
-#[derive(Debug)]
-pub struct Layer(layers::Layer);
-
-#[wasm_bindgen]
-impl Layer {
-    /// The same layer, for `Page::draw_image` to take.
-    #[must_use]
-    pub fn share(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
 #[wasm_bindgen]
 impl Document {
-    /// Adds a layer: `name`, `visible`.
-    ///
-    /// # Errors
-    ///
-    /// The core's, as details; a `TypeError` for a wrong option.
-    #[wasm_bindgen(js_name = addLayer)]
-    pub fn add_layer(&self, options: &JsValue) -> Result<Layer, JsValue> {
-        let mut made = AddLayerOptions::default();
-        made.name = text(options, "name")?.unwrap_or_default();
-        made.visible = flag(options, "visible", true)?;
-        self.0
-            .add_layer(&made)
-            .map(Layer)
-            .map_err(|error| to_js(&error))
-    }
-
     /// The catalog's id.
     ///
     /// # Errors
@@ -393,15 +363,17 @@ impl Document {
         ])
     }
 
-    /// A new document with no pages: `version`, `[major, minor]`.
+    /// A new document with no pages, with `policy`, which it takes (see `ResourcePolicy::share`), and
+    /// `version`, `[major, minor]`.
     ///
     /// # Errors
     ///
     /// The core's, as details; a `TypeError` or `RangeError` for a wrong option.
-    pub fn create(options: &JsValue) -> Result<Self, JsValue> {
+    pub fn create(policy: Option<ResourcePolicy>, options: &JsValue) -> Result<Self, JsValue> {
         let mut made = CreateOptions::default();
         made.version = version(options)?;
-        document::Document::create(None, &made)
+        let core_policy = policy.map(|held| held.0);
+        document::Document::create(core_policy.as_ref(), &made)
             .map(Self)
             .map_err(|error| to_js(&error))
     }
@@ -677,7 +649,7 @@ impl Page {
         ])
     }
 
-    /// Draws `image`, with soft mask `mask` and in `layer`, which it takes (see `Source::share`), with the
+    /// Draws `image`, with soft mask `mask`, which it takes (see `Source::share`), in no layer, with the
     /// `DrawImageOptions` fields of `options`.
     ///
     /// # Errors
@@ -688,7 +660,6 @@ impl Page {
         &self,
         image: &Source,
         mask: Option<Source>,
-        layer: Option<Layer>,
         options: &JsValue,
     ) -> Result<(), JsValue> {
         let mut made = DrawImageOptions::default();
@@ -701,9 +672,8 @@ impl Page {
         made.x = real(options, "x")?.unwrap_or_default();
         made.y = real(options, "y")?.unwrap_or_default();
         let core_mask = mask.map(|held| held.0);
-        let core_layer = layer.map(|held| held.0);
         self.0
-            .draw_image(&image.0, core_mask.as_ref(), core_layer.as_ref(), &made)
+            .draw_image(&image.0, core_mask.as_ref(), None, &made)
             .map_err(|error| to_js(&error))
     }
 
@@ -810,6 +780,23 @@ pub fn header_version(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
 #[must_use]
 pub fn library_version() -> String {
     starlightpdf::library_version().into()
+}
+
+/// The details of `operation` failing `Unsupported` with `message`, found before the core runs.
+#[wasm_bindgen]
+#[must_use]
+pub fn unsupported(operation: &str, message: &str) -> JsValue {
+    let code = starlightpdf::ErrorCode::Unsupported;
+    record([
+        ("code", code.name().into()),
+        ("number", code.number().into()),
+        ("message", message.into()),
+        ("operation", operation.into()),
+        ("offset", JsValue::NULL),
+        ("objectNumber", JsValue::NULL),
+        ("ioCause", JsValue::NULL),
+    ])
+    .unwrap_or_else(|failure| failure)
 }
 
 /// String `key` of `options` as the value it names in `table`, a `kind`; `None` when undefined.

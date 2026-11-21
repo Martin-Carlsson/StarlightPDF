@@ -505,6 +505,31 @@ async function missing(entry) {
 }
 
 /**
+ * Without cross-origin isolation, passes an append and a progress callback on this main thread; each rejection's code
+ * and number if a PdfError.
+ * @param {string} entry
+ */
+async function unisolated(entry) {
+  const api = await load(entry);
+  const sinks = /** @type {Sinks} */ (api.Sink);
+  const document = await api.Document.open(
+    await api.Source.fromBytes(await read("tests/corpus/page-count/nested-tree.pdf")),
+  );
+  /** @param {Promise<unknown>} call */
+  const fate = async (call) =>
+    call.then(
+      () => "resolved",
+      (/** @type {unknown} */ reason) =>
+        reason instanceof api.PdfError ? [reason.code, reason.number, reason.operation] : String(reason),
+    );
+  return [
+    crossOriginIsolated,
+    await fate(sinks.fromAppend(() => undefined)),
+    await fate(document.save(await api.Sink.inMemory(), () => true)),
+  ];
+}
+
+/**
  * Runs the suites `names`; the failures and how many WebAssembly instances this thread made.
  * @param {string} entry
  * @param {string[]} names
@@ -617,6 +642,7 @@ const NAMED = [
   ["memory", memory],
   ["missing", missing],
   ["splitting", splitting],
+  ["unisolated", unisolated],
   ["worker", worker],
 ];
 const SCENARIOS = new Map(NAMED);

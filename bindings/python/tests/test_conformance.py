@@ -22,7 +22,6 @@ FLAGS = {
     "cancel",
     "decode",
     "ignore_orientation",
-    "layer",
     "saved",
     "strict",
 }
@@ -49,7 +48,6 @@ DRAW = {
     "format",
     "height",
     "ignore_orientation",
-    "layer",
     "mask",
     "opacity",
     "page_height",
@@ -706,11 +704,10 @@ def drawn(args: list[str]) -> str:
         height=optional(given.get("page_height")),
     )
     mask = source("bytes", given["mask"]) if "mask" in given else None
-    layer = document.add_layer(name="layer") if "layer" in given else None
     new.draw_image(
         source("bytes", path),
         mask,
-        layer,
+        None,
         x=float(given.get("x", "0")),
         y=float(given.get("y", "0")),
         width=optional(given.get("width")),
