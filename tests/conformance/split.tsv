@@ -32,6 +32,15 @@ split_bytes	tests/corpus/split/outside-link.pdf	by=Pages	count=1	LossRefused
 split_file	tests/corpus/split/outside-link.pdf	by=Pages	count=1	LossRefused
 split_bytes	tests/corpus/split/outside-link.pdf	by=Pages	count=1	allow_loss	1 1
 split_file	tests/corpus/split/outside-link.pdf	by=Pages	count=1	allow_loss	1 1
+# 12.6.3, 12.6.4.2: GoTo actions of an annotation's and a page's AA, to a page in the part, in another part
+split_bytes	tests/corpus/split/outside-actions.pdf	by=Pages	count=3	3
+split_file	tests/corpus/split/outside-actions.pdf	by=Pages	count=3	3
+split_bytes	tests/corpus/split/outside-actions.pdf	by=Ranges	starts=0,1	LossRefused
+split_file	tests/corpus/split/outside-actions.pdf	by=Ranges	starts=0,1	LossRefused
+split_bytes	tests/corpus/split/outside-actions.pdf	by=Ranges	starts=0,2	LossRefused
+split_file	tests/corpus/split/outside-actions.pdf	by=Ranges	starts=0,2	LossRefused
+split_bytes	tests/corpus/split/outside-actions.pdf	by=Pages	count=1	allow_loss	1 1 1
+split_file	tests/corpus/split/outside-actions.pdf	by=Pages	count=1	allow_loss	1 1 1
 # 7.6: a part would lose the encryption
 split_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	LossRefused
 split_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	LossRefused

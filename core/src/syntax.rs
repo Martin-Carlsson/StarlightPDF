@@ -14,9 +14,8 @@ const CHUNK: usize = 512;
 /// Bytes kept of a name read in passing; longer names keep one more, so match no key.
 const NAME_LIMIT: usize = 127;
 
-/// Bytes of a number or keyword, as many as [`write_real`] writes at most: a sign, `0.`, then a
-/// real's last digit at most 324 places on; longer ones are [`ErrorCode::Malformed`].
-const RUN_LIMIT: usize = 327;
+/// Bytes of a number or keyword; longer ones are [`ErrorCode::Malformed`].
+const RUN_LIMIT: usize = 255;
 
 /// Where a direct object starts, in the source or in an object stream's decoded data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -644,14 +643,7 @@ where
                 Ok(Token::Keyword(Keyword::Other))
             }
             _ if !digits.is_empty() && point.is_none() => Ok(text.parse().map_or_else(
-                |_| {
-                    Token::Real(
-                        text.parse()
-                            .ok()
-                            .filter(|real: &f64| real.is_finite())
-                            .unwrap_or(0.0_f64),
-                    )
-                },
+                |_| text.parse().map_or(Token::Real(0.0), Token::Real),
                 Token::Integer,
             )),
             _ if point.is_some()
@@ -660,7 +652,7 @@ where
             {
                 text.parse()
                     .ok()
-                    .map(|real: f64| Token::Real(if real.is_finite() { real } else { 0.0_f64 }))
+                    .map(Token::Real)
                     .ok_or_else(|| self.malformed())
             }
             _ => Err(self.malformed()),
@@ -1004,12 +996,33 @@ pub(crate) fn write_name(out: &mut String, name: &[u8]) {
     }
 }
 
-/// Appends `number` in canonical syntax, 0 when not finite (ISO 32000-2:2020, 7.3.3).
+/// Appends `number` in canonical syntax, as read back: 0 when not finite, else when longer
+/// than a number read, the nearest that is not (ISO 32000-2:2020, 7.3.3).
 pub(crate) fn write_real(out: &mut String, number: f64) {
-    if number.is_finite() {
-        out.push_str(&number.to_string());
-    } else {
+    let text = number.to_string();
+    if !number.is_finite() {
         out.push('0');
+    } else if text.len() <= RUN_LIMIT {
+        out.push_str(&text);
+    } else {
+        let sign = if number.is_sign_negative() { "-" } else { "" };
+        let room = RUN_LIMIT.saturating_sub(sign.len());
+        if number.abs() >= 1.0_f64 {
+            // Past the largest integer part room holds: all nines.
+            out.push_str(sign);
+            out.push_str(&"9".repeat(room));
+        } else {
+            // Without the leading 0, rounded to the places left after the point.
+            let places = room.saturating_sub(1);
+            let rounded = format!("{:.places$}", number.abs());
+            let fraction = rounded.trim_start_matches('0').trim_end_matches('0');
+            if fraction.len() > 1 {
+                out.push_str(sign);
+                out.push_str(fraction);
+            } else {
+                out.push('0');
+            }
+        }
     }
 }
 

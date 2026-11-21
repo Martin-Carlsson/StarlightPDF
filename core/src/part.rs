@@ -498,6 +498,49 @@ impl Part {
         Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
     }
 
+    /// Whether a `GoTo` action of `holder`, an annotation or a page, in its `A` or `AA` or after
+    /// them, leads to a page outside the part, each action object once by `seen`
+    /// (ISO 32000-2:2020, 12.6.2, 12.6.3, 12.6.4.2).
+    fn astray(
+        &self,
+        objects: Objects<'_>,
+        holder: &Object,
+        seen: &mut BTreeSet<u32>,
+    ) -> Result<bool, PdfError> {
+        let source = &*self.source;
+        let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
+        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
+            actions.extend(triggers.into_iter().map(|entry| entry.1));
+        }
+        while let Some(held) = actions.pop() {
+            if let Object::Reference(id) = held
+                && !seen.insert(id.number)
+            {
+                continue;
+            }
+            match source.direct(objects, held)? {
+                Object::Array(more) => actions.extend(more),
+                action @ Object::Dictionary(_) => {
+                    if let Some(destination) = goto(&action)
+                        && let Some((_, true)) = self.aim(objects, destination)?
+                    {
+                        return Ok(true);
+                    }
+                    actions.extend(action.get(b"Next"));
+                }
+                Object::Boolean(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => {}
+            }
+        }
+        Ok(false)
+    }
+
     /// The new catalog: the page tree, the carried entries, the page labels from the part's
     /// first page and an open action into the part, one leading elsewhere left out; `MarkInfo`
     /// goes with the structure tree (ISO 32000-2:2020, 7.7.2, 12.3.2, 12.4.2, 14.7.1).
@@ -727,15 +770,15 @@ impl Part {
         Ok(labels)
     }
 
-    /// `entries` with a destination named or to a page of the part made explicit, a link to a
-    /// page outside it without `Dest` and `A`, a widget without its field (ISO 32000-2:2020,
-    /// 12.3.2, 12.5.6.5, 12.6.4.2, 12.7.4.1).
+    /// `entries` with a destination named or to a page of the part made explicit, a `GoTo`
+    /// action to a page outside it without `D`, a link to one without `Dest` and `A`, a widget
+    /// without its field (ISO 32000-2:2020, 12.3.2, 12.5.6.5, 12.6.4.2, 12.7.4.1).
     fn link(&self, objects: Objects<'_>, entries: Dictionary) -> Result<Dictionary, PdfError> {
         let mut object = Object::Dictionary(entries);
         if let Some(destination) = goto(&object)
-            && let Some((explicit, false)) = self.aim(objects, destination)?
+            && let Some((explicit, outside)) = self.aim(objects, destination)?
         {
-            object.set(b"D", Some(explicit));
+            object.set(b"D", (!outside).then_some(explicit));
         }
         let lost = self.lost(objects, &object)?;
         if lost {
@@ -1028,8 +1071,8 @@ impl Part {
     /// Lists the part's pages, when one of the document's has annotations or actions, and reads
     /// the destinations the strings its open action and its pages' links and actions name name,
     /// in one pass over the name tree; then, unless `allow_loss`, fails with
-    /// [`ErrorCode::LossRefused`] when a link leads to a page outside the part
-    /// (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5, 12.6.3, 12.6.4.2).
+    /// [`ErrorCode::LossRefused`] when a link or a `GoTo` action of a page or an annotation leads
+    /// to a page outside the part (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5, 12.6.3, 12.6.4.2).
     pub(crate) fn prepare(&mut self, allow_loss: bool) -> Result<(), PdfError> {
         let objects = self.store.objects(OPERATION);
         let (mut keys, mut seen) = (Vec::new(), BTreeSet::new());
@@ -1064,7 +1107,6 @@ impl Part {
                 },
             )?;
         }
-        drop(seen);
         keys.sort_unstable();
         keys.dedup();
         let resolved = self.resolve(objects, keys)?;
@@ -1073,10 +1115,16 @@ impl Part {
             return Ok(());
         }
         if !allow_loss {
+            seen.clear();
             for &id in &listed {
                 let page = self.source.resolve(objects, id)?;
+                if self.astray(objects, &page, &mut seen)? {
+                    return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
+                }
                 annotations(objects, &self.source, &page, &mut |annotation| {
-                    if self.lost(objects, &annotation)? {
+                    if self.lost(objects, &annotation)?
+                        || self.astray(objects, &annotation, &mut seen)?
+                    {
                         return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
                     }
                     Ok(())

@@ -1621,8 +1621,9 @@ impl Document {
     ///
     /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
     /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
-    /// a link to a page in another part fail with [`ErrorCode::LossRefused`] unless
-    /// `allow_loss`, which leaves them out; such a link keeps its appearance. So does an open
+    /// a link or a page's or annotation's `GoTo` action to a page in another part fail with
+    /// [`ErrorCode::LossRefused`] unless `allow_loss`, which leaves them out, the action's
+    /// destination only; such a link keeps its appearance. So does an open
     /// action other than a destination or a `GoTo` action without a next one; one to a page in
     /// another part is view state, left out. A `count` of 0 and `starts` empty, not
     /// ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
