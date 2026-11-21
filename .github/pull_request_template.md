@@ -14,10 +14,12 @@ Closes #
 
 <!-- API: none, additive or breaking, then the public names changed. Breaking: existing callers must change or get a different result.
 Implementing an operation that returned `NotImplemented` without adding, removing or changing a public name, type or signature: none; so is a binding exposing an operation the core crate already declares.
-Dependencies: none, or each one added with reason, license, links to repository, registry page and homepage (if any), and the audits recorded. -->
+Dependencies: none, or each one added with reason, license, links to repository, registry page and homepage (if any), and the audits recorded.
+Decisions made by the build: none, or each choice it made in the maintainer's place. -->
 
 - **API:** 
 - **Dependencies:** 
+- **Decisions made by the build:** 
 - **Affects:** 
 
 ## Not done
