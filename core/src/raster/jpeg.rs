@@ -132,7 +132,7 @@ fn add_part(
     if icc.is_empty() {
         icc.resize(usize::from(count), None);
     }
-    let length = body.checked_sub(ICC_HEADER).ok_or_else(malformed)?;
+    let length = body.saturating_sub(ICC_HEADER);
     let slot = usize::from(sequence)
         .checked_sub(1)
         .filter(|_| icc.len() == usize::from(count))

@@ -54,6 +54,12 @@ impl<P: Pull> Buffered<P> {
     }
 }
 
+impl<P: Pull + ?Sized> Pull for &mut P {
+    fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
+        (**self).pull(buf)
+    }
+}
+
 impl Pull for &[u8] {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
         let count = self.len().min(buf.len());

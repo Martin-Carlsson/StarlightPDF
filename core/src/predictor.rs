@@ -8,6 +8,9 @@ use crate::{ErrorCode, PdfError};
 /// The error operation name.
 const OPERATION: &str = "predictor";
 
+/// The most pixels a row may hold.
+const MAX_COLUMNS: u64 = 0x1_0000;
+
 /// The most components a pixel may hold: a `DeviceN` space's most (ISO 32000-2:2020, Annex C).
 const MAX_COLORS: u64 = 32;
 
@@ -27,8 +30,6 @@ pub(crate) struct Predictor<P> {
     current: Vec<u8>,
     /// The input.
     inner: P,
-    /// The most bytes a row may hold.
-    limit: usize,
     /// Bytes per pixel, at least 1, for PNG.
     pixel: usize,
     /// PNG, else TIFF.
@@ -64,9 +65,6 @@ impl<P: Pull> Predictor<P> {
                 } else {
                     Err(malformed())
                 };
-            }
-            if self.width > self.limit {
-                return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
             }
             filled = filled.wrapping_add(read);
         }
@@ -134,14 +132,13 @@ impl<P: Pull> Predictor<P> {
     /// # Errors
     ///
     /// [`ErrorCode::Malformed`] for a parameter out of range, [`ErrorCode::LimitExceeded`] for
-    /// more than [`MAX_COLORS`] colors; reading rows of more than `row_limit` bytes fails with it.
+    /// more than [`MAX_COLUMNS`] columns or [`MAX_COLORS`] colors.
     pub(crate) fn with_parameters(
         inner: P,
         predictor: i64,
         colors: i64,
         bits_per_component: i64,
         columns: i64,
-        row_limit: u64,
     ) -> Result<Self, PdfError> {
         let png = match predictor {
             2 => false,
@@ -156,7 +153,7 @@ impl<P: Pull> Predictor<P> {
         let columns_count = positive(columns).ok_or_else(malformed)?;
         let bits = positive(bits_per_component).ok_or_else(malformed)?;
         let limit = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
-        if colors_count > MAX_COLORS {
+        if columns_count > MAX_COLUMNS || colors_count > MAX_COLORS {
             return Err(limit());
         }
         let pixel_bits = colors_count.checked_mul(bits).ok_or_else(limit)?;
@@ -174,7 +171,6 @@ impl<P: Pull> Predictor<P> {
                 .ok_or_else(limit)?,
             current: Vec::new(),
             inner,
-            limit: usize::try_from(row_limit).unwrap_or(usize::MAX),
             pixel: usize::try_from(pixel_bits.wrapping_add(7) >> 3_u32)
                 .ok()
                 .ok_or_else(limit)?,
