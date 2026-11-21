@@ -6,8 +6,8 @@ import { browse, installed, scenario } from "./harness.mts";
 /** Most bytes of WebAssembly memory the count may take: the first measurement, 1179648, with headroom. */
 const BOUND = 2 * 1024 * 1024;
 
-/** Most bytes of WebAssembly memory opening, splitting and saving may take; 1 until the first measurement replaces it. */
-const SPLIT_BOUND = 1;
+/** Most bytes of WebAssembly memory opening, splitting and saving may take: the first measurement, 100728832, with headroom. */
+const SPLIT_BOUND = 104 * 1024 * 1024;
 
 test("counting the pages of a 1 GiB Blob keeps WebAssembly memory within its bound", async (context) => {
   const { result } = await browse(await installed(), scenario("worker", ["memory"]));

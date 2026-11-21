@@ -93,16 +93,19 @@ impl FileTarget {
         if success && pending.is_none() {
             *pending = Some(self.temporary()?);
         }
-        let Some((file, path)) = pending.take() else {
-            return Ok(());
+        // The file closes at the end of this block, before it is removed.
+        let (committed, path) = {
+            let Some((file, path)) = pending.take() else {
+                return Ok(());
+            };
+            drop(pending);
+            let committed = if success {
+                Self::commit(&file, &path, &self.target)
+            } else {
+                Ok(())
+            };
+            (committed, path)
         };
-        drop(pending);
-        let committed = if success {
-            Self::commit(&file, &path, &self.target)
-        } else {
-            Ok(())
-        };
-        drop(file);
         if !success || committed.is_err() {
             drop(fs::remove_file(&path));
         }

@@ -6,6 +6,7 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use std::io::{self, ErrorKind};
+use std::sync::{Mutex, PoisonError};
 
 use js_sys::{Array, BigInt, Error, Number, Object, RangeError, Reflect, TypeError, Uint8Array};
 use starlightpdf::Version;
@@ -163,6 +164,12 @@ const STANDARDS: [(Standard, &str); 21] = [
     (Standard::PdfX6, "PdfX6"),
 ];
 
+/// Bytes of an input read at once, so the core's many small reads seldom call into JavaScript.
+const WINDOW: usize = 0x4000;
+
+/// Windows of an input kept.
+const WINDOWS: usize = 32;
+
 /// A callback in the JavaScript table, by id: a sink's append or a save's progress.
 struct Callback {
     /// Its id.
@@ -194,6 +201,8 @@ struct Input {
     id: u32,
     /// Its size in bytes.
     size: u64,
+    /// Parts of it read, each with its offset, the latest first.
+    windows: Mutex<Vec<(u64, Vec<u8>)>>,
 }
 
 impl Drop for Input {
@@ -204,7 +213,40 @@ impl Drop for Input {
 
 impl ReadAt for Input {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
-        read(self.id, offset, buffer).map_err(|error| io_error(&error))
+        if buffer.len() >= WINDOW {
+            return read(self.id, offset, buffer).map_err(|error| io_error(&error));
+        }
+        let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        let held = windows.iter().position(|window| {
+            offset
+                .checked_sub(window.0)
+                .is_some_and(|into| into < u64::try_from(window.1.len()).unwrap_or(u64::MAX))
+        });
+        let window = if let Some(index) = held {
+            windows.remove(index)
+        } else {
+            let wide = u64::try_from(WINDOW).unwrap_or(u64::MAX);
+            let start = offset.saturating_sub(offset.checked_rem(wide).unwrap_or_default());
+            let mut bytes = if windows.len() < WINDOWS {
+                Vec::new()
+            } else {
+                windows.pop().map_or_default(|oldest| oldest.1)
+            };
+            bytes.resize(WINDOW, 0);
+            let count = read(self.id, start, &mut bytes).map_err(|error| io_error(&error))?;
+            bytes.truncate(count);
+            (start, bytes)
+        };
+        let from = usize::try_from(offset.saturating_sub(window.0)).unwrap_or(usize::MAX);
+        let available = window.1.get(from..).unwrap_or_default();
+        let count = available.len().min(buffer.len());
+        buffer
+            .get_mut(..count)
+            .unwrap_or_default()
+            .copy_from_slice(available.get(..count).unwrap_or_default());
+        windows.insert(0, window);
+        drop(windows);
+        Ok(count)
     }
 
     fn size(&self) -> io::Result<u64> {
@@ -226,7 +268,11 @@ impl Source {
     /// The core's, as details.
     #[wasm_bindgen(js_name = fromTable)]
     pub fn from_table(id: u32, size: u64) -> Result<Self, JsValue> {
-        let read_at: Arc<dyn ReadAt> = Arc::new(Input { id, size });
+        let read_at: Arc<dyn ReadAt> = Arc::new(Input {
+            id,
+            size,
+            windows: Mutex::new(Vec::new()),
+        });
         input::Source::from_read_at(&read_at, &ReadAtSourceOptions::default())
             .map(Self)
             .map_err(|error| to_js(&error))

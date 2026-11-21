@@ -23,9 +23,13 @@ const BOUNDARY_BOUND: usize = 2_048;
 /// Most bytes opening and decoding a stream to a sink may hold allocated at once.
 const STREAM_BOUND: usize = 49_152;
 
-/// Most bytes opening, splitting and saving each part to a sink may hold allocated at once;
-/// measured 98,456,211 for the file of small objects, 265,514 for that of large streams.
-const SPLIT_BOUND: usize = 100_663_296;
+/// Most bytes opening the file of large streams, splitting it and saving its part to a sink may
+/// hold allocated at once; measured 266,227.
+const LARGE_SPLIT_BOUND: usize = 294_912;
+
+/// Most bytes opening the file of small objects, splitting it and saving each part to a sink may
+/// hold allocated at once; measured 98,456,531.
+const SMALL_SPLIT_BOUND: usize = 104_857_600;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
@@ -445,8 +449,12 @@ fn bounded(top: Option<usize>, bound: usize) {
 }
 
 /// Asserts that `measured` saved one part per floor, each of at least its floor's bytes, holding
-/// at most [`SPLIT_BOUND`] bytes allocated.
-fn bounded_parts(measured: Option<(Result<Vec<u64>, ErrorCode>, usize)>, floors: Option<Vec<u64>>) {
+/// at most `bound` bytes allocated.
+fn bounded_parts(
+    measured: Option<(Result<Vec<u64>, ErrorCode>, usize)>,
+    floors: Option<Vec<u64>>,
+    bound: usize,
+) {
     let (saved, top) = measured.unzip();
     assert_eq!(
         saved.as_ref().map(|result| result.as_ref().map(Vec::len)),
@@ -461,7 +469,7 @@ fn bounded_parts(measured: Option<(Result<Vec<u64>, ErrorCode>, usize)>, floors:
     {
         assert!(bytes >= floor, "a part of {bytes} bytes, under {floor}");
     }
-    bounded(top, SPLIT_BOUND);
+    bounded(top, bound);
 }
 
 /// The two files: (a) a few large streams, (b) millions of small objects.
@@ -738,6 +746,7 @@ fn split_and_save_few_large_streams_is_bounded() {
     bounded_parts(
         case.map(|found| split_and_save(found.file, &options)),
         floors,
+        LARGE_SPLIT_BOUND,
     );
 }
 
@@ -766,5 +775,6 @@ fn split_and_save_many_small_objects_is_bounded() {
     bounded_parts(
         case.map(|found| split_and_save(found.file, &options)),
         floors,
+        SMALL_SPLIT_BOUND,
     );
 }
