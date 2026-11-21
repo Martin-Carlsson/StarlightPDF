@@ -461,7 +461,7 @@ impl Part {
     }
 
     /// The attributes the page tree node `start`, a page's parent, and its ancestors give the
-    /// page (ISO 32000-2:2020, 7.7.3.4).
+    /// page; a node not a dictionary is malformed (ISO 32000-2:2020, 7.3.10, 7.7.3.4).
     fn ancestors(&self, objects: Objects<'_>, start: ObjectId) -> Result<Dictionary, PdfError> {
         let last = || {
             self.pages
@@ -477,19 +477,21 @@ impl Part {
             return Ok(found);
         }
         let mut found = Dictionary::new();
-        let mut node = start;
+        let mut node = Object::Reference(start);
         for _ in 0..=objects.depth_limit() {
-            let dictionary = self.source.resolve(objects, node)?;
+            let dictionary = self.source.direct(objects, node)?;
+            if !matches!(dictionary, Object::Dictionary(_)) {
+                return Err(objects.malformed());
+            }
             for key in INHERITED {
                 if !found.iter().any(|entry| entry.0 == key)
-                    && let Some(value) = dictionary
-                        .get(key)
-                        .filter(|value| !matches!(*value, Object::Null))
+                    && let Some(value) = dictionary.get(key)
+                    && self.present(objects, &value)?
                 {
                     found.push((key.to_vec(), value));
                 }
             }
-            let Some(Object::Reference(up)) = dictionary.take(b"Parent") else {
+            let Some(up @ Object::Reference(_)) = dictionary.take(b"Parent") else {
                 *last() = Some((start.number, found.clone()));
                 return Ok(found);
             };
@@ -722,11 +724,11 @@ impl Part {
                     return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
                 }
                 for kid in kids.into_iter().rev() {
-                    let id = target(&kid).ok_or_else(malformed)?;
-                    if !seen.insert(id.number) {
+                    let (child, reached) = source.ended(objects, kid)?;
+                    if !reached.is_some_and(|id| seen.insert(id.number)) {
                         return Err(malformed());
                     }
-                    stack.push((source.direct(objects, kid)?, depth.saturating_add(1)));
+                    stack.push((child, depth.saturating_add(1)));
                 }
                 continue;
             }
@@ -1026,7 +1028,7 @@ impl Part {
     /// `object`, page `at` of the part: its new parent, the attributes it inherited its own, its
     /// article beads left out (ISO 32000-2:2020, 7.7.3.3, 7.7.3.4, 12.4.3).
     fn page(&self, objects: Objects<'_>, object: Object, at: u32) -> Result<Object, PdfError> {
-        let mut entries = match object {
+        let all = match object {
             Object::Dictionary(entries) => entries,
             other @ (Object::Array(_)
             | Object::Boolean(_)
@@ -1038,14 +1040,18 @@ impl Part {
             | Object::Stream(..)
             | Object::String(_)) => return Ok(other),
         };
-        let parent = entries
+        let parent = all
             .iter()
             .find(|entry| entry.0 == b"Parent")
             .and_then(|entry| target(&entry.1));
-        entries.retain(|entry| {
-            !(matches!(entry.0.as_slice(), b"B" | b"Parent")
-                || INHERITED.contains(&entry.0.as_slice()) && matches!(entry.1, Object::Null))
-        });
+        let mut entries = Vec::with_capacity(all.len());
+        for entry in all {
+            if !(matches!(entry.0.as_slice(), b"B" | b"Parent")
+                || INHERITED.contains(&entry.0.as_slice()) && !self.present(objects, &entry.1)?)
+            {
+                entries.push(entry);
+            }
+        }
         if let Some(up) = parent
             && INHERITED
                 .iter()
@@ -1133,6 +1139,25 @@ impl Part {
         Ok(())
     }
 
+    /// Whether `value` is other than null, followed through references (ISO 32000-2:2020, 7.3.9).
+    fn present(&self, objects: Objects<'_>, value: &Object) -> Result<bool, PdfError> {
+        Ok(match *value {
+            Object::Null => false,
+            Object::Reference(id) => !matches!(
+                self.source.direct(objects, Object::Reference(id))?,
+                Object::Null
+            ),
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Real(_)
+            | Object::Stream(..)
+            | Object::String(_) => true,
+        })
+    }
+
     /// Object `number` of the document and its generation.
     fn raw(&self, objects: Objects<'_>, number: u32) -> Result<Option<(u16, Object)>, PdfError> {
         if let Some(found) = self.source.get(number)? {
@@ -1172,12 +1197,10 @@ impl Part {
             if depth > objects.depth_limit() {
                 return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
             }
-            if let Object::Reference(id) = held
-                && !seen.insert(id.number)
-            {
+            let (node, reached) = source.ended(objects, held)?;
+            if reached.is_some_and(|id| !seen.insert(id.number)) {
                 return Err(malformed());
             }
-            let node = source.direct(objects, held)?;
             let wanted = keys.get(range.clone()).unwrap_or_default();
             if let Object::Array(pairs) = source.entry(objects, &node, b"Names")? {
                 let mut items = pairs.into_iter();

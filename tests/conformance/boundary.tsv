@@ -65,6 +65,12 @@ boundary_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=1	index=1	b
 # 7.7.3.4: the last part of count=2 holds page 5 alone
 boundary_bytes	tests/corpus/split/pages.pdf	by=Pages	count=2	part=2	index=0	box=Crop	50 50 450 650
 boundary_file	tests/corpus/split/pages.pdf	by=Pages	count=2	part=2	index=0	box=Crop	50 50 450 650
+# 7.3.10, 7.7.3.4: a page's Parent a reference to a reference; its inherited boundaries kept
+boundary_bytes	tests/corpus/split/parent-behind-reference.pdf	by=Pages	count=1	part=0	index=0	box=Crop	10 10 180 280
+boundary_file	tests/corpus/split/parent-behind-reference.pdf	by=Pages	count=1	part=0	index=0	box=Crop	10 10 180 280
+# 7.3.9, 7.7.3.4: an inherited entry a reference to null is absent, so the ancestor's applies
+boundary_bytes	tests/corpus/split/inherited-behind-null.pdf	by=Pages	count=1	part=0	index=0	box=Media	0 0 200 300
+boundary_file	tests/corpus/split/inherited-behind-null.pdf	by=Pages	count=1	part=0	index=0	box=Media	0 0 200 300
 # 7.6: a part of an encrypted source, with allow_loss, is unencrypted
 boundary_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	allow_loss	part=0	index=0	box=Media	0 0 612 792
 boundary_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	allow_loss	part=0	index=0	box=Media	0 0 612 792

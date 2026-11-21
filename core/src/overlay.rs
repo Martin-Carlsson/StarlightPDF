@@ -217,14 +217,7 @@ impl Overlay {
     /// `value`, followed through references, also to references; a cycle or a chain longer
     /// than the depth limit is [`ErrorCode::LimitExceeded`] (ISO 32000-2:2020, 7.3.10).
     pub(crate) fn direct(&self, objects: Objects<'_>, value: Object) -> Result<Object, PdfError> {
-        let mut found = value;
-        for _ in 0..=objects.depth_limit() {
-            let Object::Reference(id) = found else {
-                return Ok(found);
-            };
-            found = self.resolve(objects, id)?;
-        }
-        Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+        self.ended(objects, value).map(|found| found.0)
     }
 
     /// The changed or added object `number` and its generation, not through the view.
@@ -235,6 +228,23 @@ impl Overlay {
     /// The state, locked.
     fn edits(&self) -> MutexGuard<'_, Edits> {
         self.edits.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// [`Self::direct`] and the id the chain ends at, `None` when `value` is direct.
+    pub(crate) fn ended(
+        &self,
+        objects: Objects<'_>,
+        value: Object,
+    ) -> Result<(Object, Option<ObjectId>), PdfError> {
+        let (mut found, mut last) = (value, None);
+        for _ in 0..=objects.depth_limit() {
+            let Object::Reference(id) = found else {
+                return Ok((found, last));
+            };
+            found = self.resolve(objects, id)?;
+            last = Some(id);
+        }
+        Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
     }
 
     /// The value of `key` of `object`, resolved; null when missing.

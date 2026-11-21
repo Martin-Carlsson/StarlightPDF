@@ -433,6 +433,20 @@ fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// After an edit, a page whose `Parent` is a reference to a reference keeps its inherited crop
+/// box and rotation (ISO 32000-2:2020, 7.3.10, 7.7.3.4).
+#[test]
+fn an_edited_page_inherits_through_a_parent_behind_a_reference() -> Result<(), Box<dyn Error>> {
+    let document = corpus("split/parent-behind-reference.pdf")?;
+    drop(document.insert_blank_page(&blank(200.0, 100.0, None))?);
+    let mut options = PageOptions::default();
+    options.index = 0;
+    same(
+        &[describe(&document.page(&options)?, Boundary::Crop)?],
+        &["10 10 180 280 90"],
+    )
+}
+
 /// A link's `GoTo` action to another part behind a reference to a reference, its `S` too, is
 /// refused as when direct (ISO 32000-2:2020, 7.3.10, 12.6.4.2).
 #[test]

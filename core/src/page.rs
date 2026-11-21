@@ -938,7 +938,8 @@ fn find_held(
 }
 
 /// The value of `key` in page `id`, or with `inherit` in the nearest ancestor that has it,
-/// through `overlay`; null is none (ISO 32000-2:2020, 7.7.3.4).
+/// through `overlay`; null is none, a node not a dictionary malformed (ISO 32000-2:2020, 7.3.10,
+/// 7.7.3.4).
 fn held(
     objects: Objects<'_>,
     overlay: &Overlay,
@@ -946,16 +947,18 @@ fn held(
     key: &[u8],
     inherit: bool,
 ) -> Result<Option<Object>, PdfError> {
-    let mut node = overlay.resolve(objects, id)?;
+    let mut node = Object::Reference(id);
     for _ in 0..=objects.depth_limit() {
+        node = overlay.direct(objects, node)?;
+        if !matches!(node, Object::Dictionary(_)) {
+            return Err(objects.malformed());
+        }
         let found = overlay.entry(objects, &node, key)?;
         if !matches!(found, Object::Null) {
             return Ok(Some(found));
         }
         match node.get(b"Parent") {
-            Some(Object::Reference(parent)) if inherit => {
-                node = overlay.resolve(objects, parent)?;
-            }
+            Some(parent @ Object::Reference(_)) if inherit => node = parent,
             Some(_) | None => return Ok(None),
         }
     }

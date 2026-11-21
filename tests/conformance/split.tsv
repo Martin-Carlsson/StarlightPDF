@@ -126,3 +126,9 @@ split_file	tests/corpus/split/labels-wide.pdf	by=Pages	count=1	1 1
 # 7.5.7, 7.7.3.2: a page tree root in an object stream whose Kids holds more references than the file has objects
 split_bytes	tests/corpus/split/packed-kids.pdf	by=Pages	count=1	Malformed
 split_file	tests/corpus/split/packed-kids.pdf	by=Pages	count=1	Malformed
+# 7.3.10, 7.9.7: a page labels leaf reached by two reference chains
+split_bytes	tests/corpus/split/labels-shared-leaf.pdf	by=Pages	count=3	Malformed
+split_file	tests/corpus/split/labels-shared-leaf.pdf	by=Pages	count=3	Malformed
+# 7.3.10, 7.9.6: a Dests name tree leaf reached by two reference chains
+split_bytes	tests/corpus/split/name-tree-shared-leaf.pdf	by=Pages	count=1	Malformed
+split_file	tests/corpus/split/name-tree-shared-leaf.pdf	by=Pages	count=1	Malformed
