@@ -1,0 +1,66 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.7.3: five pages; parts of count pages, the last holding the rest, one part when count exceeds them
+split_bytes	tests/corpus/split/pages.pdf	by=Pages	count=2	2 2 1
+split_file	tests/corpus/split/pages.pdf	by=Pages	count=2	2 2 1
+split_bytes	tests/corpus/split/pages.pdf	by=Pages	count=7	5
+split_file	tests/corpus/split/pages.pdf	by=Pages	count=7	5
+# 7.7.3: a part starts at each start and runs to the next; pages before the first are in no part
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=0,3	3 2
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=0,3	3 2
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,2,4	1 2 1
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,2,4	1 2 1
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=4	1
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=4	1
+# invalid counts and starts
+split_bytes	tests/corpus/split/pages.pdf	by=Pages	count=0	InvalidArgument
+split_file	tests/corpus/split/pages.pdf	by=Pages	count=0	InvalidArgument
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=	InvalidArgument
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=	InvalidArgument
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=3,1	InvalidArgument
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=3,1	InvalidArgument
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,1	InvalidArgument
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,1	InvalidArgument
+split_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=5	InvalidArgument
+split_file	tests/corpus/split/pages.pdf	by=Ranges	starts=5	InvalidArgument
+# 12.3.2.2, 12.6.4.2: links between pages 2 and 3, both in the one part, page 1 in none
+split_bytes	tests/corpus/split/links.pdf	by=Ranges	starts=1	2
+split_file	tests/corpus/split/links.pdf	by=Ranges	starts=1	2
+# 12.3.2.2: a link to a page in the same part is kept; to one in another part it would be lost
+split_bytes	tests/corpus/split/outside-link.pdf	by=Pages	count=2	2
+split_file	tests/corpus/split/outside-link.pdf	by=Pages	count=2	2
+split_bytes	tests/corpus/split/outside-link.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/outside-link.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/outside-link.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/outside-link.pdf	by=Pages	count=1	allow_loss	1 1
+# 7.6: a part would lose the encryption
+split_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	LossRefused
+split_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	allow_loss	1
+split_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	count=1	allow_loss	1
+# 12.7: form fields
+split_bytes	tests/corpus/split/form-fields.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/form-fields.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/form-fields.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/form-fields.pdf	by=Pages	count=1	allow_loss	1 1
+# 14.7: a structure tree
+split_bytes	tests/corpus/split/structure-tree.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/structure-tree.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/structure-tree.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/structure-tree.pdf	by=Pages	count=1	allow_loss	1 1
+# 12.3.3: bookmarks, even when one part holds every page
+split_bytes	tests/corpus/split/bookmarks.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/bookmarks.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/bookmarks.pdf	by=Pages	count=2	LossRefused
+split_file	tests/corpus/split/bookmarks.pdf	by=Pages	count=2	LossRefused
+split_bytes	tests/corpus/split/bookmarks.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/bookmarks.pdf	by=Pages	count=1	allow_loss	1 1
+# 7.11.4: attachments
+split_bytes	tests/corpus/split/attachments.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/attachments.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/attachments.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/attachments.pdf	by=Pages	count=1	allow_loss	1 1
+# 12.6.4.17: document-level JavaScript
+split_bytes	tests/corpus/split/scripts.pdf	by=Pages	count=1	LossRefused
+split_file	tests/corpus/split/scripts.pdf	by=Pages	count=1	LossRefused
+split_bytes	tests/corpus/split/scripts.pdf	by=Pages	count=1	allow_loss	1 1
+split_file	tests/corpus/split/scripts.pdf	by=Pages	count=1	allow_loss	1 1

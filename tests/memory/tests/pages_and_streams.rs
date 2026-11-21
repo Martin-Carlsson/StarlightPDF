@@ -1,5 +1,5 @@
-//! Peak allocation of a page's boundary and of a stream decoded to a sink, on the two virtual
-//! 1 GiB files of `.architecture-decisions/memory-is-bounded-by-work-not-file-size.md`.
+//! Peak allocation of a page's boundary, of a stream decoded to a sink and of a split whose parts
+//! are saved, on the two virtual 1 GiB files of `.architecture-decisions/memory-is-bounded-by-work-not-file-size.md`.
 
 extern crate alloc;
 
@@ -8,12 +8,13 @@ use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::io::{self, Cursor, Write as _};
 
-use starlightpdf::PdfError;
-use starlightpdf::document::{Document, OpenOptions, PageOptions};
+use starlightpdf::arrange::{SplitBy, SplitOptions};
+use starlightpdf::document::{Document, OpenOptions, PageOptions, SaveOptions};
 use starlightpdf::input::{ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::objects::{ObjectId, StreamDataOptions};
 use starlightpdf::output::{Append, AppendSinkOptions, Sink};
 use starlightpdf::page::BoundaryOptions;
+use starlightpdf::{ErrorCode, PdfError};
 use starlightpdf_memory::{adler_run, adler_value, peak, stored_lengths};
 
 /// Most bytes opening and reading a page's boundary may hold allocated at once.
@@ -21,6 +22,14 @@ const BOUNDARY_BOUND: usize = 2_048;
 
 /// Most bytes opening and decoding a stream to a sink may hold allocated at once.
 const STREAM_BOUND: usize = 49_152;
+
+/// Most bytes opening, splitting and saving each part to a sink may hold allocated at once; 1
+/// until the first measurement replaces it.
+const SPLIT_BOUND: usize = 1;
+
+/// The shortest page object a saved part can hold: a page needs its type, its parent and here its
+/// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
+const PAGE_OBJECT: &[u8] = b"1 0 obj<</Type/Page/Parent 1 0 R/Contents 1 0 R>>endobj";
 
 /// Bytes of each virtual file.
 const SIZE: u64 = 1 << 30;
@@ -435,6 +444,26 @@ fn bounded(top: Option<usize>, bound: usize) {
     assert!((1..=bound).contains(&bytes), "peak {bytes} bytes");
 }
 
+/// Asserts that `measured` saved one part per floor, each of at least its floor's bytes, holding
+/// at most [`SPLIT_BOUND`] bytes allocated.
+fn bounded_parts(measured: Option<(Result<Vec<u64>, ErrorCode>, usize)>, floors: Option<Vec<u64>>) {
+    let (saved, top) = measured.unzip();
+    assert_eq!(
+        saved.as_ref().map(|result| result.as_ref().map(Vec::len)),
+        floors.as_ref().map(|found| Ok(found.len())),
+        "parts"
+    );
+    for (bytes, floor) in saved
+        .and_then(Result::ok)
+        .unwrap_or_default()
+        .into_iter()
+        .zip(floors.unwrap_or_default())
+    {
+        assert!(bytes >= floor, "a part of {bytes} bytes, under {floor}");
+    }
+    bounded(top, SPLIT_BOUND);
+}
+
 /// The two files: (a) a few large streams, (b) millions of small objects.
 fn cases() -> [Option<Case>; 2] {
     [
@@ -600,6 +629,28 @@ fn overflow() -> io::Error {
     io::Error::other("offset overflow")
 }
 
+/// Opens `file`, splits it by `options` and saves each part to a sink of its own; the bytes each
+/// part saved and the most bytes held allocated at once.
+fn split_and_save(file: Virtual, options: &SplitOptions) -> (Result<Vec<u64>, ErrorCode>, usize) {
+    let read_at: Arc<dyn ReadAt> = Arc::new(file);
+    let (result, top) = peak(|| -> Result<Vec<u64>, PdfError> {
+        let parts = open(&read_at)?.split(options)?;
+        let mut saved = Vec::new();
+        while let Some(part) = parts.next()? {
+            let counted = Arc::new(Counted {
+                bytes: AtomicU64::new(0),
+                only_zeros: AtomicBool::new(true),
+            });
+            let append: Arc<dyn Append> = Arc::<Counted>::clone(&counted);
+            let sink = Sink::from_append(&append, &AppendSinkOptions::default())?;
+            drop(part.save(&sink, None, &SaveOptions::default())?);
+            saved.push(counted.bytes.load(Ordering::Relaxed));
+        }
+        Ok(saved)
+    });
+    (result.map_err(|error| error.code()), top)
+}
+
 /// Writes up to `available` zeros into the start of `out`.
 fn zeros(out: &mut [u8], available: u64) -> Option<usize> {
     let count = usize::try_from(available).map_or(out.len(), |limit| limit.min(out.len()));
@@ -666,4 +717,54 @@ fn stream_data_is_bounded() {
         assert!(counted.only_zeros.load(Ordering::Relaxed), "decoded data");
         bounded(measured.map(|(_, _, bytes)| bytes), STREAM_BOUND);
     }
+}
+
+/// The file of a few large streams split into its one page and saved keeps every stream's stored
+/// bytes (ISO 32000-2:2020, 7.3.8.1).
+#[test]
+fn split_and_save_few_large_streams_is_bounded() {
+    let case = fit(&few_large_streams, 1 << 28);
+    let floors = case.as_ref().and_then(|found| {
+        [LARGE, LARGE, LARGE, found.decoded]
+            .into_iter()
+            .try_fold(0_u64, |sum, decoded| {
+                sum.checked_add(Flate { decoded }.length()?)
+            })
+            .map(|streams| vec![streams])
+    });
+    let mut options = SplitOptions::default();
+    options.by = SplitBy::Pages;
+    options.count = 1;
+    bounded_parts(
+        case.map(|found| split_and_save(found.file, &options)),
+        floors,
+    );
+}
+
+/// The file of millions of small objects split in two halves and saved gives each part its pages
+/// and the stream that is their contents (ISO 32000-2:2020, 7.3.8.1, 7.7.3.3).
+#[test]
+fn split_and_save_many_small_objects_is_bounded() {
+    let case = fit(&many_small_objects, 1 << 26);
+    let half = LEAVES.checked_div(2);
+    let floors = case.as_ref().and_then(|found| {
+        let stream = Flate {
+            decoded: found.decoded,
+        }
+        .length()?;
+        let page = u64::try_from(PAGE_OBJECT.len()).ok()?;
+        [half?, LEAVES.checked_sub(half?)?]
+            .into_iter()
+            .map(|pages| pages.checked_mul(page)?.checked_add(stream))
+            .collect()
+    });
+    let mut options = SplitOptions::default();
+    options.by = SplitBy::Ranges;
+    options.starts = half
+        .and_then(|start| u32::try_from(start).ok())
+        .map_or_else(Vec::new, |start| vec![0, start]);
+    bounded_parts(
+        case.map(|found| split_and_save(found.file, &options)),
+        floors,
+    );
 }

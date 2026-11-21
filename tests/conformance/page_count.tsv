@@ -524,3 +524,22 @@ page_count_bytes	tests/corpus/repair/trailer-long-keyword.pdf	1
 page_count_file	tests/corpus/repair/trailer-long-keyword.pdf	1
 page_count_bytes	tests/corpus/repair/trailer-long-keyword.pdf	strict	Malformed
 page_count_file	tests/corpus/repair/trailer-long-keyword.pdf	strict	Malformed
+# ISO 32000-2:2020, 7.5 (file structure): a saved and reopened file has the source's pages, whatever its cross-reference
+#   form: a table, 7.5.4; nested page tree nodes, 7.7.3.2; an incremental update, 7.5.6; a hybrid file, 7.5.8.4;
+#   an object stream, 7.5.7; a cross-reference stream, 7.5.8; a repaired file; an encrypted one with object streams saved decrypted, 7.6
+page_count_bytes	tests/corpus/page-count/one-page.pdf	saved	1
+page_count_file	tests/corpus/page-count/one-page.pdf	saved	1
+page_count_bytes	tests/corpus/page-count/nested-tree.pdf	saved	3
+page_count_file	tests/corpus/page-count/nested-tree.pdf	saved	3
+page_count_bytes	tests/corpus/page-count/incremental-update.pdf	saved	2
+page_count_file	tests/corpus/page-count/incremental-update.pdf	saved	2
+page_count_bytes	tests/corpus/page-count/hybrid.pdf	saved	2
+page_count_file	tests/corpus/page-count/hybrid.pdf	saved	2
+page_count_bytes	tests/corpus/page-count/object-stream-one.pdf	saved	2
+page_count_file	tests/corpus/page-count/object-stream-one.pdf	saved	2
+page_count_bytes	tests/corpus/page-count/xref-stream.pdf	saved	1
+page_count_file	tests/corpus/page-count/xref-stream.pdf	saved	1
+page_count_bytes	tests/corpus/repair/xref-missing.pdf	saved	1
+page_count_file	tests/corpus/repair/xref-missing.pdf	saved	1
+page_count_bytes	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	saved	cipher=Unencrypted	1
+page_count_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	saved	cipher=Unencrypted	1

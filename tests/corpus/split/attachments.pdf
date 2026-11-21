@@ -1,0 +1,48 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 6 0 R >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 17 >>
+stream
+0 0 m 100 100 l S
+endstream
+endobj
+6 0 obj
+<< /Names [(note.txt) 7 0 R] >>
+endobj
+7 0 obj
+<< /Type /Filespec /F (note.txt) /UF (note.txt) /EF << /F 8 0 R >> >>
+endobj
+8 0 obj
+<< /Type /EmbeddedFile /Subtype /text#2Fplain /Length 8 >>
+stream
+attached
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000098 00000 n 
+0000000185 00000 n 
+0000000248 00000 n 
+0000000311 00000 n 
+0000000378 00000 n 
+0000000425 00000 n 
+0000000510 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+610
+%%EOF
