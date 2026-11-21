@@ -1,21 +1,23 @@
 //! A document's shared state, and its objects read through it (ISO 32000-2:2020, 7.3.8, 7.3.10
 //! and 7.5).
 
+use alloc::sync::Arc;
 use std::sync::{Mutex, PoisonError, RwLock};
 
 use crate::compliance::Deviation;
 use crate::decryption::{self, Handler};
-use crate::input::Source;
+use crate::input::{BytesSourceOptions, Source};
 use crate::limits::ResourcePolicy;
 use crate::object_stream;
 use crate::objects::{ObjectId, XrefEntry, XrefKind};
+use crate::overlay::{Data, Object};
 use crate::pull::Pull;
 use crate::repair;
 use crate::security::{Cipher, Encryption};
 use crate::stream::{Feeder, decoder};
 use crate::syntax::{At, Input, Keyword, Located, Reader, Token, Value};
 use crate::xref;
-use crate::{ErrorCode, PdfError, parse_header};
+use crate::{ErrorCode, PdfError, Version, parse_header};
 
 /// The keyword after a stream's data (ISO 32000-2:2020, 7.3.8.1).
 const ENDSTREAM: &[u8] = b"endstream";
@@ -120,6 +122,8 @@ pub(crate) struct Store {
     strict: bool,
     /// The newest trailer dictionary, when found.
     trailer: Option<At>,
+    /// The header's version.
+    version: Version,
     /// Warnings kept.
     warning_limit: u32,
     /// The deviations tolerated.
@@ -583,6 +587,66 @@ impl<'store> Objects<'store> {
         self.operation
     }
 
+    /// Object `id` read into memory, its strings decrypted, a stream's data left in the source;
+    /// null when free or missing (ISO 32000-2:2020, 7.3.10, 7.6.2).
+    pub(crate) fn owned(self, id: ObjectId) -> Result<Object, PdfError> {
+        let depth = self.depth_limit();
+        if let Some(mut reader) = self.located(id)? {
+            let handler = self.strings(&mut reader, id)?;
+            let mut strings = |bytes: Vec<u8>| match handler {
+                Some(found) => found.string(id, &bytes, self.operation),
+                None => Ok(bytes),
+            };
+            reader.set_keep(true);
+            let token = reader.item()?;
+            let object = self.read(&mut reader, token, depth, &mut strings)?;
+            return Ok(match object {
+                Object::Dictionary(entries)
+                    if reader.next_token()? == Some(Token::Keyword(Keyword::Stream)) =>
+                {
+                    Object::Stream(
+                        entries
+                            .into_iter()
+                            .filter(|entry| entry.0 != b"Length")
+                            .collect(),
+                        Data::Stored(id),
+                    )
+                }
+                other @ (Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_)) => other,
+            });
+        }
+        match self.entry(id.number)? {
+            Some(entry) if entry.kind == XrefKind::Compressed && id.generation == 0 => {
+                let mut reader = self.packed(entry, id.number)?;
+                reader.set_keep(true);
+                let token = reader.item()?;
+                self.read(&mut reader, token, depth, &mut Ok)
+            }
+            Some(_) | None => Ok(Object::Null),
+        }
+    }
+
+    /// The trailer dictionary read into memory; an empty one without a source (ISO 32000-2:2020,
+    /// 7.5.5).
+    pub(crate) fn owned_trailer(self) -> Result<Object, PdfError> {
+        let Some(at) = self.store.trailer else {
+            return Ok(Object::Dictionary(Vec::new()));
+        };
+        let mut reader = self.reader(at)?;
+        reader.set_keep(true);
+        let token = reader.item()?;
+        self.read(&mut reader, token, self.depth_limit(), &mut Ok)
+    }
+
     /// A reader at object `number` in the object stream `entry` names, at the entry's index
     /// (ISO 32000-2:2020, 7.5.7).
     fn packed(self, entry: XrefEntry, number: u32) -> Result<Reader<Feeder<'store>>, PdfError> {
@@ -590,6 +654,81 @@ impl<'store> Objects<'store> {
         let mut reader = object_stream::member(self, data, dictionary, number, entry.index)?;
         reader.set_place(Some(entry.stream));
         Ok(reader)
+    }
+
+    /// The object that starts with `token`, read into memory, nesting at most `depth` deep, its
+    /// strings through `strings`; a dictionary keeps a repeated key's last value
+    /// (ISO 32000-2:2020, 7.3).
+    fn read<I>(
+        self,
+        reader: &mut Reader<I>,
+        token: Token,
+        depth: u32,
+        strings: &mut dyn FnMut(Vec<u8>) -> Result<Vec<u8>, PdfError>,
+    ) -> Result<Object, PdfError>
+    where
+        I: Input,
+    {
+        let inner = || {
+            depth
+                .checked_sub(1)
+                .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, self.operation))
+        };
+        Ok(match token {
+            Token::ArrayStart => {
+                let below = inner()?;
+                let mut items = Vec::new();
+                loop {
+                    let item = reader.item()?;
+                    if item == Token::ArrayEnd {
+                        break Object::Array(items);
+                    }
+                    items.push(self.read(reader, item, below, strings)?);
+                }
+            }
+            Token::DictionaryStart => {
+                let below = inner()?;
+                let mut entries: Vec<(Vec<u8>, Object)> = Vec::new();
+                loop {
+                    match reader.item()? {
+                        Token::DictionaryEnd => break Object::Dictionary(entries),
+                        Token::Name(key) => {
+                            let item = reader.item()?;
+                            let value = self.read(reader, item, below, strings)?;
+                            entries.retain(|entry| entry.0 != key);
+                            entries.push((key, value));
+                        }
+                        Token::ArrayEnd
+                        | Token::ArrayStart
+                        | Token::DictionaryStart
+                        | Token::Integer(_)
+                        | Token::Keyword(_)
+                        | Token::Real(_)
+                        | Token::Reference(_)
+                        | Token::String(_) => return Err(self.malformed()),
+                    }
+                }
+            }
+            Token::Integer(value) => Object::Integer(value),
+            Token::Keyword(Keyword::False) => Object::Boolean(false),
+            Token::Keyword(Keyword::Null) => Object::Null,
+            Token::Keyword(Keyword::True) => Object::Boolean(true),
+            Token::Name(name) => Object::Name(name),
+            Token::Real(value) => Object::Real(value),
+            Token::Reference(id) => Object::Reference(id),
+            Token::String(bytes) => Object::String(strings(bytes)?),
+            Token::ArrayEnd
+            | Token::DictionaryEnd
+            | Token::Keyword(
+                Keyword::EndObj
+                | Keyword::EndStream
+                | Keyword::Obj
+                | Keyword::Other
+                | Keyword::Reference
+                | Keyword::Stream
+                | Keyword::Trailer,
+            ) => return Err(self.malformed()),
+        })
     }
 
     /// A reader at `at`.
@@ -664,6 +803,28 @@ impl<'store> Objects<'store> {
         self.store.security.as_ref()
     }
 
+    /// One more than the highest object number the cross-reference data declares or holds
+    /// (ISO 32000-2:2020, 7.5.5).
+    pub(crate) fn size(self) -> Result<u32, PdfError> {
+        let declared = match self.store.trailer {
+            Some(at) => self
+                .get(at, b"Size")?
+                .and_then(|size| size.integer())
+                .and_then(|size| u32::try_from(size).ok())
+                .unwrap_or_default(),
+            None => 0,
+        };
+        let held = self
+            .store
+            .rebuilt
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|entries| entries.last())
+            .map_or(0, |entry| entry.number.saturating_add(1));
+        Ok(declared.max(held))
+    }
+
     /// The source.
     pub(crate) const fn source(self) -> &'store Source {
         &self.store.source
@@ -707,6 +868,11 @@ impl<'store> Objects<'store> {
     /// The newest trailer dictionary; none is [`ErrorCode::Malformed`].
     pub(crate) fn trailer(self) -> Result<At, PdfError> {
         self.store.trailer.ok_or_else(|| self.malformed())
+    }
+
+    /// The header's version (ISO 32000-2:2020, 7.5.2).
+    pub(crate) const fn version(self) -> Version {
+        self.store.version
     }
 
     /// `entries`, sorted by number, with the objects of those object streams `streams` that
@@ -765,6 +931,34 @@ impl Store {
         }
     }
 
+    /// The state of a document with no source, of `version`, with `policy`'s limits.
+    pub(crate) fn create(
+        policy: Option<&ResourcePolicy>,
+        version: Version,
+    ) -> Result<Self, PdfError> {
+        let limits = policy.map_or_else(ResourcePolicy::defaults, Clone::clone);
+        Ok(Self {
+            decoded_limit: limits.decoded_limit(),
+            depth_limit: limits.depth_limit(),
+            dictionary: Mutex::default(),
+            endstream: Mutex::default(),
+            newest: 0,
+            object_limit: limits.object_limit(),
+            rebuilt: RwLock::new(Some(Vec::new())),
+            recent: Mutex::default(),
+            repairing: Mutex::default(),
+            security: None,
+            source: Source::from_bytes(&BytesSourceOptions {
+                bytes: Arc::new(Vec::new()),
+            })?,
+            strict: false,
+            trailer: None,
+            version,
+            warning_limit: limits.warning_limit(),
+            warnings: Mutex::default(),
+        })
+    }
+
     /// How many warnings the limit kept out.
     pub(crate) fn dropped_warnings(&self) -> u64 {
         self.warnings
@@ -785,28 +979,27 @@ impl Store {
         )
     }
 
-    /// Checks the header, tolerating bytes before it (ISO 32000-2:2020, 7.5.2).
-    fn header(&self) -> Result<(), PdfError> {
+    /// The header's version, tolerating bytes before it (ISO 32000-2:2020, 7.5.2).
+    fn header(&self) -> Result<Version, PdfError> {
         let mut bytes = [0; HEADER_SEARCH];
         let count = self.source.read(0, &mut bytes, OPEN)?;
         let read = bytes.get(..count).unwrap_or_default();
-        if parse_header(read, OPEN).is_ok() {
-            return Ok(());
+        if let Ok(version) = parse_header(read, OPEN) {
+            return Ok(version);
         }
-        let found = (1..count).find(|&start| {
+        let found = (1..count).find_map(|start| {
             read.get(start..)
-                .is_some_and(|rest| parse_header(rest, OPEN).is_ok())
+                .and_then(|rest| parse_header(rest, OPEN).ok())
+                .map(|version| (start, version))
         });
-        found.map_or_else(
-            || Err(PdfError::new(ErrorCode::InvalidHeader, OPEN)),
-            |start| {
-                self.objects(OPEN).deviation(
-                    "7.5.2",
-                    "bytes before the header",
-                    u64::try_from(start).ok(),
-                )
-            },
-        )
+        let (start, version) =
+            found.ok_or_else(|| PdfError::new(ErrorCode::InvalidHeader, OPEN))?;
+        self.objects(OPEN).deviation(
+            "7.5.2",
+            "bytes before the header",
+            u64::try_from(start).ok(),
+        )?;
+        Ok(version)
     }
 
     /// Whether the entries were rebuilt.
@@ -849,10 +1042,11 @@ impl Store {
             source: source.clone(),
             strict,
             trailer: None,
+            version: Version::default(),
             warning_limit: limits.warning_limit(),
             warnings: Mutex::default(),
         };
-        store.header()?;
+        store.version = store.header()?;
         let counted = store
             .sections(password)
             .and_then(|declared| store.count(declared).map_err(|error| (false, error)));

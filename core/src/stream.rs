@@ -29,6 +29,9 @@ pub(crate) struct Feeder<'data> {
     end: u64,
 }
 
+/// A stream's stored bytes and, when known, their count.
+pub(crate) type Stored<'data> = (Box<dyn Pull + 'data>, Option<u64>);
+
 /// Which indirect references a stream's `Filter` and `DecodeParms` may hold.
 #[derive(Clone, Copy)]
 enum Indirect {
@@ -384,6 +387,31 @@ fn stored<'store>(
         None
     };
     handler.stream(store, object, dictionary, crypt.as_deref(), raw)
+}
+
+/// The stored bytes of stream `id`, decrypted, and their count when known without reading them:
+/// when not decrypted; `None` when `id` is not a stream (ISO 32000-2:2020, 7.3.8, 7.6).
+pub(crate) fn stored_data(
+    store: Objects<'_>,
+    id: ObjectId,
+) -> Result<Option<Stored<'_>>, PdfError> {
+    let Some(mut reader) = store.located(id)? else {
+        return Ok(None);
+    };
+    let Some(dictionary) = reader.value(store.depth_limit())?.dictionary() else {
+        return Ok(None);
+    };
+    let after = reader.position();
+    if reader.next_token()? != Some(Token::Keyword(Keyword::Stream)) {
+        return Ok(None);
+    }
+    reader.seek(after);
+    let (start, length) = store.extent(&mut reader, dictionary, true)?;
+    let known = store.security().is_none().then_some(length);
+    Ok(Some((
+        stored(store, Some(id), start, length, dictionary, Indirect::Any)?,
+        known,
+    )))
 }
 
 /// Writes the data of stream `id` to `sink`, decoded when `decode`; a missing object or one that

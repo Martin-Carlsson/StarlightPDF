@@ -159,6 +159,7 @@ pub mod navigation;
 mod object_stream;
 pub mod objects;
 pub mod output;
+mod overlay;
 pub mod page;
 mod predictor;
 pub mod progress;
@@ -172,6 +173,7 @@ pub mod signatures;
 mod store;
 mod stream;
 mod syntax;
+mod writer;
 mod xref;
 mod xref_stream;
 

@@ -23,7 +23,9 @@ use crate::forms::{ExportDataOptions, Fields, ImportDataOptions, SetXfaOptions, 
 use crate::input::Source;
 use crate::layers::{AddLayerOptions, Layer, Layers};
 use crate::limits::ResourcePolicy;
-use crate::metadata::{InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions};
+use crate::metadata::{
+    InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions, iso_date, pdf_date, text, text_string,
+};
 use crate::navigation::{
     AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, DeleteLabelRangeOptions,
     Destinations, LabelRanges, Scripts, SetDestinationOptions, SetLabelRangeOptions,
@@ -34,6 +36,7 @@ use crate::objects::{
     StreamDataOptions, XrefEntries,
 };
 use crate::output::Sink;
+use crate::overlay::{Dictionary, Object, Overlay};
 use crate::page::{self, Page};
 use crate::progress::Progress;
 use crate::rendering::{ColorSpace, PrintOptions};
@@ -42,10 +45,27 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
-use crate::store::Store;
+use crate::store::{Objects, Store};
 use crate::stream;
 use crate::syntax::Value;
+use crate::writer::{self, Rewrite};
 use crate::{ErrorCode, PdfError, Version};
+
+/// A4, 210 × 297 mm, in points to 4 decimals (ISO 216; ISO 32000-2:2020, 8.3.2.3).
+const A4: [f64; 2] = [595.2756, 841.8898];
+
+/// The information dictionary's keys, as [`InfoDictionary`]'s fields are ordered, and whether
+/// each holds a date (ISO 32000-2:2020, 14.3.3).
+const INFO_KEYS: [(&[u8], bool); 8] = [
+    (b"Author", false),
+    (b"CreationDate", true),
+    (b"Creator", false),
+    (b"Keywords", false),
+    (b"ModDate", true),
+    (b"Producer", false),
+    (b"Subject", false),
+    (b"Title", false),
+];
 
 /// Options for [`Document::close`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -87,6 +107,8 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// The changes.
+    overlay: Arc<Overlay>,
     /// The shared state.
     store: Arc<Store>,
 }
@@ -536,9 +558,27 @@ impl Document {
         policy: Option<&ResourcePolicy>,
         options: &CreateOptions,
     ) -> Result<Self, PdfError> {
-        let _: Option<&ResourcePolicy> = policy;
-        let _: &CreateOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::create"))
+        /// The operation.
+        const CREATE: &str = "Document::create";
+        let version = options.version.unwrap_or(Version { major: 2, minor: 0 });
+        if !matches!((version.major, version.minor), (1, 0..=7) | (2, 0)) {
+            return Err(PdfError::new(ErrorCode::InvalidArgument, CREATE));
+        }
+        let overlay = Overlay::new(1);
+        let pages = overlay.add(Object::Dictionary(vec![
+            (b"Type".to_vec(), Object::Name(b"Pages".to_vec())),
+            (b"Kids".to_vec(), Object::Array(Vec::new())),
+            (b"Count".to_vec(), Object::Integer(0)),
+        ]))?;
+        let catalog = overlay.add(Object::Dictionary(vec![
+            (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
+            (b"Pages".to_vec(), Object::Reference(pages)),
+        ]))?;
+        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
+        Ok(Self {
+            overlay: Arc::new(overlay),
+            store: Arc::new(Store::create(policy, version)?),
+        })
     }
 
     /// Removes the label range that begins at `start`; its pages join the range before.
@@ -732,33 +772,140 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::impose"))
     }
 
-    /// The document information dictionary (ISO 32000-2:2020, 14.3.3).
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::info_dictionary",
-        ))
+    /// The trailer, the information dictionary's id when indirect, and the dictionary, empty
+    /// when there is none (ISO 32000-2:2020, 14.3.3).
+    fn info(
+        &self,
+        objects: Objects<'_>,
+    ) -> Result<(Dictionary, Option<ObjectId>, Object), PdfError> {
+        let trailer = self.overlay.trailer(objects)?;
+        let entry = Object::Dictionary(trailer.clone())
+            .take(b"Info")
+            .unwrap_or(Object::Null);
+        let id = if let Object::Reference(found) = entry {
+            Some(found)
+        } else {
+            None
+        };
+        let info = match self.overlay.direct(objects, entry)? {
+            found @ Object::Dictionary(_) => found,
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => Object::Dictionary(Vec::new()),
+        };
+        Ok((trailer, id, info))
     }
 
-    /// Inserts a blank page.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The document information dictionary: text strings as text, dates as ISO 8601, a date that
+    /// is not one empty (ISO 32000-2:2020, 7.9.2.2, 7.9.4, 14.3.3).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
+        let objects = self.store.objects("Document::info_dictionary");
+        let info = self.info(objects)?.2;
+        let mut values = Vec::new();
+        for (key, date) in INFO_KEYS {
+            values.push(match self.overlay.entry(objects, &info, key)? {
+                Object::String(bytes) if date => iso_date(&text(&bytes)).unwrap_or_default(),
+                Object::String(bytes) => text(&bytes),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..) => String::new(),
+            });
+        }
+        let mut fields = values.into_iter();
+        let mut next = || fields.next().unwrap_or_default();
+        Ok(InfoDictionary {
+            author: next(),
+            created: next(),
+            creator: next(),
+            keywords: next(),
+            modified: next(),
+            producer: next(),
+            subject: next(),
+            title: next(),
+        })
+    }
+
+    /// Inserts a blank page of `width` × `height` points, A4 for one not given, before the page at
+    /// `index` or after the last (ISO 32000-2:2020, 7.7.3).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn insert_blank_page(&self, options: &InsertBlankPageOptions) -> Result<Page, PdfError> {
-        let _: &InsertBlankPageOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::insert_blank_page",
-        ))
+        /// The operation.
+        const INSERT: &str = "Document::insert_blank_page";
+        let invalid = || PdfError::new(ErrorCode::InvalidArgument, INSERT);
+        let [width, height] = [(options.width, A4[0]), (options.height, A4[1])]
+            .map(|(given, default)| given.unwrap_or(default));
+        if ![width, height]
+            .iter()
+            .all(|side| side.is_finite() && *side > 0.0_f64)
+        {
+            return Err(invalid());
+        }
+        let objects = self.store.objects(INSERT);
+        let overlay = &*self.overlay;
+        let trailer = Object::Dictionary(overlay.trailer(objects)?);
+        let Some(Object::Reference(root)) = trailer.take(b"Root") else {
+            return Err(objects.malformed());
+        };
+        let Some(Object::Reference(top)) = overlay.resolve(objects, root)?.take(b"Pages") else {
+            return Err(objects.malformed());
+        };
+        let node = overlay.resolve(objects, top)?;
+        let pages = count(objects, overlay, &node)?;
+        let index = options.index.map_or(pages, u64::from);
+        if index > pages {
+            return Err(invalid());
+        }
+        let (mut path, position) = place(objects, overlay, (top, node), index)?;
+        let parent = path.last().ok_or_else(|| objects.malformed())?.0;
+        let page = overlay.add(Object::Dictionary(vec![
+            (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
+            (b"Parent".to_vec(), Object::Reference(parent)),
+            (b"Resources".to_vec(), Object::Dictionary(Vec::new())),
+            (
+                b"MediaBox".to_vec(),
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Real(width),
+                    Object::Real(height),
+                ]),
+            ),
+        ]))?;
+        if let Some(last) = path.last_mut() {
+            let Object::Array(mut kids) = overlay.entry(objects, &last.1, b"Kids")? else {
+                return Err(objects.malformed());
+            };
+            kids.insert(position.min(kids.len()), Object::Reference(page));
+            last.1.set(b"Kids", Some(Object::Array(kids)));
+        }
+        for (id, mut changed) in path {
+            let total = count(objects, overlay, &changed)?
+                .checked_add(1)
+                .and_then(|total| i64::try_from(total).ok())
+                .ok_or_else(|| objects.malformed())?;
+            changed.set(b"Count", Some(Object::Integer(total)));
+            overlay.set(id, changed);
+        }
+        Ok(Page::new(page, &self.store))
     }
 
     /// Inserts pages of `from`, which may be this document.
@@ -859,7 +1006,10 @@ impl Document {
         if source.forward_only() {
             return Err(PdfError::new(ErrorCode::NotSeekable, "Document::open"));
         }
-        Store::open(source, policy, options.strict, &options.password).map(|store| Self {
+        let store = Store::open(source, policy, options.strict, &options.password)?;
+        let next = store.objects("Document::open").size()?;
+        Ok(Self {
+            overlay: Arc::new(Overlay::new(next)),
             store: Arc::new(store),
         })
     }
@@ -1016,11 +1166,13 @@ impl Document {
         ))
     }
 
-    /// Writes the document; the session stays open.
+    /// Writes the document; the session stays open. [`SaveMode::Rewrite`] writes only the objects
+    /// reachable from the trailer, renumbered, unchanged streams byte for byte, with a file
+    /// identifier from the content (ISO 32000-2:2020, 7.5, 14.4); an encrypted source is written
+    /// decrypted with [`Cipher::Unencrypted`]. Other modes and options not at their defaults fail
+    /// with [`ErrorCode::NotImplemented`], no pages with [`ErrorCode::InvalidArgument`].
     ///
     /// A failed save to a file leaves the previous file intact.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
     ///
     /// # Errors
     ///
@@ -1031,10 +1183,46 @@ impl Document {
         progress: Option<&dyn Progress>,
         options: &SaveOptions,
     ) -> Result<SaveReport, PdfError> {
-        let _: &Sink = sink;
-        let _: Option<&dyn Progress> = progress;
-        let _: &SaveOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::save"))
+        /// The operation.
+        const SAVE: &str = "Document::save";
+        let objects = self.store.objects(SAVE);
+        let encrypted = objects.security().is_some();
+        let defaults = !options.allow_loss
+            && options.color_space.is_none()
+            && options.image_quality.is_none()
+            && options.image_resolution.is_none()
+            && options.mode == SaveMode::Rewrite
+            && options.optimizations.is_empty()
+            && options.owner_password.is_empty()
+            && options.recipients.is_empty()
+            && options.restrictions.is_empty()
+            && options.standards.is_empty()
+            && options.user_password.is_empty()
+            && options.version.is_none()
+            && options
+                .cipher
+                .map_or(!encrypted, |cipher| cipher == Cipher::Unencrypted);
+        let result = if defaults {
+            self.version().and_then(|version| {
+                writer::rewrite(
+                    &Rewrite {
+                        break_signatures: options.break_signatures,
+                        objects,
+                        overlay: &self.overlay,
+                        progress,
+                        version,
+                    },
+                    sink,
+                )
+            })
+        } else {
+            Err(PdfError::new(ErrorCode::NotImplemented, SAVE))
+        };
+        let (broken_signatures, length) = sink.finish(result, SAVE)?;
+        Ok(SaveReport {
+            broken_signatures,
+            length,
+        })
     }
 
     /// The document-level JavaScript; never run.
@@ -1101,11 +1289,50 @@ impl Document {
     ///
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_info_dictionary(&self, options: &SetInfoDictionaryOptions) -> Result<(), PdfError> {
-        let _: &SetInfoDictionaryOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::set_info_dictionary",
-        ))
+        /// The operation.
+        const SET: &str = "Document::set_info_dictionary";
+        let given = [
+            &options.author,
+            &options.created,
+            &options.creator,
+            &options.keywords,
+            &options.modified,
+            &options.producer,
+            &options.subject,
+            &options.title,
+        ];
+        let mut changes = Vec::new();
+        for (&(key, date), value) in INFO_KEYS.iter().zip(given) {
+            let Some(found) = value.as_deref() else {
+                continue;
+            };
+            let bytes = match (found.is_empty(), date) {
+                (true, _) => None,
+                (false, true) => Some(
+                    pdf_date(found)
+                        .ok_or_else(|| PdfError::new(ErrorCode::InvalidArgument, SET))?
+                        .into_bytes(),
+                ),
+                (false, false) => Some(text_string(found)),
+            };
+            changes.push((key, bytes.map(Object::String)));
+        }
+        let objects = self.store.objects(SET);
+        let (mut trailer, id, mut info) = self.info(objects)?;
+        for (key, value) in changes {
+            info.set(key, value);
+        }
+        match id {
+            Some(found) => self.overlay.set(found, info),
+            None if matches!(&info, Object::Dictionary(entries) if entries.is_empty()) => {}
+            None => {
+                let added = self.overlay.add(info)?;
+                trailer.retain(|entry| entry.0 != b"Info");
+                trailer.push((b"Info".to_vec(), Object::Reference(added)));
+                self.overlay.set_trailer(trailer);
+            }
+        }
+        Ok(())
     }
 
     /// Labels pages from `start` up to the next label range.
@@ -1311,11 +1538,16 @@ impl Document {
     ///
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), PdfError> {
-        stream::write(
-            self.store.objects("Document::stream_data"),
-            options.id,
-            options.decode,
-            sink,
+        /// The operation.
+        const STREAM_DATA: &str = "Document::stream_data";
+        sink.finish(
+            stream::write(
+                self.store.objects(STREAM_DATA),
+                options.id,
+                options.decode,
+                sink,
+            ),
+            STREAM_DATA,
         )
     }
 
@@ -1365,18 +1597,41 @@ impl Document {
         ))
     }
 
-    /// The effective version: the header's, or the catalog's when later.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The effective version: the header's, or the catalog's `Version` when later
+    /// (ISO 32000-2:2020, 7.5.2, 7.7.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn version(&self) -> Result<Version, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::version",
-        ))
+        let objects = self.store.objects("Document::version");
+        let header = objects.version();
+        let trailer = Object::Dictionary(self.overlay.trailer(objects)?);
+        let Some(Object::Reference(root)) = trailer.take(b"Root") else {
+            return Ok(header);
+        };
+        let catalog = self.overlay.resolve(objects, root)?;
+        let named = match self.overlay.entry(objects, &catalog, b"Version")? {
+            Object::Name(name) => match *name.as_slice() {
+                [major @ (b'1' | b'2'), b'.', minor @ b'0'..=b'9'] => Some(Version {
+                    major: major.wrapping_sub(b'0'),
+                    minor: minor.wrapping_sub(b'0'),
+                }),
+                _ => None,
+            },
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        };
+        Ok(named
+            .filter(|found| (found.major, found.minor) > (header.major, header.minor))
+            .unwrap_or(header))
     }
 
     /// How viewers open the document.
@@ -1451,5 +1706,68 @@ impl Documents {
     /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn next(&self) -> Result<Option<Document>, PdfError> {
         Err(PdfError::new(ErrorCode::NotImplemented, "Documents::next"))
+    }
+}
+
+/// The pages under the page tree node `node`: its `Count`, 1 for a page (ISO 32000-2:2020, 7.7.3).
+fn count(objects: Objects<'_>, overlay: &Overlay, node: &Object) -> Result<u64, PdfError> {
+    if node.get(b"Kids").is_none() {
+        return Ok(1);
+    }
+    match overlay.entry(objects, node, b"Count")? {
+        Object::Integer(found) => u64::try_from(found).map_err(|_error| objects.malformed()),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => Err(objects.malformed()),
+    }
+}
+
+/// The page tree nodes from `top` down to the one a page inserted before the page at `index`, or
+/// after the last, goes into, and its place among that node's kids (ISO 32000-2:2020, 7.7.3.2).
+fn place(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    top: (ObjectId, Object),
+    index: u64,
+) -> Result<(Vec<(ObjectId, Object)>, usize), PdfError> {
+    let mut path = vec![top];
+    let mut left = index;
+    'descend: loop {
+        if path.len() > usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+        }
+        let node = path.last().map_or(Object::Null, |entry| entry.1.clone());
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let length = kids.len();
+        for (position, kid) in kids.into_iter().enumerate() {
+            let Object::Reference(id) = kid else {
+                return Err(objects.malformed());
+            };
+            let child = overlay.resolve(objects, id)?;
+            let pages = count(objects, overlay, &child)?;
+            if left < pages {
+                if child.get(b"Kids").is_none() {
+                    return Ok((path, position));
+                }
+                if path.iter().any(|entry| entry.0 == id) {
+                    return Err(objects.malformed());
+                }
+                path.push((id, child));
+                continue 'descend;
+            }
+            left = left.saturating_sub(pages);
+        }
+        if left > 0 {
+            return Err(objects.malformed());
+        }
+        return Ok((path, length));
     }
 }

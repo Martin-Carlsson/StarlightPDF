@@ -349,6 +349,14 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::label"))
     }
 
+    /// The page object `id` of the document of `store`.
+    pub(crate) fn new(id: ObjectId, store: &Arc<Store>) -> Self {
+        Self {
+            id,
+            store: Arc::clone(store),
+        }
+    }
+
     /// Rasterizes the page with its annotations and fields.
     ///
     /// Not implemented: fails with [`ErrorCode::NotImplemented`].
@@ -763,10 +771,7 @@ pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
                 }
                 .ok_or_else(|| objects.malformed())?
             } else if left == 0 {
-                return Ok(Page {
-                    id: kid,
-                    store: Arc::clone(store),
-                });
+                return Ok(Page::new(kid, store));
             } else {
                 1
             };
