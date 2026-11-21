@@ -64,3 +64,6 @@ split_bytes	tests/corpus/split/scripts.pdf	by=Pages	count=1	LossRefused
 split_file	tests/corpus/split/scripts.pdf	by=Pages	count=1	LossRefused
 split_bytes	tests/corpus/split/scripts.pdf	by=Pages	count=1	allow_loss	1 1
 split_file	tests/corpus/split/scripts.pdf	by=Pages	count=1	allow_loss	1 1
+# 7.5.5: a trailer Size past the policy's objects sizes no table
+split_bytes	tests/corpus/save/huge-size.pdf	by=Pages	count=1	LimitExceeded
+split_file	tests/corpus/save/huge-size.pdf	by=Pages	count=1	LimitExceeded

@@ -21,7 +21,7 @@ use crate::input::Source;
 use crate::layers::Layer;
 use crate::objects::ObjectId;
 use crate::output::Sink;
-use crate::overlay::Overlay;
+use crate::overlay::{Object, Overlay};
 use crate::progress::Progress;
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
@@ -160,14 +160,14 @@ impl Page {
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn boundary(&self, options: &BoundaryOptions) -> Result<Rect, PdfError> {
         let objects = self.store.objects("Page::boundary");
-        let media = if let Some(found) = inherited(objects, self.id, b"MediaBox")? {
-            rectangle(objects, &found)?
+        let media = if let Some(found) = self.rectangle(objects, b"MediaBox", true)? {
+            found
         } else {
             objects.deviation("7.7.3.3", "MediaBox missing", None)?;
             LETTER
         };
-        let crop = match inherited(objects, self.id, b"CropBox")? {
-            Some(found) => clip(rectangle(objects, &found)?, media),
+        let crop = match self.rectangle(objects, b"CropBox", true)? {
+            Some(found) => clip(found, media),
             None => media,
         };
         let key: &[u8] = match options.kind {
@@ -177,9 +177,8 @@ impl Page {
             Boundary::Media => return Ok(rect(media)),
             Boundary::Trim => b"TrimBox",
         };
-        let page = objects.dictionary(Some(Value::Reference(self.id)))?;
-        Ok(rect(match own(objects, page, key)? {
-            Some(found) => clip(rectangle(objects, &found)?, media),
+        Ok(rect(match self.rectangle(objects, key, false)? {
+            Some(found) => clip(found, media),
             None => crop,
         }))
     }
@@ -402,9 +401,24 @@ impl Page {
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn rotation(&self) -> Result<u16, PdfError> {
         let objects = self.store.objects("Page::rotation");
-        let degrees = inherited(objects, self.id, b"Rotate")?.map_or(Some(0), |found| {
+        let rotate = if self.overlay.is_changed() {
+            held(objects, &self.overlay, self.id, b"Rotate", true)?.map(|found| match found {
+                Object::Integer(value) => Some(value),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => None,
+            })
+        } else {
+            inherited(objects, self.id, b"Rotate")?.map(|found| found.integer())
+        };
+        let degrees = rotate.map_or(Some(0), |found| {
             found
-                .integer()
                 .filter(|value| value.checked_rem(90) == Some(0))?
                 .checked_rem_euclid(360)
         });
@@ -413,6 +427,31 @@ impl Page {
         }
         objects.deviation("7.7.3.3", "Rotate not a multiple of 90", None)?;
         Ok(0)
+    }
+
+    /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay
+    /// when it holds changes (ISO 32000-2:2020, 7.7.3.4, 7.9.5).
+    fn rectangle(
+        &self,
+        objects: Objects<'_>,
+        key: &[u8],
+        inherit: bool,
+    ) -> Result<Option<[f64; 4]>, PdfError> {
+        if self.overlay.is_changed() {
+            return held(objects, &self.overlay, self.id, key, inherit)?
+                .map(|found| held_rectangle(objects, &self.overlay, found))
+                .transpose();
+        }
+        let found = if inherit {
+            inherited(objects, self.id, key)?
+        } else {
+            own(
+                objects,
+                objects.dictionary(Some(Value::Reference(self.id)))?,
+                key,
+            )?
+        };
+        found.map(|value| rectangle(objects, &value)).transpose()
     }
 
     /// Scales the page and its content.
@@ -731,6 +770,9 @@ pub(crate) fn find(
     index: u32,
 ) -> Result<Page, PdfError> {
     let objects = store.objects("Document::page");
+    if overlay.is_changed() {
+        return find_held(objects, (store, overlay), index);
+    }
     let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
     let root = objects.get(catalog, b"Pages")?;
     // The nodes descended through, by id; the root, when direct, has none.
@@ -816,6 +858,133 @@ fn fixed(text: &str, scale: usize, width: usize) -> Vec<u8> {
     } else {
         digits
     }
+}
+
+/// The pages under the page tree node `node`: its `Count`, 1 for a page (ISO 32000-2:2020, 7.7.3).
+pub(crate) fn count(objects: Objects<'_>, overlay: &Overlay, node: &Object) -> Result<u64, PdfError> {
+    if node.get(b"Kids").is_none() {
+        return Ok(1);
+    }
+    match overlay.entry(objects, node, b"Count")? {
+        Object::Integer(found) => u64::try_from(found).map_err(|_error| objects.malformed()),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => Err(objects.malformed()),
+    }
+}
+
+/// [`find`] through `overlay`.
+fn find_held(
+    objects: Objects<'_>,
+    (store, overlay): (&Arc<Store>, &Arc<Overlay>),
+    index: u32,
+) -> Result<Page, PdfError> {
+    let trailer = Object::Dictionary(overlay.trailer(objects)?);
+    let catalog = overlay.entry(objects, &trailer, b"Root")?;
+    let mut path: Vec<u32> = match catalog.get(b"Pages") {
+        Some(Object::Reference(id)) => vec![id.number],
+        Some(_) | None => Vec::new(),
+    };
+    let mut node = overlay.entry(objects, &catalog, b"Pages")?;
+    let mut left = u64::from(index);
+    for depth in 0..objects.depth_limit() {
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let mut below = None;
+        for kid in kids {
+            let Object::Reference(id) = kid else {
+                return Err(objects.malformed());
+            };
+            let child = overlay.resolve(objects, id)?;
+            let pages = count(objects, overlay, &child)?;
+            if child.get(b"Kids").is_none() && left == 0 {
+                return Ok(Page::new(id, store, overlay));
+            }
+            if left < pages {
+                if path.contains(&id.number) {
+                    return Err(objects.malformed());
+                }
+                path.push(id.number);
+                below = Some(child);
+                break;
+            }
+            left = left.saturating_sub(pages);
+        }
+        node = match below {
+            Some(found) => found,
+            None if depth == 0 => {
+                return Err(PdfError::new(
+                    ErrorCode::InvalidArgument,
+                    objects.operation(),
+                ));
+            }
+            None => return Err(objects.malformed()),
+        };
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+}
+
+/// The value of `key` in page `id`, or with `inherit` in the nearest ancestor that has it,
+/// through `overlay`; null is none (ISO 32000-2:2020, 7.7.3.4).
+fn held(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    id: ObjectId,
+    key: &[u8],
+    inherit: bool,
+) -> Result<Option<Object>, PdfError> {
+    let mut node = overlay.resolve(objects, id)?;
+    for _ in 0..=objects.depth_limit() {
+        let found = overlay.entry(objects, &node, key)?;
+        if !matches!(found, Object::Null) {
+            return Ok(Some(found));
+        }
+        match node.get(b"Parent") {
+            Some(Object::Reference(parent)) if inherit => node = overlay.resolve(objects, parent)?,
+            Some(_) | None => return Ok(None),
+        }
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+}
+
+/// The rectangle array `value`, its elements direct or indirect, through `overlay`, corners
+/// normalized to `[left, bottom, right, top]` (ISO 32000-2:2020, 7.9.5).
+fn held_rectangle(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    value: Object,
+) -> Result<[f64; 4], PdfError> {
+    let Object::Array(items) = value else {
+        return Err(objects.malformed());
+    };
+    if items.len() != 4 {
+        return Err(objects.malformed());
+    }
+    let mut numbers = [0.0_f64; 4];
+    for (number, item) in numbers.iter_mut().zip(items) {
+        *number = match overlay.direct(objects, item)? {
+            Object::Integer(integer) => integer.to_string().parse().ok(),
+            Object::Real(real) => Some(real),
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        }
+        .ok_or_else(|| objects.malformed())?;
+    }
+    let [x0, y0, x1, y1] = numbers;
+    Ok([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])
 }
 
 /// The value of `key` in the page tree node `id` or the nearest ancestor that has it

@@ -1,6 +1,7 @@
 //! A part of a split: a run of a document's pages under a page tree of its own, its objects
 //! rewritten as read so that it reaches no other page (ISO 32000-2:2020, 7.7.3).
 
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::sync::{Mutex, PoisonError};
@@ -8,6 +9,7 @@ use std::sync::{Mutex, PoisonError};
 use crate::objects::{ObjectId, XrefKind};
 use crate::overlay::{Dictionary, Object, Overlay, View};
 use crate::store::{Objects, Store};
+use crate::syntax::{At, Token, Value};
 use crate::{ErrorCode, PdfError};
 
 /// The catalog entries a part keeps (ISO 32000-2:2020, 7.7.2, 8.11.4, 14.11.5).
@@ -18,6 +20,9 @@ const CARRIED: [&[u8]; 5] = [
     b"PageLayout",
     b"Version",
 ];
+
+/// Kids read from the source at a time.
+const BATCH: usize = 64;
 
 /// Kids of a new page tree node.
 const FANOUT: u32 = 64;
@@ -30,6 +35,24 @@ const OPERATION: &str = "Document::split";
 
 /// The mark of a page tree node in [`Pages`].
 const NODE: u32 = 1 << 31;
+
+/// Where a walk of the page tree stopped: the next page's index and the kids left per level.
+#[derive(Debug)]
+struct Cursor {
+    /// The index of the next page.
+    next: u32,
+    /// The kids left, the root's first.
+    stack: Vec<Level>,
+}
+
+/// The kids of a page tree node left to read, a batch at a time.
+#[derive(Debug)]
+struct Level {
+    /// Where the next batch starts in the source, until the array ends.
+    at: Option<At>,
+    /// Kids read and not taken.
+    batch: VecDeque<ObjectId>,
+}
 
 /// Where a document's pages are in its page tree: 4 bytes per object.
 pub(crate) struct Pages {
@@ -67,6 +90,8 @@ pub(crate) struct Part {
     store: Arc<Store>,
     /// One more than the highest object number the source holds.
     stored: u32,
+    /// Where the last walk stopped; new nodes are read in order.
+    walked: Mutex<Option<Cursor>>,
 }
 
 impl Debug for Pages {
@@ -75,6 +100,82 @@ impl Debug for Pages {
             .field("annotated", &self.annotated)
             .field("count", &self.count)
             .finish_non_exhaustive()
+    }
+}
+
+impl Level {
+    /// The kids of page tree node `id` of the document of `objects` and `overlay`; read from the
+    /// source a batch at a time unless the overlay holds the node (ISO 32000-2:2020, 7.7.3.2).
+    fn new(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<Self, PdfError> {
+        let malformed = || objects.malformed();
+        if let Some((generation, node)) = overlay.get(id.number)? {
+            let kids = if generation == id.generation {
+                overlay.entry(objects, &node, b"Kids")?
+            } else {
+                Object::Null
+            };
+            let Object::Array(items) = kids else {
+                return Err(malformed());
+            };
+            let batch = items
+                .iter()
+                .map(|item| target(item).ok_or_else(malformed))
+                .collect::<Result<_, _>>()?;
+            return Ok(Self { at: None, batch });
+        }
+        let node = objects.dictionary(Some(Value::Reference(id)))?;
+        let array = match objects.get(node, b"Kids")? {
+            Some(Value::Reference(kids)) => objects.resolve(kids)?.array(),
+            found => found.as_ref().and_then(Value::array),
+        }
+        .ok_or_else(malformed)?;
+        let mut reader = objects.reader(array)?;
+        if reader.token()? != Token::ArrayStart {
+            return Err(malformed());
+        }
+        let mut level = Self {
+            at: Some(At::new(reader.position(), array.packed())),
+            batch: VecDeque::new(),
+        };
+        level.fill(objects)?;
+        Ok(level)
+    }
+
+    /// Reads the next batch when none is left.
+    fn fill(&mut self, objects: Objects<'_>) -> Result<(), PdfError> {
+        let Some(at) = self.at.filter(|_| self.batch.is_empty()) else {
+            return Ok(());
+        };
+        let mut reader = objects.reader(at)?;
+        self.at = None;
+        while self.batch.len() < BATCH {
+            match reader.item()? {
+                Token::Reference(id) => self.batch.push_back(id),
+                Token::ArrayEnd => return Ok(()),
+                Token::ArrayStart
+                | Token::DictionaryEnd
+                | Token::DictionaryStart
+                | Token::Integer(_)
+                | Token::Keyword(_)
+                | Token::Name(_)
+                | Token::Real(_)
+                | Token::String(_) => return Err(objects.malformed()),
+            }
+        }
+        self.at = Some(At::new(reader.position(), at.packed()));
+        Ok(())
+    }
+
+    /// The next kid, taken.
+    fn next(&mut self, objects: Objects<'_>) -> Result<Option<ObjectId>, PdfError> {
+        self.fill(objects)?;
+        Ok(self.batch.pop_front())
+    }
+
+    /// The next kid, not taken.
+    fn peek(&mut self, objects: Objects<'_>) -> Result<Option<ObjectId>, PdfError> {
+        self.fill(objects)?;
+        Ok(self.batch.front().copied())
     }
 }
 
@@ -100,49 +201,37 @@ impl Pages {
         let Some(Object::Reference(top)) = catalog.get(b"Pages") else {
             return Err(malformed());
         };
-        let size = usize::try_from(overlay.next()).map_err(|_error| limit())?;
+        let size = objects.slots(overlay.next())?;
         // Reserved whole, so no growth holds two copies.
         let mut index = Vec::new();
         index.try_reserve_exact(size).map_err(|_error| limit())?;
         index.resize(size, 0);
         *slot(&mut index, top.number).ok_or_else(malformed)? = NODE;
-        let root = overlay.resolve(objects, top)?;
-        let Object::Array(kids) = overlay.entry(objects, &root, b"Kids")? else {
-            return Err(malformed());
-        };
         let (mut annotated, mut count) = (false, 0_u32);
-        let mut stack = vec![kids.into_iter()];
+        let mut stack = vec![Level::new(objects, overlay, top)?];
         let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
         while let Some(level) = stack.last_mut() {
-            let Some(kid) = level.next() else {
+            let Some(id) = level.next(objects)? else {
                 drop(stack.pop());
                 continue;
             };
-            let Object::Reference(id) = kid else {
-                return Err(malformed());
-            };
-            let child = overlay.resolve(objects, id)?;
+            let (node, annotations) = kind(objects, overlay, id)?;
             let mark = slot(&mut index, id.number)
                 .filter(|mark| **mark == 0)
                 .ok_or_else(malformed)?;
-            if child.get(b"Kids").is_some() {
+            if node {
                 *mark = NODE | count;
-                let Object::Array(below) = overlay.entry(objects, &child, b"Kids")? else {
-                    return Err(malformed());
-                };
                 if stack.len() >= depth {
                     return Err(limit());
                 }
-                stack.push(below.into_iter());
-            } else if matches!(child, Object::Dictionary(_)) {
+                stack.push(Level::new(objects, overlay, id)?);
+            } else {
                 count = count
                     .checked_add(1)
                     .filter(|&next| next < NODE)
                     .ok_or_else(limit)?;
                 *mark = count;
-                annotated |= child.get(b"Annots").is_some();
-            } else {
-                return Err(malformed());
+                annotated |= annotations;
             }
         }
         Ok(Self {
@@ -172,53 +261,45 @@ impl Pages {
     }
 
     /// Gives `visit` the pages from `from` to before `until`, in order, reading only the page
-    /// tree nodes that hold them, through `overlay` (ISO 32000-2:2020, 7.7.3.2).
+    /// tree nodes that hold them, through `overlay`, from where `cursor` stopped when it stopped
+    /// at `from`, and leaves `cursor` where it stops (ISO 32000-2:2020, 7.7.3.2).
     fn walk(
         &self,
-        objects: Objects<'_>,
-        overlay: &Overlay,
+        (objects, overlay): (Objects<'_>, &Overlay),
         (from, until): (u32, u32),
+        cursor: &mut Option<Cursor>,
         visit: &mut dyn FnMut(ObjectId) -> Result<(), PdfError>,
     ) -> Result<(), PdfError> {
         let malformed = || objects.malformed();
-        let kids = |id| match overlay.entry(objects, &overlay.resolve(objects, id)?, b"Kids")? {
-            Object::Array(items) => Ok(items.into_iter().peekable()),
-            Object::Boolean(_)
-            | Object::Dictionary(_)
-            | Object::Integer(_)
-            | Object::Name(_)
-            | Object::Null
-            | Object::Real(_)
-            | Object::Reference(_)
-            | Object::Stream(..)
-            | Object::String(_) => Err(malformed()),
-        };
         let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
-        let mut stack = vec![kids(self.top)?];
+        let mut stack = match cursor.take() {
+            Some(found) if found.next == from => found.stack,
+            Some(_) | None => vec![Level::new(objects, overlay, self.top)?],
+        };
         while let Some(level) = stack.last_mut() {
-            let Some(kid) = level.next() else {
+            let Some(id) = level.next(objects)? else {
                 drop(stack.pop());
                 continue;
             };
             // A kid followed by one starting at or before `from` holds none of the pages.
             if level
-                .peek()
-                .and_then(target)
+                .peek(objects)?
                 .and_then(|next| self.start(next.number))
                 .is_some_and(|next| next <= from)
             {
                 continue;
             }
-            let id = target(&kid).ok_or_else(malformed)?;
             let start = self.start(id.number).ok_or_else(malformed)?;
             if start >= until {
+                level.batch.push_front(id);
+                *cursor = Some(Cursor { next: until, stack });
                 return Ok(());
             }
             if self.tag(id.number) >= NODE {
                 if stack.len() >= depth {
                     return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
                 }
-                stack.push(kids(id)?);
+                stack.push(Level::new(objects, overlay, id)?);
                 continue;
             }
             if start >= from {
@@ -501,6 +582,7 @@ impl Part {
             source: Arc::clone(source),
             store: Arc::clone(store),
             stored: objects.size()?,
+            walked: Mutex::new(None),
         })
     }
 
@@ -534,10 +616,12 @@ impl Part {
                 self.first.saturating_add(start),
                 self.first.saturating_add(stop),
             );
-            self.pages.walk(objects, &self.source, range, &mut |id| {
-                kids.push(Object::Reference(id));
-                Ok(())
-            })?;
+            let mut walked = self.walked.lock().unwrap_or_else(PoisonError::into_inner);
+            self.pages
+                .walk((objects, &self.source), range, &mut walked, &mut |id| {
+                    kids.push(Object::Reference(id));
+                    Ok(())
+                })?;
         } else {
             let lower = level.saturating_sub(1);
             kids.extend((start..stop).map(|kid| reference(self.number(lower, kid))));
@@ -650,7 +734,7 @@ impl Part {
         let objects = self.store.objects(OPERATION);
         let source = &*self.source;
         self.pages
-            .walk(objects, source, (self.first, self.end), &mut |id| {
+            .walk((objects, source), (self.first, self.end), &mut None, &mut |id| {
                 let page = source.resolve(objects, id)?;
                 if let Object::Array(annotations) = source.entry(objects, &page, b"Annots")? {
                     for annotation in annotations {
@@ -670,6 +754,13 @@ impl Part {
 }
 
 impl View for Part {
+    fn generation(&self, objects: Objects<'_>, number: u32) -> Result<Option<u16>, PdfError> {
+        if self.locate(number).is_some() {
+            return Ok(Some(0));
+        }
+        self.source.generation(objects, number)
+    }
+
     fn object(
         &self,
         number: u32,
@@ -759,3 +850,21 @@ const fn target(value: &Object) -> Option<ObjectId> {
 fn slot(index: &mut [u32], number: u32) -> Option<&mut u32> {
     index.get_mut(usize::try_from(number).ok()?)
 }
+
+/// Whether `id` of the document of `objects` and `overlay` is a page tree node, else a page, and
+/// whether a page has annotations, read without its kids (ISO 32000-2:2020, 7.7.3).
+fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, bool), PdfError> {
+    if overlay.get(id.number)?.is_some() {
+        let object = overlay.resolve(objects, id)?;
+        if !matches!(object, Object::Dictionary(_)) {
+            return Err(objects.malformed());
+        }
+        return Ok((object.get(b"Kids").is_some(), object.get(b"Annots").is_some()));
+    }
+    let dictionary = objects.dictionary(Some(Value::Reference(id)))?;
+    Ok((
+        objects.get(dictionary, b"Kids")?.is_some(),
+        objects.get(dictionary, b"Annots")?.is_some(),
+    ))
+}
+

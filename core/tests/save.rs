@@ -1223,7 +1223,13 @@ fn file_identifier_derives_from_content() -> Result<(), String> {
         changed == Value::String(derived.clone()),
         "second element not the digest",
     )?;
-    ensure(derived != plain, "different content, same identifier")
+    ensure(derived != plain, "different content, same identifier")?;
+    let part = parts("save/streams.pdf", &by_pages(1))?;
+    let ([own, again], digest) = identifier(part.first().ok_or("no part")?)?;
+    ensure(
+        own == Value::String(digest) && again == own,
+        "a part's identifier is not the digest twice",
+    )
 }
 
 /// Each part holds its pages' content streams in order, and exactly the streams of their own and
@@ -1386,6 +1392,15 @@ fn allow_loss_keeps_the_appearance_of_an_outside_link() -> Result<(), String> {
         !link.contains_key(b"Dest".as_slice()) && !link.contains_key(b"A".as_slice()),
         "link keeps a target",
     )
+}
+
+/// A reference whose generation is not its object's is null (ISO 32000-2:2020, 7.3.10).
+#[test]
+fn references_to_another_generation_are_null() -> Result<(), String> {
+    let bytes = save(&open(&corpus("save/generations.pdf"))?)?;
+    ensure(!holds(&bytes, "wrong-generation"), "a newer reference kept")?;
+    ensure(!holds(&bytes, "newer-generation"), "an older reference kept")?;
+    ensure(holds(&bytes, "right-generation"), "a matching reference lost")
 }
 
 /// Whether `byte` is a regular character (7.2.3).

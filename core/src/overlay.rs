@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use core::mem::replace;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use crate::objects::ObjectId;
+use crate::objects::{ObjectId, XrefKind};
 use crate::store::Objects;
 use crate::{ErrorCode, PdfError};
 
@@ -71,6 +71,9 @@ pub(crate) struct Overlay {
 
 /// Objects computed or rewritten on read.
 pub(crate) trait View: Debug + Send + Sync {
+    /// The generation of object `number` when not changed; `None` when free or missing.
+    fn generation(&self, objects: Objects<'_>, number: u32) -> Result<Option<u16>, PdfError>;
+
     /// Object `number` and its generation, given `edited`, the overlay's own change of it; `None`
     /// when free or missing.
     fn object(
@@ -189,6 +192,26 @@ impl Overlay {
         key: &[u8],
     ) -> Result<Object, PdfError> {
         self.direct(objects, object.get(key).unwrap_or(Object::Null))
+    }
+
+    /// The generation of object `number`, changed here, given by the view or the source's entry;
+    /// `None` when free or missing (ISO 32000-2:2020, 7.3.10, 7.5.4).
+    pub(crate) fn generation(
+        &self,
+        objects: Objects<'_>,
+        number: u32,
+    ) -> Result<Option<u16>, PdfError> {
+        if let Some((generation, _)) = self.edited(number) {
+            return Ok(Some(generation));
+        }
+        if let Some(view) = self.view.as_deref() {
+            return view.generation(objects, number);
+        }
+        Ok(match objects.entry(number)? {
+            Some(entry) if entry.kind == XrefKind::InUse => Some(entry.generation),
+            Some(entry) if entry.kind == XrefKind::Compressed => Some(0),
+            Some(_) | None => None,
+        })
     }
 
     /// Object `number` and its generation when changed, added or given by the view.

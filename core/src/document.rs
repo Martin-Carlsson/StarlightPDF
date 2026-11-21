@@ -110,8 +110,9 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
-    /// Whether saves write the source decrypted by default: a part's do (ISO 32000-2:2020, 7.6).
-    decrypted: bool,
+    /// Whether a part of a split: a new file, whose saves write the source decrypted and a new
+    /// file identifier (ISO 32000-2:2020, 7.6, 14.4).
+    part: bool,
     /// The changes.
     overlay: Arc<Overlay>,
     /// The shared state.
@@ -598,7 +599,7 @@ impl Document {
         ]))?;
         overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
         Ok(Self {
-            decrypted: false,
+            part: false,
             overlay: Arc::new(overlay),
             store: Arc::new(Store::create(policy, version)?),
         })
@@ -892,27 +893,35 @@ impl Document {
             return Err(objects.malformed());
         };
         let node = overlay.resolve(objects, top)?;
-        let pages = count(objects, overlay, &node)?;
+        let pages = page::count(objects, overlay, &node)?;
         let index = options.index.map_or(pages, u64::from);
         if index > pages {
             return Err(invalid());
         }
         let (mut path, position) = place(objects, overlay, (top, node), index)?;
         let parent = path.last().ok_or_else(|| objects.malformed())?.0;
-        let page = overlay.add(Object::Dictionary(vec![
+        let media = Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(width),
+            Object::Real(height),
+        ]);
+        let mut entries = vec![
             (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
             (b"Parent".to_vec(), Object::Reference(parent)),
             (b"Resources".to_vec(), Object::Dictionary(Vec::new())),
-            (
-                b"MediaBox".to_vec(),
-                Object::Array(vec![
-                    Object::Integer(0),
-                    Object::Integer(0),
-                    Object::Real(width),
-                    Object::Real(height),
-                ]),
-            ),
-        ]))?;
+            (b"MediaBox".to_vec(), media.clone()),
+        ];
+        // Its own values where an ancestor would give others (7.7.3.4).
+        for (key, own) in [(b"CropBox".as_slice(), media), (b"Rotate", Object::Integer(0))] {
+            if path
+                .iter()
+                .any(|node| node.1.get(key).is_some_and(|found| !matches!(found, Object::Null)))
+            {
+                entries.push((key.to_vec(), own));
+            }
+        }
+        let page = overlay.add(Object::Dictionary(entries))?;
         if let Some(last) = path.last_mut() {
             let Object::Array(mut kids) = overlay.entry(objects, &last.1, b"Kids")? else {
                 return Err(objects.malformed());
@@ -921,7 +930,7 @@ impl Document {
             last.1.set(b"Kids", Some(Object::Array(kids)));
         }
         for (id, mut changed) in path {
-            let total = count(objects, overlay, &changed)?
+            let total = page::count(objects, overlay, &changed)?
                 .checked_add(1)
                 .and_then(|total| i64::try_from(total).ok())
                 .ok_or_else(|| objects.malformed())?;
@@ -1032,7 +1041,7 @@ impl Document {
         let store = Store::open(source, policy, options.strict, &options.password)?;
         let next = store.objects("Document::open").size()?;
         Ok(Self {
-            decrypted: false,
+            part: false,
             overlay: Arc::new(Overlay::new(next)),
             store: Arc::new(store),
         })
@@ -1231,7 +1240,7 @@ impl Document {
         /// The operation.
         const SAVE: &str = "Document::save";
         let objects = self.store.objects(SAVE);
-        let encrypted = objects.security().is_some() && !self.decrypted;
+        let encrypted = objects.security().is_some() && !self.part;
         let defaults = !options.allow_loss
             && options.color_space.is_none()
             && options.image_quality.is_none()
@@ -1254,6 +1263,7 @@ impl Document {
                         break_signatures: options.break_signatures,
                         objects,
                         overlay: &self.overlay,
+                        part: self.part,
                         progress,
                         version,
                     },
@@ -1583,7 +1593,7 @@ impl Document {
             part::refuse(
                 objects,
                 &self.overlay,
-                objects.security().is_some() && !self.decrypted,
+                objects.security().is_some() && !self.part,
             )?;
         }
         let pages = Pages::read(objects, &self.overlay)?;
@@ -1795,23 +1805,18 @@ impl Documents {
     ///
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
     pub fn next(&self) -> Result<Option<Document>, PdfError> {
-        let (source, pages, range, allow_loss) = {
-            let mut parts = self.parts.lock().unwrap_or_else(PoisonError::into_inner);
-            let Some(range) = parts.range() else {
-                return Ok(None);
-            };
-            parts.next = parts.next.saturating_add(1);
-            (
-                parts.source.clone(),
-                Arc::clone(&parts.pages),
-                range,
-                parts.allow_loss,
-            )
+        // Held until the part is made, so a failed part is not skipped.
+        let mut parts = self.parts.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(range) = parts.range() else {
+            return Ok(None);
         };
-        let part = Part::new((&source.overlay, &source.store), &pages, range)?;
-        if !allow_loss {
+        let source = parts.source.clone();
+        let part = Part::new((&source.overlay, &source.store), &parts.pages, range)?;
+        if !parts.allow_loss {
             part.refuse_links()?;
         }
+        parts.next = parts.next.saturating_add(1);
+        drop(parts);
         let objects = source.store.objects("Documents::next");
         let info = Object::Dictionary(source.overlay.trailer(objects)?).take(b"Info");
         let (catalog, next) = (part.catalog(), part.next());
@@ -1821,7 +1826,7 @@ impl Documents {
         trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
         overlay.set_trailer(trailer);
         Ok(Some(Document {
-            decrypted: true,
+            part: true,
             overlay: Arc::new(overlay),
             store: Arc::clone(&source.store),
         }))
@@ -1847,25 +1852,6 @@ impl Parts {
     }
 }
 
-/// The pages under the page tree node `node`: its `Count`, 1 for a page (ISO 32000-2:2020, 7.7.3).
-fn count(objects: Objects<'_>, overlay: &Overlay, node: &Object) -> Result<u64, PdfError> {
-    if node.get(b"Kids").is_none() {
-        return Ok(1);
-    }
-    match overlay.entry(objects, node, b"Count")? {
-        Object::Integer(found) => u64::try_from(found).map_err(|_error| objects.malformed()),
-        Object::Array(_)
-        | Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Name(_)
-        | Object::Null
-        | Object::Real(_)
-        | Object::Reference(_)
-        | Object::Stream(..)
-        | Object::String(_) => Err(objects.malformed()),
-    }
-}
-
 /// The page tree nodes from `top` down to the one a page inserted before the page at `index`, or
 /// after the last, goes into, and its place among that node's kids (ISO 32000-2:2020, 7.7.3.2).
 fn place(
@@ -1874,6 +1860,9 @@ fn place(
     top: (ObjectId, Object),
     index: u64,
 ) -> Result<(Vec<(ObjectId, Object)>, usize), PdfError> {
+    if index == page::count(objects, overlay, &top.1)? {
+        return last(objects, overlay, vec![top]);
+    }
     let mut path = vec![top];
     let mut left = index;
     'descend: loop {
@@ -1890,7 +1879,7 @@ fn place(
                 return Err(objects.malformed());
             };
             let child = overlay.resolve(objects, id)?;
-            let pages = count(objects, overlay, &child)?;
+            let pages = page::count(objects, overlay, &child)?;
             if left < pages {
                 if child.get(b"Kids").is_none() {
                     return Ok((path, position));
@@ -1907,5 +1896,39 @@ fn place(
             return Err(objects.malformed());
         }
         return Ok((path, length));
+    }
+}
+
+/// The page tree nodes from the last of `path` down along last kids to the one a page appended
+/// goes into, and its place after that node's kids, reading only last kids (ISO 32000-2:2020,
+/// 7.7.3.2).
+fn last(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    mut path: Vec<(ObjectId, Object)>,
+) -> Result<(Vec<(ObjectId, Object)>, usize), PdfError> {
+    loop {
+        if path.len() > usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+        }
+        let node = path.last().map_or(Object::Null, |entry| entry.1.clone());
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let length = kids.len();
+        let Some(kid) = kids.into_iter().next_back() else {
+            return Ok((path, length));
+        };
+        let Object::Reference(id) = kid else {
+            return Err(objects.malformed());
+        };
+        let child = overlay.resolve(objects, id)?;
+        if child.get(b"Kids").is_none() {
+            return Ok((path, length));
+        }
+        if path.iter().any(|entry| entry.0 == id) {
+            return Err(objects.malformed());
+        }
+        path.push((id, child));
     }
 }

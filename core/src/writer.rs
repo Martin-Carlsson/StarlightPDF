@@ -27,11 +27,18 @@ const OPERATION: &str = "Document::save";
 /// Objects written between progress reports.
 const STEP: usize = 1024;
 
+/// The mark in [`Numbers::new`] of an object whose generation is not 0.
+const LATER: u32 = 1 << 31;
+
 /// The new number of each source or overlay object reached, and, per new number, the old number
 /// until written, then its offset: 9 bytes per object.
-struct Numbers {
-    /// New numbers by old number; 0 when not reached.
+struct Numbers<'run> {
+    /// New numbers by old number, [`LATER`] marking a generation not 0; 0 when not reached.
     new: Vec<u32>,
+    /// The source's objects.
+    objects: Objects<'run>,
+    /// The changes.
+    overlay: &'run Overlay,
     /// Per new number from 1: the old number, then, once written, the offset, 40 bits each.
     slots: Vec<[u8; 5]>,
 }
@@ -56,14 +63,18 @@ pub(crate) struct Rewrite<'run> {
     pub objects: Objects<'run>,
     /// The changes.
     pub overlay: &'run Overlay,
+    /// A new file: no identifier element kept (ISO 32000-2:2020, 14.4).
+    pub part: bool,
     /// Told of progress, and may cancel.
     pub progress: Option<&'run dyn Progress>,
     /// The header's version.
     pub version: Version,
 }
 
-impl Numbers {
-    /// The new number of `id`, given when first reached; `None` for one that no object can have.
+impl Numbers<'_> {
+    /// The new number of `id`, given when first reached; `None` for a reference that is null: to
+    /// a number no object has, or of another generation than the object's (ISO 32000-2:2020,
+    /// 7.3.10).
     fn number(&mut self, id: ObjectId) -> Result<Option<u32>, PdfError> {
         let Some(slot) = usize::try_from(id.number)
             .ok()
@@ -72,12 +83,36 @@ impl Numbers {
         else {
             return Ok(None);
         };
-        if *slot == 0 {
-            self.slots.push(pack(u64::from(id.number)));
-            *slot = u32::try_from(self.slots.len())
-                .map_err(|_error| PdfError::new(ErrorCode::LimitExceeded, OPERATION))?;
+        let current = |numbers: &Self| numbers.overlay.generation(numbers.objects, id.number);
+        if *slot != 0 {
+            let reached = *slot;
+            let valid = match (reached & LATER != 0, id.generation) {
+                (false, 0) => true,
+                (false, _) | (true, 0) => false,
+                (true, generation) => current(self)? == Some(generation),
+            };
+            return Ok(valid.then_some(reached & !LATER));
         }
-        Ok(Some(*slot))
+        let generation = current(self)?;
+        if generation != Some(id.generation) {
+            return Ok(None);
+        }
+        self.slots.push(pack(u64::from(id.number)));
+        let number = u32::try_from(self.slots.len())
+            .ok()
+            .filter(|number| number & LATER == 0)
+            .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, OPERATION))?;
+        if let Some(found) = usize::try_from(id.number)
+            .ok()
+            .and_then(|at| self.new.get_mut(at))
+        {
+            *found = if id.generation == 0 {
+                number
+            } else {
+                number | LATER
+            };
+        }
+        Ok(Some(number))
     }
 }
 
@@ -138,12 +173,12 @@ fn check(run: &Rewrite<'_>, root: ObjectId) -> Result<Vec<String>, PdfError> {
 }
 
 /// Writes the cross-reference table and the trailer, after `entries`, the trailer's entries
-/// written; the file identifier keeps the source's first element (ISO 32000-2:2020, 7.5.4,
-/// 7.5.5, 14.4).
+/// written; the file identifier keeps the source's first element unless `new`
+/// (ISO 32000-2:2020, 7.5.4, 7.5.5, 14.4).
 fn finish(
     out: &mut Out<'_>,
-    objects: Objects<'_>,
-    numbers: &Numbers,
+    (objects, new): (Objects<'_>, bool),
+    numbers: &Numbers<'_>,
     entries: &[u8],
 ) -> Result<(), PdfError> {
     let table = out.position();
@@ -157,7 +192,12 @@ fn finish(
     }
     out.flush()?;
     let digest = out.hash.take().map_or_default(Md5::finish);
-    let first = match objects.owned_trailer()?.take(b"ID") {
+    let kept = if new {
+        None
+    } else {
+        objects.owned_trailer()?.take(b"ID")
+    };
+    let first = match kept {
         Some(Object::Array(elements)) => match elements.into_iter().next() {
             Some(Object::String(kept)) => kept,
             Some(_) | None => digest.to_vec(),
@@ -187,13 +227,18 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
     let total = u64::from(overlay.next().saturating_sub(1));
     report(run.progress, 0, total)?;
     // Reserved whole, so no growth holds two copies.
-    let size = usize::try_from(overlay.next()).unwrap_or(usize::MAX);
+    let size = objects.slots(overlay.next())?;
     let limit = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
     let (mut new, mut slots) = (Vec::new(), Vec::new());
     new.try_reserve_exact(size).map_err(|_error| limit())?;
     slots.try_reserve_exact(size).map_err(|_error| limit())?;
     new.resize(size, 0);
-    let mut numbers = Numbers { new, slots };
+    let mut numbers = Numbers {
+        new,
+        objects,
+        overlay,
+        slots,
+    };
     let mut entries = Vec::new();
     for key in [b"Root".as_slice(), b"Info"] {
         if let Some(found) = trailer.get(key) {
@@ -232,7 +277,7 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
             report(run.progress, u64::try_from(index).unwrap_or(total), total)?;
         }
     }
-    finish(&mut out, objects, &numbers, &entries)?;
+    finish(&mut out, (objects, run.part), &numbers, &entries)?;
     report(run.progress, total, total)?;
     Ok((broken, out.written))
 }
@@ -310,7 +355,7 @@ fn unpack(slot: [u8; 5]) -> u64 {
 }
 
 /// Writes `object` in PDF syntax, references renumbered (ISO 32000-2:2020, 7.3).
-fn value(text: &mut Vec<u8>, object: Object, numbers: &mut Numbers) -> Result<(), PdfError> {
+fn value(text: &mut Vec<u8>, object: Object, numbers: &mut Numbers<'_>) -> Result<(), PdfError> {
     match object {
         Object::Array(items) => {
             text.push(b'[');
@@ -432,7 +477,7 @@ fn visit(
 fn write(
     out: &mut Out<'_>,
     objects: Objects<'_>,
-    numbers: &mut Numbers,
+    numbers: &mut Numbers<'_>,
     number: usize,
     object: Object,
 ) -> Result<(), PdfError> {

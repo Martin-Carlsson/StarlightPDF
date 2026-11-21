@@ -825,6 +825,16 @@ impl<'store> Objects<'store> {
         Ok(declared.max(held))
     }
 
+    /// Entries of a table indexed by object number below `next`: [`ErrorCode::LimitExceeded`]
+    /// past the policy's objects, whatever a trailer's `Size` declares (ISO 32000-2:2020, 7.5.5).
+    pub(crate) fn slots(self, next: u32) -> Result<usize, PdfError> {
+        let limit = || PdfError::new(ErrorCode::LimitExceeded, self.operation);
+        if u64::from(next) > self.store.object_limit.saturating_add(1) {
+            return Err(limit());
+        }
+        usize::try_from(next).map_err(|_error| limit())
+    }
+
     /// The source.
     pub(crate) const fn source(self) -> &'store Source {
         &self.store.source
