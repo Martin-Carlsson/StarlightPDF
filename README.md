@@ -80,7 +80,7 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 
 ### Page operations
 
-- 🔜 **Combine and divide:** merge files, split by page, range, size or bookmark, extract pages
+- 👨‍💻 **Combine and divide:** merge files, split by page, range, size or bookmark, extract pages
 - 💤 **Arrange:** reorder, delete, duplicate, insert blank pages, insert pages from other files
 - 💤 **Transform:** rotate, crop, resize, scale, change page boxes (media, crop, bleed, trim, art)
 - 💤 **Imposition:** N-up (several pages per sheet), booklets, posters, tiling
