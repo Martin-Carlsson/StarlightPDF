@@ -56,6 +56,9 @@ draw_image	tests/corpus/images/width-zero.jpg	read=size	Malformed
 draw_image	tests/corpus/images/icc-count-mismatch.jpg	read=size	Malformed
 draw_image	tests/corpus/images/icc-duplicate.jpg	read=size	Malformed
 draw_image	tests/corpus/images/icc-short.jpg	read=size	Malformed
+# B.2.1: one SOI starts the image; a second is Malformed. ICC.1:2010, B.4: segment 2 of 2 missing is Malformed
+draw_image	tests/corpus/images/soi-twice.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-segment-missing.jpg	read=size	Malformed
 # Unsupported (ISO 32000-2:2020, 7.4.8, DCTDecode: 8-bit Huffman baseline or progressive): arithmetic coding (SOF9), 12-bit samples
 draw_image	tests/corpus/images/arithmetic.jpg	read=size	Unsupported
 draw_image	tests/corpus/images/precision-12.jpg	read=size	Unsupported
@@ -167,8 +170,10 @@ draw_image	tests/corpus/images/c6-b16-interlaced.png	read=color_space	DeviceRGB
 draw_image	tests/corpus/images/c6-b16-interlaced.png	read=mask_samples_sha256	dc16b02ad6113e5fcab2ddfa1c61adacdb586aff8539274c6fae0a85700ef2cd
 draw_image	tests/corpus/images/c2-b8.png	read=icc_sha256	none
 draw_image	tests/corpus/images/c2-b8.png	format=Png	read=samples_sha256	3e728b34388fecf22866cc9ef1349065e586b9726e16984e8af74bcc4e8b6390
-# A row wider than 65,536 pixels: 70,000 x 1, 1 bit, row bytes (i * 37 + 11) mod 256 for i in 0..8750
-draw_image	tests/corpus/images/c0-b1-wide.png	read=samples_sha256	b1c7308503781f87a08f8d0234f2591657d7af05f2c42e5652ace238277f423f
+# A row of 65,536 pixels, the most a predictor's Columns may hold (7.4.4.4), so it reads back: 65,536 x 1, 1 bit, row bytes
+#   (i * 37 + 11) mod 256 for i in 0..8192; a row of 70,000 is LimitExceeded
+draw_image	tests/corpus/images/c0-b1-max-width.png	read=samples_sha256	1f5a16c4456f34c5459e4e66d8650d4dbb6b298810d0c21cef6571db21d69c81
+draw_image	tests/corpus/images/c0-b1-wide.png	read=size	LimitExceeded
 # An IDAT chunk of over 8 KiB: 64x64 RGB, samples x(n+1) = (1103515245 x(n) + 12345) mod 2^31 from x(0) = 1, each x(n) >> 23
 draw_image	tests/corpus/images/c2-b8-large.png	read=samples_sha256	c275b422af2ea335051b216f25d07d66297a69673d8445a64345966cc0162dea
 # ISO/IEC 15948:2004, 11.3.2.1: tRNS gives an SMask of 8 bits per sample (ISO 32000-2:2020, 11.6.5.3): for colour types 0 and 2
@@ -295,15 +300,18 @@ draw_image	tests/corpus/images/idat-after-other-chunk.png	read=size	Malformed
 draw_image	tests/corpus/images/plte-after-idat.png	read=size	Malformed
 draw_image	tests/corpus/images/plte-twice.png	read=size	Malformed
 draw_image	tests/corpus/images/plte-after-trns.png	read=size	Malformed
-# 11.2.3: a PLTE of no entries, or of 3 for a bit depth of 1, is Malformed
+# 11.2.3: a PLTE of no entries, of 3 for a bit depth of 1, of 257, or of a length not divisible by 3 is Malformed
 draw_image	tests/corpus/images/plte-empty.png	read=size	Malformed
 draw_image	tests/corpus/images/plte-too-many.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-257-entries.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-length.png	read=size	Malformed
 # 11.2.3: a PLTE chunk in a greyscale image is Malformed
 draw_image	tests/corpus/images/plte-in-grey.png	read=size	Malformed
 # 5.6: iCCP precedes PLTE; one after it is Malformed
 draw_image	tests/corpus/images/iccp-after-plte.png	read=size	Malformed
-# 11.3.3.3: an iCCP profile name of 1 to 79 bytes; an empty one is Malformed
+# 11.3.3.3: an iCCP profile name of 1 to 79 bytes and a null separator; an empty one, or 90 bytes with no null, is Malformed
 draw_image	tests/corpus/images/iccp-empty-name.png	read=size	Malformed
+draw_image	tests/corpus/images/iccp-name-unterminated.png	read=size	Malformed
 # 5.6, 11.3.3.3: a second iCCP, or one of compression method 1, is Malformed
 draw_image	tests/corpus/images/iccp-twice.png	read=size	Malformed
 draw_image	tests/corpus/images/iccp-method.png	read=size	Malformed
@@ -313,6 +321,7 @@ draw_image	tests/corpus/images/trns-after-idat.png	read=size	Malformed
 draw_image	tests/corpus/images/trns-twice.png	read=size	Malformed
 draw_image	tests/corpus/images/trns-in-alpha.png	read=size	Malformed
 draw_image	tests/corpus/images/trns-too-long.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-past-plte.png	read=size	Malformed
 # 5.4: an unknown critical chunk (first letter upper-case) is Unsupported
 draw_image	tests/corpus/images/unknown-critical-chunk.png	read=size	Unsupported
 # 11.2.4: image data of 6 rows for a height of 7 is Malformed

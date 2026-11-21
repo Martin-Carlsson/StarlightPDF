@@ -622,14 +622,14 @@ fn hundred_mb_object_before_catalog_compressed() {
     assert_page_count(object_file(OBJECT_RUNS, Coding::Flate), Ok(1), STREAM_BOUND);
 }
 
-/// ISO 32000-2:2020, 7.4.4.4: rows past the default decoded limit of 1 GiB.
+/// ISO 32000-2:2020, 7.4.4.4.
 #[test]
-fn predictor_columns_past_the_decoded_limit_fail_with_limit_exceeded() {
+fn predictor_columns_of_a_billion_fails_with_limit_exceeded() {
     assert_page_count(
         xref_file(
             10,
             Coding::Flate,
-            "/DecodeParms << /Predictor 12 /Columns 2000000000 >> ",
+            "/DecodeParms << /Predictor 12 /Columns 1000000000 >> ",
         ),
         Err(ErrorCode::LimitExceeded),
         STREAM_BOUND,

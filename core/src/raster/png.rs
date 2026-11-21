@@ -14,6 +14,9 @@ const EXIF_HEAD: usize = 0x1_0000;
 /// The largest chunk length and dimension (5.3, 11.2.2).
 const MAX: u32 = 0x7FFF_FFFF;
 
+/// The most pixels a row may hold: a predictor's most columns, so a drawn image reads back.
+const MAX_WIDTH: u32 = 0x1_0000;
+
 /// Adam7 passes (8.2): first column, first row, and the log2 of their column and row steps.
 const PASSES: [[u32; 4]; 7] = [
     [0, 0, 3, 3],
@@ -46,9 +49,6 @@ struct Chunks {
     /// The tRNS data.
     transparency: Option<Vec<u8>>,
 }
-
-/// A borrowed [`Pull`].
-struct Borrowed<'data, P>(&'data mut P);
 
 /// The IDAT data, read chunk by chunk.
 pub(super) struct Idat<'source> {
@@ -101,16 +101,8 @@ pub(super) struct Png {
     interlaced: bool,
     /// The tRNS colour key: grey, or red, green and blue (11.3.2.1).
     key: Option<[u16; 3]>,
-    /// The most bytes the samples may decode to.
-    limit: u64,
     /// Columns.
     width: u32,
-}
-
-impl<P: Pull> Pull for Borrowed<'_, P> {
-    fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
-        self.0.pull(buf)
-    }
 }
 
 impl Pull for Idat<'_> {
@@ -199,7 +191,7 @@ impl Chunks {
                     return Err(malformed());
                 }
                 let skip = u64::try_from(name.wrapping_add(2)).unwrap_or(u64::MAX);
-                let stored = u64::from(length).checked_sub(skip).ok_or_else(malformed)?;
+                let stored = u64::from(length).saturating_sub(skip);
                 self.profile = Some(Profile {
                     compressed: true,
                     length: stored,
@@ -256,12 +248,11 @@ impl Png {
         let mut inflate = Inflate::new(self.idat(source));
         for pass in self.passes() {
             let mut rows = Predictor::with_parameters(
-                Borrowed(&mut inflate),
+                &mut inflate,
                 15,
                 i64::from(self.channels()),
                 i64::from(self.bits),
                 i64::from(pass.width),
-                self.limit,
             )?;
             let mut row = buffer(self.row_bytes(pass.width))?;
             for index in 0..pass.height {
@@ -420,7 +411,9 @@ impl Png {
         let bits = u32::from(self.bits);
         let channels = self.channels();
         let size = usize::from(self.bits >> 3_u32);
-        let mut mask = Vec::new();
+        let (mask_bits, _) = self.mask().unwrap_or_default();
+        let mut mask =
+            reserved(u64::from(self.width).saturating_mul(u64::from(mask_bits >> 3_u32)))?;
         self.rows(source, &mut |row| {
             mask.clear();
             if self.alpha_channel() {
@@ -461,7 +454,7 @@ impl Png {
         }
         let size = usize::from(self.bits >> 3_u32);
         let pixel = usize::from(self.channels()).wrapping_mul(size);
-        let mut samples = Vec::new();
+        let mut samples = reserved(self.row_bytes(self.width))?;
         self.rows(source, &mut |row| {
             samples.clear();
             for each in row.chunks_exact(pixel) {
@@ -474,6 +467,13 @@ impl Png {
 
 /// A zeroed buffer of `length` bytes.
 fn buffer(length: u64) -> Result<Vec<u8>, PdfError> {
+    let mut bytes = reserved(length)?;
+    bytes.resize(usize::try_from(length).unwrap_or_default(), 0);
+    Ok(bytes)
+}
+
+/// An empty buffer with room for `length` bytes.
+fn reserved(length: u64) -> Result<Vec<u8>, PdfError> {
     let size = usize::try_from(length)
         .ok()
         .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, READ))?;
@@ -482,7 +482,6 @@ fn buffer(length: u64) -> Result<Vec<u8>, PdfError> {
         .try_reserve_exact(size)
         .ok()
         .ok_or_else(|| PdfError::new(ErrorCode::BudgetExceeded, READ))?;
-    bytes.resize(size, 0);
     Ok(bytes)
 }
 
@@ -567,6 +566,9 @@ fn parse_header(data: &[u8]) -> Result<Png, PdfError> {
     {
         return Err(malformed());
     }
+    if width > MAX_WIDTH {
+        return Err(PdfError::new(ErrorCode::LimitExceeded, READ));
+    }
     Ok(Png {
         alpha: None,
         bits,
@@ -576,7 +578,6 @@ fn parse_header(data: &[u8]) -> Result<Png, PdfError> {
         idat: 0,
         interlaced: interlace == 1,
         key: None,
-        limit: 0,
         width,
     })
 }
@@ -616,7 +617,6 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
         return Err(malformed());
     }
     let mut png = parse_header(&chunk(&mut cursor, b"IHDR", 13, 13)?)?;
-    png.limit = limit;
     let mut chunks = Chunks::default();
     loop {
         // A cut file fails at the chunk's CRC.

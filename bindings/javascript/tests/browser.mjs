@@ -2,15 +2,11 @@
 import { run } from "./runner.mjs";
 
 /**
- * @import { Api, Document, Sink } from "./api.mts"
+ * @import { Api, SplitOptions } from "./api.mts"
  * @import { Environment } from "./runner.mjs"
  * @typedef {{ ok: unknown } | { error: string }} Outcome
  * @typedef {{ make: () => BlobPart, size: number }} Piece
  * @typedef {{ decoded: number, file: Layout }} Virtual
- * @typedef {{ save(sink: Sink): Promise<unknown> }} Part
- * @typedef {{ by: "Pages", count: number } | { by: "Ranges", starts: number[] }} Split
- * @typedef {Document & { split(options: Split): AsyncIterable<Part> | Promise<AsyncIterable<Part>> }} Splittable
- * @typedef {Api["Sink"] & { fromAppend(append: (chunk: Uint8Array) => void): Promise<Sink> }} Sinks
  */
 
 /** Bytes in a mebibyte. */
@@ -511,7 +507,6 @@ async function missing(entry) {
  */
 async function unisolated(entry) {
   const api = await load(entry);
-  const sinks = /** @type {Sinks} */ (api.Sink);
   const document = await api.Document.open(
     await api.Source.fromBytes(await read("tests/corpus/page-count/nested-tree.pdf")),
   );
@@ -524,7 +519,7 @@ async function unisolated(entry) {
     );
   return [
     crossOriginIsolated,
-    await fate(sinks.fromAppend(() => undefined)),
+    await fate(api.Sink.fromAppend(() => undefined)),
     await fate(document.save(await api.Sink.inMemory(), () => true)),
   ];
 }
@@ -570,8 +565,7 @@ async function memory(entry) {
 async function splitting(entry) {
   const instances = record();
   const api = await load(entry);
-  const sinks = /** @type {Sinks} */ (api.Sink);
-  /** @type {[(pad: number, decoded: number) => Virtual, number, Split, (decoded: number) => number[]][]} */
+  /** @type {[(pad: number, decoded: number) => Virtual, number, SplitOptions, (decoded: number) => number[]][]} */
   const files = [
     [fewLargeStreams, LARGE, { by: "Pages", count: 1 }, (last) => [3 * flate(LARGE).size + flate(last).size]],
     [
@@ -586,13 +580,12 @@ async function splitting(entry) {
   for (const [build, decoded, options, floor] of files) {
     const made = fit(build, decoded);
     floors.push(floor(made.decoded));
-    const opened = await api.Document.open(await api.Source.fromBlob(made.file.blob()));
-    const document = /** @type {Splittable} */ (opened);
+    const document = await api.Document.open(await api.Source.fromBlob(made.file.blob()));
     const parts = [];
-    for await (const part of await document.split(options)) {
+    for await (const part of document.split(options)) {
       let bytes = 0;
       await part.save(
-        await sinks.fromAppend((chunk) => {
+        await api.Sink.fromAppend((chunk) => {
           bytes += chunk.length;
         }),
       );
