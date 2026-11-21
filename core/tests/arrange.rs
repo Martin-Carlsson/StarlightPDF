@@ -44,6 +44,9 @@ const SOURCE_PAGES: [&str; 5] = [
 /// The name link `at` of [`Counted::named`] uses, by its index.
 type Order = fn(usize) -> usize;
 
+/// The entries by which a link of [`Counted::named`] names its destination, given the name.
+type Naming = fn(&str) -> String;
+
 /// A PDF that counts the bytes it serves, in all and from objects it watches.
 struct Counted {
     /// The file.
@@ -73,15 +76,16 @@ impl Counted {
     }
 
     /// A page with [`LINKS`] links, link `at` to it by name `order(at)` of the destinations name
-    /// tree, whose root holds leaves of `leaf` names each: catalog 1, root page tree node 2, page
-    /// 3, the name tree from 4, watched (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5).
-    fn named(leaf: usize, order: Order) -> Self {
+    /// tree, given by `naming`, whose root holds leaves of `leaf` names each: catalog 1, root page
+    /// tree node 2, page 3, the name tree from 4, watched (ISO 32000-2:2020, 7.9.6, 12.3.2.4,
+    /// 12.5.6.5).
+    fn named(leaf: usize, order: Order, naming: Naming) -> Self {
         let name = |at: usize| format!("(d{at:05})");
         let links: Vec<String> = (0..LINKS)
             .map(|at| {
                 format!(
-                    "<< /Type /Annot /Subtype /Link /Rect [0 0 9 9] /Dest {} >>",
-                    name(order(at))
+                    "<< /Type /Annot /Subtype /Link /Rect [0 0 9 9] {} >>",
+                    naming(&name(order(at)))
                 )
             })
             .collect();
@@ -493,18 +497,24 @@ fn refusing_loss_reads_no_page_tree_node() -> Result<(), Box<dyn Error>> {
 }
 
 /// Splitting off a page whose links name their destinations and saving it reads the name tree
-/// a bounded number of times, not once per link: links in key order over leaves of 32 names, and
-/// links alternating between two leaves (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+/// a bounded number of times, not once per link: links by `Dest` in key order over leaves of 32
+/// names, and links by `Dest`, by a `GoTo` action of `AA` and by one after another action,
+/// alternating between two leaves (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.6.2, 12.6.3, 12.6.4.2).
 #[test]
 fn named_links_read_the_name_tree_a_few_times() -> Result<(), Box<dyn Error>> {
-    let cases: [(usize, Order); 2] = [
-        (32, |at| at),
-        (LINKS >> 1, |at| {
-            (at & 1).saturating_mul(LINKS >> 1).saturating_add(at >> 1)
+    let alternating: Order = |at| (at & 1).saturating_mul(LINKS >> 1).saturating_add(at >> 1);
+    let cases: [(usize, Order, Naming); 4] = [
+        (32, |at| at, |name| format!("/Dest {name}")),
+        (LINKS >> 1, alternating, |name| format!("/Dest {name}")),
+        (LINKS >> 1, alternating, |name| {
+            format!("/AA << /U << /S /GoTo /D {name} >> >>")
+        }),
+        (LINKS >> 1, alternating, |name| {
+            format!("/A << /S /URI /URI (u) /Next [<< /S /GoTo /D {name} >>] >>")
         }),
     ];
-    for (leaf, order) in cases {
-        let named = Arc::new(Counted::named(leaf, order));
+    for (at, (leaf, order, naming)) in cases.into_iter().enumerate() {
+        let named = Arc::new(Counted::named(leaf, order, naming));
         let parts = open_counted(&named)?.split(&by_pages(1))?;
         let part = parts.next()?.ok_or("no part")?;
         let sink = Sink::in_memory(&MemorySinkOptions::default())?;
@@ -512,9 +522,7 @@ fn named_links_read_the_name_tree_a_few_times() -> Result<(), Box<dyn Error>> {
         let read = named.watched_served.load(Ordering::Relaxed);
         let tree = named.watched.len();
         if read > 64 * tree {
-            return Err(
-                format!("leaves of {leaf}: {read} bytes of a {tree}-byte name tree read").into(),
-            );
+            return Err(format!("case {at}: {read} bytes of a {tree}-byte name tree read").into());
         }
     }
     Ok(())

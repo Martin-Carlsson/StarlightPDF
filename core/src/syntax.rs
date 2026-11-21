@@ -14,8 +14,9 @@ const CHUNK: usize = 512;
 /// Bytes kept of a name read in passing; longer names keep one more, so match no key.
 const NAME_LIMIT: usize = 127;
 
-/// Bytes of a number or keyword; longer ones are [`ErrorCode::Malformed`].
-const RUN_LIMIT: usize = 255;
+/// Bytes of a number or keyword, as many as [`write_real`] writes at most: a sign, `0.`, then a
+/// real's last digit at most 324 places on; longer ones are [`ErrorCode::Malformed`].
+const RUN_LIMIT: usize = 327;
 
 /// Where a direct object starts, in the source or in an object stream's decoded data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -643,7 +644,14 @@ where
                 Ok(Token::Keyword(Keyword::Other))
             }
             _ if !digits.is_empty() && point.is_none() => Ok(text.parse().map_or_else(
-                |_| text.parse().map_or(Token::Real(0.0), Token::Real),
+                |_| {
+                    Token::Real(
+                        text.parse()
+                            .ok()
+                            .filter(|real: &f64| real.is_finite())
+                            .unwrap_or(0.0_f64),
+                    )
+                },
                 Token::Integer,
             )),
             _ if point.is_some()
@@ -652,7 +660,7 @@ where
             {
                 text.parse()
                     .ok()
-                    .map(Token::Real)
+                    .map(|real: f64| Token::Real(if real.is_finite() { real } else { 0.0_f64 }))
                     .ok_or_else(|| self.malformed())
             }
             _ => Err(self.malformed()),
@@ -908,7 +916,7 @@ where
                     Token::Keyword(Keyword::Null) => out.push_str("null"),
                     Token::Keyword(Keyword::True) => out.push_str("true"),
                     Token::Name(name) => write_name(&mut out, &name),
-                    Token::Real(value) => out.push_str(&value.to_string()),
+                    Token::Real(value) => write_real(&mut out, value),
                     Token::Reference(id) => {
                         out.push_str(&id.number.to_string());
                         out.push(' ');
@@ -993,6 +1001,15 @@ pub(crate) fn write_name(out: &mut String, name: &[u8]) {
             out.push('#');
             push_hex(out, byte, true);
         }
+    }
+}
+
+/// Appends `number` in canonical syntax, 0 when not finite (ISO 32000-2:2020, 7.3.3).
+pub(crate) fn write_real(out: &mut String, number: f64) {
+    if number.is_finite() {
+        out.push_str(&number.to_string());
+    } else {
+        out.push('0');
     }
 }
 

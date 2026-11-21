@@ -350,13 +350,12 @@ pub(crate) fn held(
     sink: &Sink,
 ) -> Result<(), PdfError> {
     let operation = store.operation();
-    if let Data::Stored(id) = data {
-        return write(store, id, decode, sink);
-    }
-    let undone = if decode {
-        filters(store, overlay, entries)?
-    } else {
-        Vec::new()
+    let undo = || {
+        if decode {
+            filters(store, overlay, entries)
+        } else {
+            Ok(Vec::new())
+        }
     };
     match data {
         Data::Stored(id) => write(store, id, decode, sink),
@@ -364,13 +363,14 @@ pub(crate) fn held(
             store,
             overlay,
             (Box::new(bytes.as_slice()), decode),
-            undone,
+            undo()?,
             sink,
         ),
-        Data::Produced(producer) if undone.is_empty() => {
-            producer.write(&mut |bytes| sink.write(bytes, operation))
-        }
         Data::Produced(producer) => {
+            let undone = undo()?;
+            if undone.is_empty() {
+                return producer.write(&mut |bytes| sink.write(bytes, operation));
+            }
             let stored = producer
                 .pull()
                 .ok_or_else(|| PdfError::new(ErrorCode::Unsupported, operation))?;

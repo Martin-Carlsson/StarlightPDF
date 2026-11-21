@@ -10,7 +10,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use crate::objects::{ObjectId, XrefKind};
 use crate::pull::Pull;
 use crate::store::Objects;
-use crate::syntax::{write_name, write_string};
+use crate::syntax::{write_name, write_real, write_string};
 use crate::{ErrorCode, PdfError};
 
 /// A dictionary's entries, in order, each key once.
@@ -168,8 +168,7 @@ impl Object {
             Self::Integer(number) => out.push_str(&number.to_string()),
             Self::Name(bytes) => write_name(out, &bytes),
             Self::Null => out.push_str("null"),
-            Self::Real(number) if number.is_finite() => out.push_str(&number.to_string()),
-            Self::Real(_) => out.push('0'),
+            Self::Real(number) => write_real(out, number),
             Self::Reference(id) => {
                 out.push_str(&id.number.to_string());
                 out.push(' ');

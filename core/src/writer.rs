@@ -12,7 +12,7 @@ use crate::progress::Progress;
 use crate::pull::Pull;
 use crate::store::Objects;
 use crate::stream::stored_data;
-use crate::syntax::is_regular;
+use crate::syntax::{is_regular, write_real};
 use crate::{ErrorCode, PdfError, Version};
 
 /// Bytes gathered before they go to the sink.
@@ -437,10 +437,11 @@ fn value(text: &mut Vec<u8>, object: Object, numbers: &mut Numbers<'_>) -> Resul
             name(text, &bytes);
         }
         Object::Null | Object::Stream(..) => text.extend_from_slice(b"null"),
-        Object::Real(number) if number.is_finite() => {
-            text.extend_from_slice(number.to_string().as_bytes());
+        Object::Real(number) => {
+            let mut real = String::new();
+            write_real(&mut real, number);
+            text.extend_from_slice(real.as_bytes());
         }
-        Object::Real(_) => text.push(b'0'),
         Object::Reference(id) => match numbers.number(id)? {
             Some(number) => text.extend_from_slice(format!("{number} 0 R").as_bytes()),
             None => text.extend_from_slice(b"null"),

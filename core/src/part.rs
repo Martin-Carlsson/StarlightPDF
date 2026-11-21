@@ -4,6 +4,7 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
+use core::mem;
 use std::sync::{Mutex, PoisonError};
 
 use crate::objects::{ObjectId, XrefKind};
@@ -74,19 +75,16 @@ struct Level {
     room: usize,
 }
 
-/// Named destinations read last: the keys they cover, `None` all, and the entries, sorted by key
-/// (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+/// Named destinations, sorted by key (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
 #[derive(Debug)]
 struct Named {
-    /// The first and last key covered.
-    covers: Option<(Vec<u8>, Vec<u8>)>,
     /// Keys and values.
     entries: Vec<(Vec<u8>, Object)>,
 }
 
 /// Where a document's pages are in its page tree: 4 bytes per object.
 pub(crate) struct Pages {
-    /// Whether a page has annotations.
+    /// Whether a page has annotations or actions.
     annotated: bool,
     /// The document's catalog.
     catalog: Object,
@@ -99,8 +97,6 @@ pub(crate) struct Pages {
     index: Vec<u32>,
     /// The page tree node looked up last and the attributes it and its ancestors give.
     inherited: Mutex<Option<(u32, Dictionary)>>,
-    /// The `Dests` name tree leaf read last.
-    leaf: Mutex<Option<Arc<Named>>>,
     /// The root page tree node.
     top: ObjectId,
     /// Where the last walk stopped, which a walk from there or later goes on from, so parts
@@ -127,8 +123,8 @@ pub(crate) struct Part {
     listed: Option<Vec<ObjectId>>,
     /// The document's pages.
     pages: Arc<Pages>,
-    /// The destinations the strings its pages' links name name, null when none, once
-    /// [`Part::prepare`] has read them.
+    /// The destinations the strings its open action and its pages' links and actions name name,
+    /// null when none, once [`Part::prepare`] has read them.
     resolved: Option<Named>,
     /// The document's changes, as when split.
     source: Reading,
@@ -255,10 +251,10 @@ impl Named {
             .map(|entry| entry.1.clone())
     }
 
-    /// `entries`, sorted, covering `covers`.
-    fn new(covers: Option<(Vec<u8>, Vec<u8>)>, mut entries: Vec<(Vec<u8>, Object)>) -> Self {
+    /// `entries`, sorted.
+    fn new(mut entries: Vec<(Vec<u8>, Object)>) -> Self {
         entries.sort_by(|before, after| before.0.cmp(&after.0));
-        Self { covers, entries }
+        Self { entries }
     }
 }
 
@@ -324,7 +320,6 @@ impl Pages {
             dests: Mutex::new(None),
             index,
             inherited: Mutex::new(None),
-            leaf: Mutex::new(None),
             top,
             walked: Mutex::new(None),
         })
@@ -399,6 +394,46 @@ impl Pages {
 }
 
 impl Part {
+    /// Adds to `keys` the strings by which the `GoTo` actions among `actions` and the actions
+    /// after them name destinations, each action object once by `seen` (ISO 32000-2:2020,
+    /// 12.3.2.4, 12.6.2, 12.6.4.2).
+    fn actions(
+        &self,
+        objects: Objects<'_>,
+        mut actions: Vec<Object>,
+        (keys, seen): (&mut Vec<Vec<u8>>, &mut BTreeSet<u32>),
+    ) -> Result<(), PdfError> {
+        let source = &*self.source;
+        while let Some(held) = actions.pop() {
+            if let Object::Reference(id) = held
+                && !seen.insert(id.number)
+            {
+                continue;
+            }
+            match source.direct(objects, held)? {
+                Object::Array(more) => actions.extend(more.into_iter().rev()),
+                action @ Object::Dictionary(_) => {
+                    if let Some(Object::String(key)) = goto(&action)
+                        .map(|found| source.direct(objects, found))
+                        .transpose()?
+                    {
+                        keys.push(key);
+                    }
+                    actions.extend(action.get(b"Next"));
+                }
+                Object::Boolean(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => {}
+            }
+        }
+        Ok(())
+    }
+
     /// `destination`, explicit, and whether its page is outside the part; `None` when it names
     /// no page of the document (ISO 32000-2:2020, 12.3.2).
     fn aim(
@@ -490,7 +525,11 @@ impl Part {
                 Object::Dictionary(vec![(b"Nums".to_vec(), Object::Array(labels))]),
             ));
         }
-        let action = self.source.entry(objects, &self.catalog, b"OpenAction")?;
+        let action = followed(
+            objects,
+            &self.source,
+            self.catalog.get(b"OpenAction").unwrap_or(Object::Null),
+        )?;
         if !matches!(action, Object::Null)
             && let Some(kept) = self.open(objects, action)?
         {
@@ -545,7 +584,7 @@ impl Part {
             | Object::Stream(..)
             | Object::String(_) => Dictionary::new(),
         };
-        let made = Arc::new(Named::new(None, entries));
+        let made = Arc::new(Named::new(entries));
         *kept() = Some(Arc::clone(&made));
         Ok(made)
     }
@@ -582,9 +621,9 @@ impl Part {
             let Some(slot) = limits.get_mut(middle) else {
                 return Ok(None);
             };
-            let kid = kids.get(middle).cloned().unwrap_or(Object::Null);
+            let kid = || kids.get(middle).cloned().unwrap_or(Object::Null);
             if matches!(slot, Bounds::Unread) {
-                let child = source.direct(objects, kid.clone())?;
+                let child = source.direct(objects, kid())?;
                 *slot = match source.entry(objects, &child, b"Limits")? {
                     Object::Array(pair) => {
                         let mut bounds = pair.into_iter();
@@ -606,15 +645,22 @@ impl Part {
                     | Object::String(_) => Bounds::Missing,
                 };
             }
-            let Bounds::Held(first, last) = slot.clone() else {
+            // Taken and put back, so neither key is copied but on a match.
+            let Bounds::Held(first, last) = mem::replace(slot, Bounds::Missing) else {
                 return Ok(None);
             };
-            if key < first.as_slice() {
+            let found = if key < first.as_slice() {
                 high = middle;
+                None
             } else if key > last.as_slice() {
                 low = middle.saturating_add(1);
+                None
             } else {
-                return Ok(Some((kid, last)));
+                Some(last.clone())
+            };
+            *slot = Bounds::Held(first, last);
+            if let Some(held) = found {
+                return Ok(Some((kid(), held)));
             }
         }
         Ok(None)
@@ -681,81 +727,6 @@ impl Part {
         Ok(labels)
     }
 
-    /// The `Dests` name tree leaf that would hold `key`, its kids searched by their `Limits`,
-    /// kept as the last read; `None` when none (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
-    fn leaf(&self, objects: Objects<'_>, key: &[u8]) -> Result<Option<Arc<Named>>, PdfError> {
-        let source = &*self.source;
-        let kept = self
-            .pages
-            .leaf
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-            .filter(|leaf| {
-                leaf.covers
-                    .as_ref()
-                    .is_none_or(|covers| covers.0.as_slice() <= key && key <= covers.1.as_slice())
-            });
-        if kept.is_some() {
-            return Ok(kept);
-        }
-        let names = source.entry(objects, &self.catalog, b"Names")?;
-        let mut node = source.entry(objects, &names, b"Dests")?;
-        let mut covers = None;
-        for _ in 0..=objects.depth_limit() {
-            if let Object::Array(pairs) = source.entry(objects, &node, b"Names")? {
-                let mut entries = Vec::new();
-                let mut items = pairs.into_iter();
-                while let (Some(held), Some(value)) = (items.next(), items.next()) {
-                    if let Object::String(found) = source.direct(objects, held)? {
-                        entries.push((found, value));
-                    }
-                }
-                let leaf = Arc::new(Named::new(covers, entries));
-                *self
-                    .pages
-                    .leaf
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&leaf));
-                return Ok(Some(leaf));
-            }
-            let Object::Array(kids) = source.entry(objects, &node, b"Kids")? else {
-                return Ok(None);
-            };
-            let (mut low, mut high) = (0, kids.len());
-            let mut below = None;
-            while low < high {
-                let middle =
-                    low.saturating_add(high.saturating_sub(low).checked_div(2).unwrap_or_default());
-                let kid = kids.get(middle).cloned().unwrap_or(Object::Null);
-                let child = source.direct(objects, kid)?;
-                let Object::Array(limits) = source.entry(objects, &child, b"Limits")? else {
-                    return Ok(None);
-                };
-                let mut bounds = limits.into_iter();
-                let (Some(Object::String(first)), Some(Object::String(last))) =
-                    (bounds.next(), bounds.next())
-                else {
-                    return Ok(None);
-                };
-                if key < first.as_slice() {
-                    high = middle;
-                } else if key > last.as_slice() {
-                    low = middle.saturating_add(1);
-                } else {
-                    below = Some((child, (first, last)));
-                    break;
-                }
-            }
-            let Some((found, limits)) = below else {
-                return Ok(None);
-            };
-            node = found;
-            covers = Some(limits);
-        }
-        Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
-    }
-
     /// `entries` with a destination named or to a page of the part made explicit, a link to a
     /// page outside it without `Dest` and `A`, a widget without its field (ISO 32000-2:2020,
     /// 12.3.2, 12.5.6.5, 12.6.4.2, 12.7.4.1).
@@ -815,15 +786,13 @@ impl Part {
         Ok(matches!(self.aim(objects, destination)?, Some((_, true))))
     }
 
-    /// The destination `name` names, by the catalog's `Dests` for a name and its `Dests` name
-    /// tree for a string; null when none (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+    /// The destination `name` names, by the catalog's `Dests` for a name and, for a string
+    /// [`Part::prepare`] gathered, its `Dests` name tree; null when none (ISO 32000-2:2020,
+    /// 7.9.6, 12.3.2.4).
     fn named(&self, objects: Objects<'_>, name: Object) -> Result<Object, PdfError> {
         let found = match name {
             Object::Name(key) => self.dests(objects)?.find(&key),
-            Object::String(key) => match self.resolved.as_ref().and_then(|held| held.find(&key)) {
-                Some(found) => Some(found),
-                None => self.leaf(objects, &key)?.and_then(|leaf| leaf.find(&key)),
-            },
+            Object::String(key) => self.resolved.as_ref().and_then(|held| held.find(&key)),
             Object::Array(_)
             | Object::Boolean(_)
             | Object::Dictionary(_)
@@ -836,21 +805,28 @@ impl Part {
         self.source.direct(objects, found.unwrap_or(Object::Null))
     }
 
-    /// The strings by which `annotation` names its destination, by `Dest` or a `GoTo` action
-    /// (ISO 32000-2:2020, 12.3.2.4, 12.5.6.5, 12.6.4.2).
-    fn names(&self, objects: Objects<'_>, annotation: &Object) -> Result<Vec<Vec<u8>>, PdfError> {
+    /// Adds to `keys` the strings by which `holder`, an annotation or a page, names
+    /// destinations: its `Dest` and the `GoTo` actions of its `A` and `AA`, as [`Part::actions`]
+    /// does (ISO 32000-2:2020, 12.3.2.4, 12.6.2, 12.6.3).
+    fn names(
+        &self,
+        objects: Objects<'_>,
+        holder: &Object,
+        gathered: (&mut Vec<Vec<u8>>, &mut BTreeSet<u32>),
+    ) -> Result<(), PdfError> {
         let source = &*self.source;
-        let action = source.entry(objects, annotation, b"A")?;
-        let mut found = Vec::new();
-        for destination in [annotation.get(b"Dest"), goto(&action)]
-            .into_iter()
-            .flatten()
+        if let Some(Object::String(key)) = holder
+            .get(b"Dest")
+            .map(|found| source.direct(objects, found))
+            .transpose()?
         {
-            if let Object::String(key) = source.direct(objects, destination)? {
-                found.push(key);
-            }
+            gathered.0.push(key);
         }
-        Ok(found)
+        let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
+        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
+            actions.extend(triggers.into_iter().map(|entry| entry.1));
+        }
+        self.actions(objects, actions, gathered)
     }
 
     /// A part of `pages`, those from `first` to before `end`, of the document of `source` and
@@ -1049,41 +1025,57 @@ impl Part {
             .map(|at| at.saturating_sub(self.first))
     }
 
-    /// Lists the part's pages and reads the destinations the strings their links name name, in
-    /// one pass over the name tree; then, unless `allow_loss`, fails with
+    /// Lists the part's pages, when one of the document's has annotations or actions, and reads
+    /// the destinations the strings its open action and its pages' links and actions name name,
+    /// in one pass over the name tree; then, unless `allow_loss`, fails with
     /// [`ErrorCode::LossRefused`] when a link leads to a page outside the part
-    /// (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5, 12.6.4.2).
+    /// (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5, 12.6.3, 12.6.4.2).
     pub(crate) fn prepare(&mut self, allow_loss: bool) -> Result<(), PdfError> {
-        if !self.pages.annotated {
-            return Ok(());
-        }
         let objects = self.store.objects(OPERATION);
-        let (mut listed, mut keys) = (Vec::new(), Vec::new());
-        let mut walked = self
-            .pages
-            .walked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        self.pages.walk(
-            (objects, &self.source),
-            (self.first, self.end),
-            &mut walked,
-            &mut |id| {
-                listed.push(id);
-                annotations(objects, &self.source, id, &mut |annotation| {
-                    keys.extend(self.names(objects, &annotation)?);
-                    Ok(())
-                })
-            },
+        let (mut keys, mut seen) = (Vec::new(), BTreeSet::new());
+        let action = followed(
+            objects,
+            &self.source,
+            self.catalog.get(b"OpenAction").unwrap_or(Object::Null),
         )?;
-        drop(walked);
+        if let Object::String(key) = action {
+            keys.push(key);
+        } else {
+            self.actions(objects, vec![action], (&mut keys, &mut seen))?;
+        }
+        let mut listed = Vec::new();
+        if self.pages.annotated {
+            let mut walked = self
+                .pages
+                .walked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            self.pages.walk(
+                (objects, &self.source),
+                (self.first, self.end),
+                &mut walked,
+                &mut |id| {
+                    listed.push(id);
+                    let page = self.source.resolve(objects, id)?;
+                    self.names(objects, &page, (&mut keys, &mut seen))?;
+                    annotations(objects, &self.source, &page, &mut |annotation| {
+                        self.names(objects, &annotation, (&mut keys, &mut seen))
+                    })
+                },
+            )?;
+        }
+        drop(seen);
         keys.sort_unstable();
         keys.dedup();
         let resolved = self.resolve(objects, keys)?;
         self.resolved = Some(resolved);
+        if !self.pages.annotated {
+            return Ok(());
+        }
         if !allow_loss {
             for &id in &listed {
-                annotations(objects, &self.source, id, &mut |annotation| {
+                let page = self.source.resolve(objects, id)?;
+                annotations(objects, &self.source, &page, &mut |annotation| {
                     if self.lost(objects, &annotation)? {
                         return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
                     }
@@ -1120,7 +1112,7 @@ impl Part {
     /// 12.3.2.4).
     fn resolve(&self, objects: Objects<'_>, keys: Vec<Vec<u8>>) -> Result<Named, PdfError> {
         if keys.is_empty() {
-            return Ok(Named::new(None, Vec::new()));
+            return Ok(Named::new(Vec::new()));
         }
         let source = &*self.source;
         let malformed = || objects.malformed();
@@ -1176,7 +1168,7 @@ impl Part {
                 at = end;
             }
         }
-        Ok(Named::new(None, keys.into_iter().zip(values).collect()))
+        Ok(Named::new(keys.into_iter().zip(values).collect()))
     }
 
     /// The new root node's number.
@@ -1252,21 +1244,33 @@ fn alone(action: &Object) -> Option<Object> {
     })
 }
 
-/// Gives `visit` each annotation of page `id` of the document of `objects` and `source`
+/// Gives `visit` each annotation of `page` of the document of `objects` and `source`
 /// (ISO 32000-2:2020, 12.5.2).
 fn annotations(
     objects: Objects<'_>,
     source: &Overlay,
-    id: ObjectId,
+    page: &Object,
     visit: &mut dyn FnMut(Object) -> Result<(), PdfError>,
 ) -> Result<(), PdfError> {
-    let page = source.resolve(objects, id)?;
-    if let Object::Array(items) = source.entry(objects, &page, b"Annots")? {
+    if let Object::Array(items) = source.entry(objects, page, b"Annots")? {
         for item in items {
             visit(source.direct(objects, item)?)?;
         }
     }
     Ok(())
+}
+
+/// `value` of the document of `objects` and `overlay`, followed through references, also to
+/// references (ISO 32000-2:2020, 7.3.10).
+fn followed(objects: Objects<'_>, overlay: &Overlay, value: Object) -> Result<Object, PdfError> {
+    let mut found = value;
+    for _ in 0..=objects.depth_limit() {
+        let Object::Reference(id) = found else {
+            return Ok(found);
+        };
+        found = overlay.resolve(objects, id)?;
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
 }
 
 /// A reference to object `number`, generation 0.
@@ -1301,7 +1305,7 @@ pub(crate) fn refuse(
     for (key, value) in catalog {
         lost |= match key.as_slice() {
             b"Dests" | b"PageLabels" | b"Pages" | b"Type" => false,
-            b"OpenAction" => match overlay.direct(objects, value)? {
+            b"OpenAction" => match followed(objects, overlay, value)? {
                 action @ Object::Dictionary(_) => alone(&action).is_none(),
                 Object::Array(_)
                 | Object::Boolean(_)
@@ -1357,7 +1361,7 @@ fn slot(index: &mut [u32], number: u32) -> Option<&mut u32> {
 }
 
 /// Whether `id` of the document of `objects` and `overlay` is a page tree node, else a page, and
-/// whether a page has annotations, read without its kids (ISO 32000-2:2020, 7.7.3).
+/// whether a page has annotations or actions, read without its kids (ISO 32000-2:2020, 7.7.3).
 fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, bool), PdfError> {
     if let Some((generation, object)) = overlay.get(id.number)? {
         if generation != id.generation || !matches!(object, Object::Dictionary(_)) {
@@ -1365,12 +1369,12 @@ fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, 
         }
         return Ok((
             object.get(b"Kids").is_some(),
-            object.get(b"Annots").is_some(),
+            object.get(b"Annots").is_some() || object.get(b"AA").is_some(),
         ));
     }
     let dictionary = objects.dictionary(Some(Value::Reference(id)))?;
     Ok((
         objects.get(dictionary, b"Kids")?.is_some(),
-        objects.get(dictionary, b"Annots")?.is_some(),
+        objects.get(dictionary, b"Annots")?.is_some() || objects.get(dictionary, b"AA")?.is_some(),
     ))
 }
