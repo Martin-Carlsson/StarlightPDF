@@ -62,7 +62,23 @@ pub(crate) enum Object {
 
 /// Changed and added objects over a source.
 #[derive(Debug, Default)]
-pub(crate) struct Overlay(Mutex<Edits>);
+pub(crate) struct Overlay {
+    /// The state.
+    edits: Mutex<Edits>,
+    /// What objects look like through this overlay, when not as stored.
+    view: Option<Box<dyn View>>,
+}
+
+/// Objects computed or rewritten on read.
+pub(crate) trait View: Debug + Send + Sync {
+    /// Object `number` and its generation, given `edited`, the overlay's own change of it; `None`
+    /// when free or missing.
+    fn object(
+        &self,
+        number: u32,
+        edited: Option<(u16, Object)>,
+    ) -> Result<Option<(u16, Object)>, PdfError>;
+}
 
 /// Stream data written at save time.
 pub(crate) trait Produce: Debug + Send + Sync {
@@ -155,9 +171,14 @@ impl Overlay {
         }
     }
 
+    /// The changed or added object `number` and its generation, not through the view.
+    fn edited(&self, number: u32) -> Option<(u16, Object)> {
+        self.edits().objects.get(&number).cloned()
+    }
+
     /// The state, locked.
     fn edits(&self) -> MutexGuard<'_, Edits> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.edits.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The value of `key` of `object`, resolved; null when missing.
@@ -170,17 +191,30 @@ impl Overlay {
         self.direct(objects, object.get(key).unwrap_or(Object::Null))
     }
 
-    /// The changed or added object `number` and its generation, when there is one.
-    pub(crate) fn get(&self, number: u32) -> Option<(u16, Object)> {
-        self.edits().objects.get(&number).cloned()
+    /// Object `number` and its generation when changed, added or given by the view.
+    pub(crate) fn get(&self, number: u32) -> Result<Option<(u16, Object)>, PdfError> {
+        let edited = self.edited(number);
+        match self.view.as_deref() {
+            Some(view) => view.object(number, edited),
+            None => Ok(edited),
+        }
+    }
+
+    /// Whether it holds a change or a view.
+    pub(crate) fn is_changed(&self) -> bool {
+        let edits = self.edits();
+        self.view.is_some() || !edits.objects.is_empty() || edits.trailer.is_some()
     }
 
     /// An overlay whose first added object gets `next`.
     pub(crate) fn new(next: u32) -> Self {
-        Self(Mutex::new(Edits {
-            next: next.max(1),
-            ..Edits::default()
-        }))
+        Self {
+            edits: Mutex::new(Edits {
+                next: next.max(1),
+                ..Edits::default()
+            }),
+            view: None,
+        }
     }
 
     /// One more than the highest object number in use, the source's included.
@@ -191,7 +225,7 @@ impl Overlay {
     /// Object `id`: changed or added here, else read from `objects`; null when missing or
     /// another generation.
     pub(crate) fn resolve(&self, objects: Objects<'_>, id: ObjectId) -> Result<Object, PdfError> {
-        match self.get(id.number) {
+        match self.get(id.number)? {
             Some((generation, object)) => Ok(if generation == id.generation {
                 object
             } else {
@@ -228,5 +262,13 @@ impl Overlay {
             .into_iter()
             .filter(|entry| matches!(entry.0.as_slice(), b"Root" | b"Info"))
             .collect())
+    }
+
+    /// An empty overlay seen through `view`, whose first added object gets `next`.
+    pub(crate) fn with_view(view: Box<dyn View>, next: u32) -> Self {
+        Self {
+            view: Some(view),
+            ..Self::new(next)
+        }
     }
 }

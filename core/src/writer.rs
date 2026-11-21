@@ -222,7 +222,7 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
             *written = pack(offset);
         }
         let old = u32::try_from(unpack(slot)).unwrap_or_default();
-        let object = match overlay.get(old) {
+        let object = match overlay.get(old)? {
             Some((_, found)) => found,
             None => source(objects, old)?,
         };

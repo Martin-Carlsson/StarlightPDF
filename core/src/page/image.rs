@@ -153,7 +153,7 @@ pub(super) fn draw(
     // Content ending in a stream drawn here leaves the graphics state as it found it.
     let drawn = match existing.last() {
         Some(&Object::Reference(id)) => matches!(
-            overlay.get(id.number),
+            overlay.get(id.number)?,
             Some((_, Object::Stream(_, Data::Bytes(bytes)))) if bytes.ends_with(PAINT)
         ),
         Some(_) | None => false,
