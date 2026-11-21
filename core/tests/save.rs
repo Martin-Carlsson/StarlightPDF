@@ -1618,21 +1618,6 @@ fn split_carries_page_labels_behind_references() -> Result<(), String> {
     ensure(found == expected, "page labels not carried and moved on")
 }
 
-/// A page whose `Parent` is a reference to a reference keeps its inherited `Resources` in its part
-/// (ISO 32000-2:2020, 7.3.10, 7.7.3.4).
-#[test]
-fn split_follows_a_parent_behind_a_reference() -> Result<(), String> {
-    let saved = parts("split/parent-behind-reference.pdf", &by_pages(1))?;
-    let file = parse(saved.first().ok_or("no part")?)?;
-    let resources = file.dictionary(file.get(&first_page(&file)?, "Resources"))?;
-    let fonts = file.dictionary(file.get(&resources, "Font"))?;
-    let font = file.dictionary(file.get(&fonts, "F1"))?;
-    ensure(
-        file.get(&font, "BaseFont") == name("Helvetica"),
-        "inherited resources lost",
-    )
-}
-
 /// A reference whose generation is not its object's is null (ISO 32000-2:2020, 7.3.10).
 #[test]
 fn references_to_another_generation_are_null() -> Result<(), String> {

@@ -243,7 +243,8 @@ fn fixed(value: f64) -> Option<i128> {
 }
 
 /// The value of `key` in the page tree node `node` or the nearest ancestor that has it,
-/// resolved; null when none has it (ISO 32000-2:2020, 7.7.3.4).
+/// resolved; null when none has it, a node not a dictionary malformed (ISO 32000-2:2020, 7.3.10,
+/// 7.7.3.4).
 fn inherited(
     objects: Objects<'_>,
     overlay: &Overlay,
@@ -256,10 +257,18 @@ fn inherited(
         if !matches!(found, Object::Null) {
             return Ok(found);
         }
-        current = overlay.entry(objects, &current, b"Parent")?;
-        if !matches!(current, Object::Dictionary(_)) {
-            return Ok(Object::Null);
-        }
+        current = match overlay.entry(objects, &current, b"Parent")? {
+            Object::Null => return Ok(Object::Null),
+            parent @ Object::Dictionary(_) => parent,
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => return Err(objects.malformed()),
+        };
     }
     Err(PdfError::new(ErrorCode::LimitExceeded, DRAW))
 }

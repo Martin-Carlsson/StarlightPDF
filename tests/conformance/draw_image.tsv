@@ -265,6 +265,8 @@ draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	draws=2	read=matrix	2 0 0 2 0 0;13 0 0 9 10 71;13 0 0 9 10 71
 draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	read=size	13 9
 draw_image	tests/corpus/images/c2-b8.png	on=tests/corpus/images/pages.pdf	index=6	draws=2	read=size	9 6
+# 7.3.10, 7.7.3.4: a page whose Parent refers to an integer, not a page tree node
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/split/parent-not-dictionary.pdf	read=size	Malformed
 # Exif 2.32 (CIPA DC-008-2019), 4.6.4 A, tag 274 Orientation, in JPEG APP1 (big-endian TIFF header for even values, little-endian for
 #   odd) and the PNG eXIf chunk: the image is drawn as oriented; width and height are of the oriented image; the samples and JPEG
 #   bytes stay as stored. Stored 6x4, so 5 to 8 display 4x6. On a 200x100 page at 10, 20 the displayed box is x 10..10+W, y 80-H..80.

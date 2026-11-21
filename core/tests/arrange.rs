@@ -434,17 +434,28 @@ fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
 }
 
 /// After an edit, a page whose `Parent` is a reference to a reference keeps its inherited crop
-/// box and rotation (ISO 32000-2:2020, 7.3.10, 7.7.3.4).
+/// box and rotation; one whose `Parent` refers to an integer is malformed (ISO 32000-2:2020,
+/// 7.3.10, 7.7.3.4).
 #[test]
 fn an_edited_page_inherits_through_a_parent_behind_a_reference() -> Result<(), Box<dyn Error>> {
-    let document = corpus("split/parent-behind-reference.pdf")?;
-    drop(document.insert_blank_page(&blank(200.0, 100.0, None))?);
     let mut options = PageOptions::default();
     options.index = 0;
+    let crop = |path: &str| -> Result<String, PdfError> {
+        let document = corpus(path)?;
+        drop(document.insert_blank_page(&blank(200.0, 100.0, None))?);
+        describe(&document.page(&options)?, Boundary::Crop)
+    };
     same(
-        &[describe(&document.page(&options)?, Boundary::Crop)?],
+        &[crop("split/parent-behind-reference.pdf")?],
         &["10 10 180 280 90"],
-    )
+    )?;
+    let code = crop("split/parent-not-dictionary.pdf")
+        .err()
+        .map(|error| error.code());
+    if code != Some(ErrorCode::Malformed) {
+        return Err(format!("{code:?}, not Malformed").into());
+    }
+    Ok(())
 }
 
 /// A link's `GoTo` action to another part behind a reference to a reference, its `S` too, is
