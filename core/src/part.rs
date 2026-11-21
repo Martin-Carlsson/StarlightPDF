@@ -410,11 +410,11 @@ impl Part {
             {
                 continue;
             }
-            match followed(objects, source, held)? {
+            match source.direct(objects, held)? {
                 Object::Array(more) => actions.extend(more.into_iter().rev()),
                 action @ Object::Dictionary(_) => {
                     if let Some(Object::String(key)) = goto(objects, source, &action)?
-                        .map(|found| followed(objects, source, found))
+                        .map(|found| source.direct(objects, found))
                         .transpose()?
                     {
                         keys.push(key);
@@ -441,16 +441,12 @@ impl Part {
         objects: Objects<'_>,
         destination: Object,
     ) -> Result<Option<(Object, bool)>, PdfError> {
-        let mut found = followed(objects, &self.source, destination)?;
+        let mut found = self.source.direct(objects, destination)?;
         if matches!(found, Object::Name(_) | Object::String(_)) {
             found = self.named(objects, found)?;
         }
         if matches!(found, Object::Dictionary(_)) {
-            found = followed(
-                objects,
-                &self.source,
-                found.get(b"D").unwrap_or(Object::Null),
-            )?;
+            found = self.source.entry(objects, &found, b"D")?;
         }
         let Object::Array(items) = found else {
             return Ok(None);
@@ -513,9 +509,7 @@ impl Part {
     ) -> Result<bool, PdfError> {
         let source = &*self.source;
         let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
-        if let Object::Dictionary(triggers) =
-            followed(objects, source, holder.get(b"AA").unwrap_or(Object::Null))?
-        {
+        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
             actions.extend(triggers.into_iter().map(|entry| entry.1));
         }
         while let Some(held) = actions.pop() {
@@ -524,7 +518,7 @@ impl Part {
             {
                 continue;
             }
-            match followed(objects, source, held)? {
+            match source.direct(objects, held)? {
                 Object::Array(more) => actions.extend(more),
                 action @ Object::Dictionary(_) => {
                     if let Some(destination) = goto(objects, source, &action)?
@@ -574,11 +568,7 @@ impl Part {
                 Object::Dictionary(vec![(b"Nums".to_vec(), Object::Array(labels))]),
             ));
         }
-        let action = followed(
-            objects,
-            &self.source,
-            self.catalog.get(b"OpenAction").unwrap_or(Object::Null),
-        )?;
+        let action = self.source.entry(objects, &self.catalog, b"OpenAction")?;
         if !matches!(action, Object::Null)
             && let Some(kept) = self.open(objects, action)?
         {
@@ -736,7 +726,7 @@ impl Part {
                     if !seen.insert(id.number) {
                         return Err(malformed());
                     }
-                    stack.push((source.resolve(objects, id)?, depth.saturating_add(1)));
+                    stack.push((source.direct(objects, kid)?, depth.saturating_add(1)));
                 }
                 continue;
             }
@@ -760,9 +750,17 @@ impl Part {
             }
         }
         if let Some((start, mut label)) = before {
-            let at = match label.get(b"St") {
-                Some(Object::Integer(found)) => found,
-                Some(_) | None => 1,
+            let at = match source.entry(objects, &label, b"St")? {
+                Object::Integer(found) => found,
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => 1,
             };
             label.set(
                 b"St",
@@ -826,11 +824,7 @@ impl Part {
         {
             return Ok(true);
         }
-        let action = followed(
-            objects,
-            &self.source,
-            object.get(b"A").unwrap_or(Object::Null),
-        )?;
+        let action = self.source.entry(objects, object, b"A")?;
         let Some(destination) = goto(objects, &self.source, &action)? else {
             return Ok(false);
         };
@@ -853,7 +847,7 @@ impl Part {
             | Object::Reference(_)
             | Object::Stream(..) => None,
         };
-        followed(objects, &self.source, found.unwrap_or(Object::Null))
+        self.source.direct(objects, found.unwrap_or(Object::Null))
     }
 
     /// Adds to `keys` the strings by which `holder`, an annotation or a page, names
@@ -868,15 +862,13 @@ impl Part {
         let source = &*self.source;
         if let Some(Object::String(key)) = holder
             .get(b"Dest")
-            .map(|found| followed(objects, source, found))
+            .map(|found| source.direct(objects, found))
             .transpose()?
         {
             gathered.0.push(key);
         }
         let mut actions: Vec<Object> = holder.get(b"A").into_iter().collect();
-        if let Object::Dictionary(triggers) =
-            followed(objects, source, holder.get(b"AA").unwrap_or(Object::Null))?
-        {
+        if let Object::Dictionary(triggers) = source.entry(objects, holder, b"AA")? {
             actions.extend(triggers.into_iter().map(|entry| entry.1));
         }
         self.actions(objects, actions, gathered)
@@ -1086,11 +1078,7 @@ impl Part {
     pub(crate) fn prepare(&mut self, allow_loss: bool) -> Result<(), PdfError> {
         let objects = self.store.objects(OPERATION);
         let (mut keys, mut seen) = (Vec::new(), BTreeSet::new());
-        let action = followed(
-            objects,
-            &self.source,
-            self.catalog.get(b"OpenAction").unwrap_or(Object::Null),
-        )?;
+        let action = self.source.entry(objects, &self.catalog, b"OpenAction")?;
         if let Object::String(key) = action {
             keys.push(key);
         } else {
@@ -1291,21 +1279,19 @@ fn goto(
     overlay: &Overlay,
     object: &Object,
 ) -> Result<Option<Object>, PdfError> {
-    Ok(
-        match followed(objects, overlay, object.get(b"S").unwrap_or(Object::Null))? {
-            Object::Name(kind) if kind == b"GoTo" => object.get(b"D"),
-            Object::Array(_)
-            | Object::Boolean(_)
-            | Object::Dictionary(_)
-            | Object::Integer(_)
-            | Object::Name(_)
-            | Object::Null
-            | Object::Real(_)
-            | Object::Reference(_)
-            | Object::Stream(..)
-            | Object::String(_) => None,
-        },
-    )
+    Ok(match overlay.entry(objects, object, b"S")? {
+        Object::Name(kind) if kind == b"GoTo" => object.get(b"D"),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Integer(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => None,
+    })
 }
 
 /// The destination of `action` of the document of `objects` and `overlay` when it is a `GoTo`
@@ -1315,11 +1301,7 @@ fn alone(
     overlay: &Overlay,
     action: &Object,
 ) -> Result<Option<Object>, PdfError> {
-    let next = followed(
-        objects,
-        overlay,
-        action.get(b"Next").unwrap_or(Object::Null),
-    )?;
+    let next = overlay.entry(objects, action, b"Next")?;
     Ok(goto(objects, overlay, action)?.filter(|_| matches!(next, Object::Null)))
 }
 
@@ -1337,19 +1319,6 @@ fn annotations(
         }
     }
     Ok(())
-}
-
-/// `value` of the document of `objects` and `overlay`, followed through references, also to
-/// references (ISO 32000-2:2020, 7.3.10).
-fn followed(objects: Objects<'_>, overlay: &Overlay, value: Object) -> Result<Object, PdfError> {
-    let mut found = value;
-    for _ in 0..=objects.depth_limit() {
-        let Object::Reference(id) = found else {
-            return Ok(found);
-        };
-        found = overlay.resolve(objects, id)?;
-    }
-    Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
 }
 
 /// A reference to object `number`, generation 0.
@@ -1372,7 +1341,8 @@ pub(crate) fn refuse(
     encrypted: bool,
 ) -> Result<(), PdfError> {
     let held = |object: &Object, key: &[u8]| {
-        followed(objects, overlay, object.get(key).unwrap_or(Object::Null))
+        overlay
+            .entry(objects, object, key)
             .map(|found| !matches!(found, Object::Null))
     };
     let trailer = Object::Dictionary(overlay.trailer(objects)?);
@@ -1383,7 +1353,7 @@ pub(crate) fn refuse(
     for (key, value) in catalog {
         lost |= match key.as_slice() {
             b"Dests" | b"PageLabels" | b"Pages" | b"Type" => false,
-            b"OpenAction" => match followed(objects, overlay, value)? {
+            b"OpenAction" => match overlay.direct(objects, value)? {
                 action @ Object::Dictionary(_) => alone(objects, overlay, &action)?.is_none(),
                 Object::Array(_)
                 | Object::Boolean(_)
@@ -1396,12 +1366,10 @@ pub(crate) fn refuse(
                 | Object::String(_) => false,
             },
             b"AcroForm" => matches!(
-                followed(objects, overlay, followed(objects, overlay, value)?
-                        .get(b"Fields")
-                        .unwrap_or(Object::Null))?,
+                overlay.entry(objects, &overlay.direct(objects, value)?, b"Fields")?,
                 Object::Array(items) if !items.is_empty()
             ),
-            b"Names" => match followed(objects, overlay, value)? {
+            b"Names" => match overlay.direct(objects, value)? {
                 Object::Dictionary(trees) => trees
                     .into_iter()
                     .any(|(tree, root)| tree != b"Dests" && !matches!(root, Object::Null)),
@@ -1415,9 +1383,9 @@ pub(crate) fn refuse(
                 | Object::Stream(..)
                 | Object::String(_) => false,
             },
-            b"Outlines" => held(&followed(objects, overlay, value)?, b"First")?,
+            b"Outlines" => held(&overlay.direct(objects, value)?, b"First")?,
             other if CARRIED.contains(&other) => false,
-            _ => !matches!(followed(objects, overlay, value)?, Object::Null),
+            _ => !matches!(overlay.direct(objects, value)?, Object::Null),
         };
     }
     if lost {

@@ -214,20 +214,17 @@ impl Overlay {
         })
     }
 
-    /// `value`, the object it refers to when a reference.
+    /// `value`, followed through references, also to references; a cycle or a chain longer
+    /// than the depth limit is [`ErrorCode::LimitExceeded`] (ISO 32000-2:2020, 7.3.10).
     pub(crate) fn direct(&self, objects: Objects<'_>, value: Object) -> Result<Object, PdfError> {
-        match value {
-            Object::Reference(id) => self.resolve(objects, id),
-            other @ (Object::Array(_)
-            | Object::Boolean(_)
-            | Object::Dictionary(_)
-            | Object::Integer(_)
-            | Object::Name(_)
-            | Object::Null
-            | Object::Real(_)
-            | Object::Stream(..)
-            | Object::String(_)) => Ok(other),
+        let mut found = value;
+        for _ in 0..=objects.depth_limit() {
+            let Object::Reference(id) = found else {
+                return Ok(found);
+            };
+            found = self.resolve(objects, id)?;
         }
+        Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
     }
 
     /// The changed or added object `number` and its generation, not through the view.

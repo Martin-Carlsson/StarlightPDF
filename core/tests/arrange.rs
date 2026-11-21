@@ -434,17 +434,10 @@ fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
 }
 
 /// A link's `GoTo` action to another part behind a reference to a reference, its `S` too, is
-/// refused as when direct; the part without bookmarks keeps it (ISO 32000-2:2020, 7.3.10,
-/// 12.6.4.2).
+/// refused as when direct (ISO 32000-2:2020, 7.3.10, 12.6.4.2).
 #[test]
 fn a_link_behind_references_is_refused() -> Result<(), Box<dyn Error>> {
-    let mut whole = by_pages(2);
-    whole.allow_loss = true;
-    let part = corpus("split/references-to-references.pdf")?
-        .split(&whole)?
-        .next()?
-        .ok_or("no part")?;
-    let code = part
+    let code = corpus("split/link-behind-references.pdf")?
         .split(&by_pages(1))
         .and_then(|parts| parts.next())
         .err()

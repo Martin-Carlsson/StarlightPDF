@@ -1590,6 +1590,34 @@ fn split_parts_carry_catalog_entries() -> Result<(), String> {
     Ok(())
 }
 
+/// Page labels whose tree, kid, `Nums`, keys, values and `St` are each behind a reference to a
+/// reference are carried and moved on (ISO 32000-2:2020, 7.3.10, 7.9.7, 12.4.2: page 1 starts
+/// decimal labels at 7, so page 2, the second part's first, is 8).
+#[test]
+fn split_carries_page_labels_behind_references() -> Result<(), String> {
+    let saved = parts("split/labels-behind-references.pdf", &by_pages(2))?;
+    let file = parse(saved.get(1).ok_or("no second part")?)?;
+    let page_labels = file.dictionary(file.get(&file.root()?, "PageLabels"))?;
+    let found: Vec<Value> = file
+        .get(&page_labels, "Nums")
+        .array()
+        .ok_or("no Nums")?
+        .into_iter()
+        .map(|item| {
+            file.dictionary(item.clone())
+                .map_or(item, Value::Dictionary)
+        })
+        .collect();
+    let expected = vec![
+        number("0"),
+        Value::Dictionary(Dictionary::from([
+            (b"S".to_vec(), name("D")),
+            (b"St".to_vec(), number("8")),
+        ])),
+    ];
+    ensure(found == expected, "page labels not carried and moved on")
+}
+
 /// A reference whose generation is not its object's is null (ISO 32000-2:2020, 7.3.10).
 #[test]
 fn references_to_another_generation_are_null() -> Result<(), String> {
