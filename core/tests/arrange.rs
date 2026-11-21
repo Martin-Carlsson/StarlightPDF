@@ -22,8 +22,14 @@ use starlightpdf::{ErrorCode, PdfError};
 /// The corpus directory.
 const CORPUS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/corpus");
 
-/// Pages of [`Flat`].
+/// Pages of [`Counted::flat`].
 const PAGES: usize = 4_096;
+
+/// Links of [`Counted::named`], one per destination name.
+const LINKS: usize = 1_024;
+
+/// Names per leaf of [`Counted::named`]'s destinations.
+const LEAF: usize = 32;
 
 /// The crop boxes and rotations of split/pages.pdf's pages (ISO 32000-2:2020, 7.7.3.4: the
 /// root gives `MediaBox` 0 0 612 792 and `Rotate` 90, the node over pages 1 and 2 `CropBox`
@@ -36,46 +42,94 @@ const SOURCE_PAGES: [&str; 5] = [
     "50 50 450 650 90",
 ];
 
-/// A PDF whose root page tree node holds every page; counts the bytes it serves, in all and
-/// from the root node.
-struct Flat {
+/// A PDF that counts the bytes it serves, in all and from objects it watches.
+struct Counted {
     /// The file.
     bytes: Vec<u8>,
-    /// The root node's bytes.
-    root: Range<usize>,
-    /// Bytes served from the root node.
-    root_served: AtomicUsize,
     /// Bytes served.
     served: AtomicUsize,
+    /// The watched objects' bytes.
+    watched: Range<usize>,
+    /// Bytes served from the watched objects.
+    watched_served: AtomicUsize,
 }
 
-impl Flat {
-    /// The file of [`PAGES`] pages: catalog 1, root 2, pages from 3 (ISO 32000-2:2020, 7.5,
-    /// 7.7.3).
-    fn new() -> Self {
-        let mut bytes = b"%PDF-2.0\n".to_vec();
-        let mut offsets = Vec::new();
-        let mut object = |file: &mut Vec<u8>, number: usize, text: &str| {
-            offsets.push(file.len());
-            file.extend(format!("{number} 0 obj\n{text}\nendobj\n").into_bytes());
-        };
-        object(&mut bytes, 1, "<< /Type /Catalog /Pages 2 0 R >>");
+impl Counted {
+    /// The file of [`PAGES`] pages, all kids of the root page tree node: catalog 1, root 2,
+    /// pages from 3; the root watched (ISO 32000-2:2020, 7.5, 7.7.3).
+    fn flat() -> Self {
         let kids: Vec<String> = (3..PAGES + 3).map(|kid| format!("{kid} 0 R")).collect();
-        let start = bytes.len();
-        object(
-            &mut bytes,
-            2,
-            &format!(
+        let mut objects = vec![
+            String::from("<< /Type /Catalog /Pages 2 0 R >>"),
+            format!(
                 "<< /Type /Pages /MediaBox [0 0 612 792] /Count {PAGES} /Kids [{}] >>",
                 kids.join(" ")
             ),
-        );
-        let root = start..bytes.len();
-        for number in 3..PAGES + 3 {
-            object(&mut bytes, number, "<< /Type /Page /Parent 2 0 R >>");
+        ];
+        objects.resize(PAGES + 2, String::from("<< /Type /Page /Parent 2 0 R >>"));
+        Self::new(&objects, 2..3)
+    }
+
+    /// A page with [`LINKS`] links, each to it by a name of the destinations name tree, whose
+    /// root holds leaves of [`LEAF`] names each: catalog 1, root page tree node 2, page 3, the
+    /// name tree from 4, watched (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5).
+    fn named() -> Self {
+        let name = |at: usize| format!("(d{at:05})");
+        let links: Vec<String> = (0..LINKS)
+            .map(|at| {
+                format!(
+                    "<< /Type /Annot /Subtype /Link /Rect [0 0 9 9] /Dest {} >>",
+                    name(at)
+                )
+            })
+            .collect();
+        let leaves = LINKS.div_ceil(LEAF);
+        let kids: Vec<String> = (5..leaves.saturating_add(5))
+            .map(|kid| format!("{kid} 0 R"))
+            .collect();
+        let mut objects = vec![
+            String::from("<< /Type /Catalog /Pages 2 0 R /Names << /Dests 4 0 R >> >>"),
+            String::from("<< /Type /Pages /MediaBox [0 0 612 792] /Count 1 /Kids [3 0 R] >>"),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /Annots [{}] >>",
+                links.join(" ")
+            ),
+            format!("<< /Kids [{}] >>", kids.join(" ")),
+        ];
+        for leaf in 0..leaves {
+            let first = leaf.saturating_mul(LEAF);
+            let last = first.saturating_add(LEAF).min(LINKS).saturating_sub(1);
+            let names: Vec<String> = (first..=last)
+                .map(|at| format!("{} [3 0 R /Fit]", name(at)))
+                .collect();
+            objects.push(format!(
+                "<< /Limits [{} {}] /Names [{}] >>",
+                name(first),
+                name(last),
+                names.join(" ")
+            ));
+        }
+        let end = objects.len().saturating_add(1);
+        Self::new(&objects, 4..end)
+    }
+
+    /// A file of numbered `objects`, from 1, watching objects `watched` (ISO 32000-2:2020, 7.5).
+    fn new(objects: &[String], watched: Range<usize>) -> Self {
+        let mut bytes = b"%PDF-2.0\n".to_vec();
+        let mut offsets = Vec::new();
+        let mut range = 0..0;
+        for (number, text) in (1..).zip(objects) {
+            if number == watched.start {
+                range.start = bytes.len();
+            }
+            offsets.push(bytes.len());
+            bytes.extend(format!("{number} 0 obj\n{text}\nendobj\n").into_bytes());
+            if number.saturating_add(1) == watched.end {
+                range.end = bytes.len();
+            }
         }
         let table = bytes.len();
-        let size = PAGES + 3;
+        let size = objects.len().saturating_add(1);
         bytes.extend(format!("xref\n0 {size}\n0000000000 65535 f\r\n").into_bytes());
         for offset in offsets {
             bytes.extend(format!("{offset:010} 00000 n\r\n").into_bytes());
@@ -86,14 +140,14 @@ impl Flat {
         );
         Self {
             bytes,
-            root,
-            root_served: AtomicUsize::new(0),
             served: AtomicUsize::new(0),
+            watched: range,
+            watched_served: AtomicUsize::new(0),
         }
     }
 }
 
-impl ReadAt for Flat {
+impl ReadAt for Counted {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
         let rest = self.bytes.get(start..).unwrap_or_default();
@@ -103,9 +157,9 @@ impl ReadAt for Flat {
         }
         let end = start.saturating_add(count);
         let overlap = end
-            .min(self.root.end)
-            .saturating_sub(start.max(self.root.start));
-        let _root = self.root_served.fetch_add(overlap, Ordering::Relaxed);
+            .min(self.watched.end)
+            .saturating_sub(start.max(self.watched.start));
+        let _watched = self.watched_served.fetch_add(overlap, Ordering::Relaxed);
         let _all = self.served.fetch_add(count, Ordering::Relaxed);
         Ok(count)
     }
@@ -166,9 +220,9 @@ fn same(found: &[String], expected: &[&str]) -> Result<(), Box<dyn Error>> {
     }
 }
 
-/// Opens `flat`.
-fn open_flat(flat: &Arc<Flat>) -> Result<Document, PdfError> {
-    let read_at: Arc<dyn ReadAt> = Arc::<Flat>::clone(flat);
+/// Opens `counted`.
+fn open_counted(counted: &Arc<Counted>) -> Result<Document, PdfError> {
+    let read_at: Arc<dyn ReadAt> = Arc::<Counted>::clone(counted);
     let source = Source::from_read_at(&read_at, &ReadAtSourceOptions::default())?;
     Document::open(&source, None, &OpenOptions::default())
 }
@@ -241,29 +295,82 @@ fn a_refused_part_is_not_skipped() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// While a split's cursor or a part of it lives, which read the document, its edits fail with
-/// `Busy`; after, they succeed (handles ADR: many readers or one writer).
+/// An edit succeeds while a split's cursor and a part of it live, which then fail with
+/// `StaleHandle`; a split after the edit reads the document as edited (handles ADR).
 #[test]
-fn edits_fail_while_a_split_reads_the_document() -> Result<(), Box<dyn Error>> {
+fn an_edit_makes_a_split_stale() -> Result<(), Box<dyn Error>> {
     let document = corpus("split/pages.pdf")?;
     let parts = document.split(&by_pages(2))?;
     let part = parts.next()?.ok_or("no part")?;
-    let busy = |found: &Document| {
-        found
-            .insert_blank_page(&InsertBlankPageOptions::default())
-            .err()
-            .map(|error| error.code())
-    };
-    if busy(&document) != Some(ErrorCode::Busy) {
-        return Err("an edit succeeded beside a live split".into());
+    drop(document.insert_blank_page(&InsertBlankPageOptions::default())?);
+    let stale = Some(ErrorCode::StaleHandle);
+    if part.page_count().err().map(|error| error.code()) != stale {
+        return Err("a part made before an edit was used".into());
     }
-    drop(parts);
-    if busy(&document) != Some(ErrorCode::Busy) {
-        return Err("an edit succeeded beside a live part".into());
+    if parts.next().err().map(|error| error.code()) != stale {
+        return Err("a split made before an edit went on".into());
     }
-    drop(part);
-    if busy(&document).is_some() {
-        return Err("an edit failed after the split ended".into());
+    let after = document.split(&by_pages(7))?.next()?.ok_or("no part")?;
+    if after.page_count()? != 6 {
+        return Err("a split after an edit missed it".into());
+    }
+    Ok(())
+}
+
+/// A page tree kid that is a free object, so null, is malformed after an edit as before it
+/// (ISO 32000-2:2020, 7.3.10, 7.7.3.2).
+#[test]
+fn a_free_kid_is_malformed_after_an_edit() -> Result<(), Box<dyn Error>> {
+    let document = corpus("pages/kid-missing.pdf")?;
+    drop(document.insert_blank_page(&InsertBlankPageOptions::default())?);
+    let mut options = PageOptions::default();
+    options.index = 1;
+    let code = document.page(&options).err().map(|error| error.code());
+    if code != Some(ErrorCode::Malformed) {
+        return Err(format!("{code:?}, not Malformed").into());
+    }
+    Ok(())
+}
+
+/// Checking a split for what its parts would lose reads the root page tree node no more often
+/// than splitting with `allow_loss` does (ISO 32000-2:2020, 7.7.2, 7.7.3.2).
+#[test]
+fn refusing_loss_reads_no_page_tree_node() -> Result<(), Box<dyn Error>> {
+    let mut read = [0; 2];
+    let mut root = 0;
+    for (allow_loss, count) in [false, true].into_iter().zip(&mut read) {
+        let flat = Arc::new(Counted::flat());
+        let document = open_counted(&flat)?;
+        let before = flat.watched_served.load(Ordering::Relaxed);
+        let mut options = by_pages(1);
+        options.allow_loss = allow_loss;
+        drop(document.split(&options)?);
+        *count = flat
+            .watched_served
+            .load(Ordering::Relaxed)
+            .saturating_sub(before);
+        root = flat.watched.len();
+    }
+    let [refusing, allowing] = read;
+    if refusing.saturating_sub(allowing) >= root {
+        return Err(format!("{refusing} bytes of a {root}-byte root read, not {allowing}").into());
+    }
+    Ok(())
+}
+
+/// Splitting off a page whose links name their destinations and saving it reads the name tree
+/// a bounded number of times, not once per link (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+#[test]
+fn named_links_read_the_name_tree_a_few_times() -> Result<(), Box<dyn Error>> {
+    let named = Arc::new(Counted::named());
+    let parts = open_counted(&named)?.split(&by_pages(1))?;
+    let part = parts.next()?.ok_or("no part")?;
+    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+    let _report = part.save(&sink, None, &SaveOptions::default())?;
+    let read = named.watched_served.load(Ordering::Relaxed);
+    let tree = named.watched.len();
+    if read > 64 * tree {
+        return Err(format!("{read} bytes of a {tree}-byte name tree read").into());
     }
     Ok(())
 }
@@ -271,8 +378,8 @@ fn edits_fail_while_a_split_reads_the_document() -> Result<(), Box<dyn Error>> {
 /// Appending pages to a flat page tree reads no page already there.
 #[test]
 fn appending_pages_reads_no_other_page() -> Result<(), Box<dyn Error>> {
-    let flat = Arc::new(Flat::new());
-    let document = open_flat(&flat)?;
+    let flat = Arc::new(Counted::flat());
+    let document = open_counted(&flat)?;
     let before = flat.served.load(Ordering::Relaxed);
     for _ in 0_u8..64 {
         drop(document.insert_blank_page(&InsertBlankPageOptions::default())?);
@@ -290,14 +397,14 @@ fn appending_pages_reads_no_other_page() -> Result<(), Box<dyn Error>> {
 #[test]
 fn splitting_a_flat_tree_reads_its_kids_a_few_times() -> Result<(), Box<dyn Error>> {
     for count in [4_096, 1] {
-        let flat = Arc::new(Flat::new());
-        let parts = open_flat(&flat)?.split(&by_pages(count))?;
+        let flat = Arc::new(Counted::flat());
+        let parts = open_counted(&flat)?.split(&by_pages(count))?;
         while let Some(part) = parts.next()? {
             let sink = Sink::in_memory(&MemorySinkOptions::default())?;
             let _report = part.save(&sink, None, &SaveOptions::default())?;
         }
-        let read = flat.root_served.load(Ordering::Relaxed);
-        let root = flat.root.len();
+        let read = flat.watched_served.load(Ordering::Relaxed);
+        let root = flat.watched.len();
         if read > 8 * root {
             return Err(format!("by {count}: {read} bytes of a {root}-byte root read").into());
         }

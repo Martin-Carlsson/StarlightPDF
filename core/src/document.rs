@@ -205,7 +205,7 @@ struct Parts {
     next: u32,
     /// The document's pages.
     pages: Arc<Pages>,
-    /// The document split, unchanged while read.
+    /// The document split, as when split.
     reading: Reading,
     /// The document split.
     source: Document,
@@ -606,7 +606,7 @@ impl Document {
             (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
             (b"Pages".to_vec(), Object::Reference(pages)),
         ]))?;
-        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))])?;
+        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
         Ok(Self {
             overlay: Arc::new(overlay),
             part: false,
@@ -950,7 +950,7 @@ impl Document {
                 .and_then(|total| i64::try_from(total).ok())
                 .ok_or_else(|| objects.malformed())?;
             changed.set(b"Count", Some(Object::Integer(total)));
-            overlay.set(id, changed)?;
+            overlay.set(id, changed);
         }
         Ok(Page::new(page, &self.store, &self.overlay))
     }
@@ -1396,7 +1396,7 @@ impl Document {
         }
         let empty = matches!(&info, Object::Dictionary(entries) if entries.is_empty());
         match id {
-            Some(found) if !empty => self.overlay.set(found, info)?,
+            Some(found) if !empty => self.overlay.set(found, info),
             _ if empty && trailer.iter().all(|entry| entry.0 != b"Info") => {}
             _ => {
                 trailer.retain(|entry| entry.0 != b"Info");
@@ -1404,7 +1404,7 @@ impl Document {
                     let added = self.overlay.add(info)?;
                     trailer.push((b"Info".to_vec(), Object::Reference(added)));
                 }
-                self.overlay.set_trailer(trailer)?;
+                self.overlay.set_trailer(trailer);
             }
         }
         Ok(())
@@ -1582,17 +1582,17 @@ impl Document {
     ///
     /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
     /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
-    /// a link or open action to a page in another part fail with [`ErrorCode::LossRefused`]
-    /// unless `allow_loss`, which leaves them out; such a link keeps its appearance. A `count`
-    /// of 0 and `starts` empty, not ascending or past the last page fail with
-    /// [`ErrorCode::InvalidArgument`];
+    /// a link to a page in another part fail with [`ErrorCode::LossRefused`] unless
+    /// `allow_loss`, which leaves them out; such a link keeps its appearance. An open action to
+    /// a page in another part is view state, left out. A `count` of 0 and `starts` empty, not
+    /// ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
     /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
-    /// The parts read this document: while they or the returned [`Documents`] live, its edits
-    /// fail with [`ErrorCode::Busy`].
+    /// The parts read this document: after its next edit, they and the returned [`Documents`]
+    /// fail with [`ErrorCode::StaleHandle`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn split(&self, options: &SplitOptions) -> Result<Documents, PdfError> {
         /// The operation.
         const SPLIT: &str = "Document::split";
@@ -1613,6 +1613,7 @@ impl Document {
             return Err(invalid());
         }
         let objects = self.store.objects(SPLIT);
+        let reading = Reading::new(&self.overlay);
         if !options.allow_loss {
             part::refuse(
                 objects,
@@ -1621,6 +1622,7 @@ impl Document {
             )?;
         }
         let pages = Pages::read(objects, &self.overlay)?;
+        reading.fresh(SPLIT)?;
         if pages.count() != total {
             return Err(objects.malformed());
         }
@@ -1630,7 +1632,7 @@ impl Document {
                 count,
                 next: 0,
                 pages: Arc::new(pages),
-                reading: Reading::new(&self.overlay),
+                reading,
                 source: self.clone(),
                 starts,
             })),
@@ -1828,10 +1830,11 @@ impl Documents {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn next(&self) -> Result<Option<Document>, PdfError> {
         // Held until the part is made, so a failed part is not skipped.
         let mut parts = self.parts.lock().unwrap_or_else(PoisonError::into_inner);
+        parts.reading.fresh("Documents::next")?;
         let Some(range) = parts.range() else {
             return Ok(None);
         };
@@ -1840,7 +1843,7 @@ impl Documents {
         if !parts.allow_loss {
             part.refuse_links()?;
         }
-        let (catalog, next) = (part.catalog(parts.allow_loss)?, part.next());
+        let (catalog, next) = (part.catalog()?, part.next());
         parts.next = parts.next.saturating_add(1);
         let sparse = u64::from(range.1.saturating_sub(range.0)).saturating_mul(SPARSE)
             < u64::from(parts.pages.count());
@@ -1851,7 +1854,7 @@ impl Documents {
         let root = overlay.add(Object::Dictionary(catalog))?;
         let mut trailer = vec![(b"Root".to_vec(), Object::Reference(root))];
         trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
-        overlay.set_trailer(trailer)?;
+        overlay.set_trailer(trailer);
         Ok(Some(Document {
             overlay: Arc::new(overlay),
             part: true,

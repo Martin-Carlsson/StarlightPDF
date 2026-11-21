@@ -59,6 +59,18 @@ struct Level {
     at: Option<At>,
     /// Kids read and not taken.
     batch: VecDeque<ObjectId>,
+    /// The most kids a node can have: the document's objects.
+    room: usize,
+}
+
+/// Named destinations read last: the keys they cover, `None` all, and the entries, sorted by key
+/// (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+#[derive(Debug)]
+struct Named {
+    /// The first and last key covered.
+    covers: Option<(Vec<u8>, Vec<u8>)>,
+    /// Keys and values.
+    entries: Vec<(Vec<u8>, Object)>,
 }
 
 /// Where a document's pages are in its page tree: 4 bytes per object.
@@ -69,11 +81,15 @@ pub(crate) struct Pages {
     catalog: Object,
     /// The number of pages.
     count: u32,
+    /// The catalog's `Dests`, once read.
+    dests: Mutex<Option<Arc<Named>>>,
     /// Per object number: a page's index plus 1, [`NODE`] with the index of the first page
     /// under it for a page tree node, else 0.
     index: Vec<u32>,
     /// The page tree node looked up last and the attributes it and its ancestors give.
     inherited: Mutex<Option<(u32, Dictionary)>>,
+    /// The `Dests` name tree leaf read last.
+    leaf: Mutex<Option<Arc<Named>>>,
     /// The root page tree node.
     top: ObjectId,
     /// Where the last walk stopped, which a walk from there or later goes on from, so parts
@@ -100,7 +116,7 @@ pub(crate) struct Part {
     listed: Option<Vec<ObjectId>>,
     /// The document's pages.
     pages: Arc<Pages>,
-    /// The document's changes, unchanged while read.
+    /// The document's changes, as when split.
     source: Reading,
     /// The document's shared state.
     store: Arc<Store>,
@@ -133,7 +149,15 @@ impl Level {
         };
         while self.batch.len() < size {
             match reader.item()? {
-                Token::Reference(id) => self.batch.push_back(id),
+                Token::Reference(_) if self.batch.len() >= self.room => {
+                    return Err(objects.malformed());
+                }
+                Token::Reference(id) => {
+                    self.batch
+                        .try_reserve(1)
+                        .map_err(|_error| PdfError::new(ErrorCode::BudgetExceeded, OPERATION))?;
+                    self.batch.push_back(id);
+                }
                 Token::ArrayEnd => return Ok(()),
                 Token::ArrayStart
                 | Token::DictionaryEnd
@@ -153,6 +177,7 @@ impl Level {
     /// source a batch at a time unless the overlay holds the node (ISO 32000-2:2020, 7.7.3.2).
     fn new(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<Self, PdfError> {
         let malformed = || objects.malformed();
+        let room = usize::try_from(overlay.next().max(objects.size())).unwrap_or(usize::MAX);
         if let Some((generation, node)) = overlay.get(id.number)? {
             let kids = if generation == id.generation {
                 overlay.entry(objects, &node, b"Kids")?
@@ -166,7 +191,11 @@ impl Level {
                 .iter()
                 .map(|item| target(item).ok_or_else(malformed))
                 .collect::<Result<_, _>>()?;
-            return Ok(Self { at: None, batch });
+            return Ok(Self {
+                at: None,
+                batch,
+                room,
+            });
         }
         let node = objects.dictionary(Some(Value::Reference(id)))?;
         let array = match objects.get(node, b"Kids")? {
@@ -181,6 +210,7 @@ impl Level {
         let mut level = Self {
             at: Some(At::new(reader.position(), array.packed())),
             batch: VecDeque::new(),
+            room,
         };
         level.fill(objects)?;
         Ok(level)
@@ -196,6 +226,25 @@ impl Level {
     fn peek(&mut self, objects: Objects<'_>) -> Result<Option<ObjectId>, PdfError> {
         self.fill(objects)?;
         Ok(self.batch.front().copied())
+    }
+}
+
+impl Named {
+    /// The value of `key`, the first when held twice.
+    fn find(&self, key: &[u8]) -> Option<Object> {
+        let at = self
+            .entries
+            .partition_point(|entry| entry.0.as_slice() < key);
+        self.entries
+            .get(at)
+            .filter(|entry| entry.0 == key)
+            .map(|entry| entry.1.clone())
+    }
+
+    /// `entries`, sorted, covering `covers`.
+    fn new(covers: Option<(Vec<u8>, Vec<u8>)>, mut entries: Vec<(Vec<u8>, Object)>) -> Self {
+        entries.sort_by(|before, after| before.0.cmp(&after.0));
+        Self { covers, entries }
     }
 }
 
@@ -258,8 +307,10 @@ impl Pages {
             annotated,
             catalog,
             count,
+            dests: Mutex::new(None),
             index,
             inherited: Mutex::new(None),
+            leaf: Mutex::new(None),
             top,
             walked: Mutex::new(None),
         })
@@ -399,10 +450,9 @@ impl Part {
     }
 
     /// The new catalog: the page tree, the carried entries, the page labels from the part's
-    /// first page and an open action into the part; one leading elsewhere fails with
-    /// [`ErrorCode::LossRefused`] unless `allow_loss`, which leaves it out; `MarkInfo` goes with
-    /// the structure tree (ISO 32000-2:2020, 7.7.2, 12.3.2, 12.4.2, 14.7.1).
-    pub(crate) fn catalog(&self, allow_loss: bool) -> Result<Dictionary, PdfError> {
+    /// first page and an open action into the part, one leading elsewhere left out; `MarkInfo`
+    /// goes with the structure tree (ISO 32000-2:2020, 7.7.2, 12.3.2, 12.4.2, 14.7.1).
+    pub(crate) fn catalog(&self) -> Result<Dictionary, PdfError> {
         let objects = self.store.objects(OPERATION);
         let mut entries = vec![
             (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
@@ -427,12 +477,10 @@ impl Part {
             ));
         }
         let action = self.source.entry(objects, &self.catalog, b"OpenAction")?;
-        if !matches!(action, Object::Null) {
-            match self.open(objects, action)? {
-                Some(kept) => entries.push((b"OpenAction".to_vec(), kept)),
-                None if allow_loss => {}
-                None => return Err(PdfError::new(ErrorCode::LossRefused, OPERATION)),
-            }
+        if !matches!(action, Object::Null)
+            && let Some(kept) = self.open(objects, action)?
+        {
+            entries.push((b"OpenAction".to_vec(), kept));
         }
         Ok(entries)
     }
@@ -459,6 +507,35 @@ impl Part {
         })
     }
 
+    /// The catalog's `Dests`, kept once read (ISO 32000-2:2020, 12.3.2.4).
+    fn dests(&self, objects: Objects<'_>) -> Result<Arc<Named>, PdfError> {
+        let kept = || {
+            self.pages
+                .dests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        };
+        let held = kept().clone();
+        if let Some(found) = held {
+            return Ok(found);
+        }
+        let entries = match self.source.entry(objects, &self.catalog, b"Dests")? {
+            Object::Dictionary(entries) => entries,
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => Dictionary::new(),
+        };
+        let made = Arc::new(Named::new(None, entries));
+        *kept() = Some(Arc::clone(&made));
+        Ok(made)
+    }
+
     /// `entries`, links rewritten, values cleaned.
     fn entries(&self, objects: Objects<'_>, entries: Dictionary) -> Result<Dictionary, PdfError> {
         let rewritten = if entries
@@ -482,21 +559,21 @@ impl Part {
         let source = &*self.source;
         let malformed = || objects.malformed();
         let mut labels = Vec::new();
-        let mut stack = vec![source.entry(objects, &self.catalog, b"PageLabels")?];
+        let mut stack = vec![(source.entry(objects, &self.catalog, b"PageLabels")?, 0)];
         let mut seen = BTreeSet::new();
         let mut before: Option<(i64, Object)> = None;
         let (first, end) = (i64::from(self.first), i64::from(self.end));
-        while let Some(node) = stack.pop() {
-            if stack.len() >= usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
-                return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
-            }
+        while let Some((node, depth)) = stack.pop() {
             if let Object::Array(kids) = source.entry(objects, &node, b"Kids")? {
+                if depth >= objects.depth_limit() {
+                    return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
+                }
                 for kid in kids.into_iter().rev() {
                     let id = target(&kid).ok_or_else(malformed)?;
                     if !seen.insert(id.number) {
                         return Err(malformed());
                     }
-                    stack.push(source.resolve(objects, id)?);
+                    stack.push((source.resolve(objects, id)?, depth.saturating_add(1)));
                 }
                 continue;
             }
@@ -534,6 +611,81 @@ impl Part {
             labels.insert(0, Object::Integer(0));
         }
         Ok(labels)
+    }
+
+    /// The `Dests` name tree leaf that would hold `key`, its kids searched by their `Limits`,
+    /// kept as the last read; `None` when none (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+    fn leaf(&self, objects: Objects<'_>, key: &[u8]) -> Result<Option<Arc<Named>>, PdfError> {
+        let source = &*self.source;
+        let kept = self
+            .pages
+            .leaf
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .filter(|leaf| {
+                leaf.covers
+                    .as_ref()
+                    .is_none_or(|covers| covers.0.as_slice() <= key && key <= covers.1.as_slice())
+            });
+        if kept.is_some() {
+            return Ok(kept);
+        }
+        let names = source.entry(objects, &self.catalog, b"Names")?;
+        let mut node = source.entry(objects, &names, b"Dests")?;
+        let mut covers = None;
+        for _ in 0..=objects.depth_limit() {
+            if let Object::Array(pairs) = source.entry(objects, &node, b"Names")? {
+                let mut entries = Vec::new();
+                let mut items = pairs.into_iter();
+                while let (Some(held), Some(value)) = (items.next(), items.next()) {
+                    if let Object::String(found) = source.direct(objects, held)? {
+                        entries.push((found, value));
+                    }
+                }
+                let leaf = Arc::new(Named::new(covers, entries));
+                *self
+                    .pages
+                    .leaf
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&leaf));
+                return Ok(Some(leaf));
+            }
+            let Object::Array(kids) = source.entry(objects, &node, b"Kids")? else {
+                return Ok(None);
+            };
+            let (mut low, mut high) = (0, kids.len());
+            let mut below = None;
+            while low < high {
+                let middle =
+                    low.saturating_add(high.saturating_sub(low).checked_div(2).unwrap_or_default());
+                let kid = kids.get(middle).cloned().unwrap_or(Object::Null);
+                let child = source.direct(objects, kid)?;
+                let Object::Array(limits) = source.entry(objects, &child, b"Limits")? else {
+                    return Ok(None);
+                };
+                let mut bounds = limits.into_iter();
+                let (Some(Object::String(first)), Some(Object::String(last))) =
+                    (bounds.next(), bounds.next())
+                else {
+                    return Ok(None);
+                };
+                if key < first.as_slice() {
+                    high = middle;
+                } else if key > last.as_slice() {
+                    low = middle.saturating_add(1);
+                } else {
+                    below = Some((child, (first, last)));
+                    break;
+                }
+            }
+            let Some((found, limits)) = below else {
+                return Ok(None);
+            };
+            node = found;
+            covers = Some(limits);
+        }
+        Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
     }
 
     /// `entries` with a destination named or to a page of the part made explicit, a link to a
@@ -598,13 +750,9 @@ impl Part {
     /// The destination `name` names, by the catalog's `Dests` for a name and its `Dests` name
     /// tree for a string; null when none (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
     fn named(&self, objects: Objects<'_>, name: Object) -> Result<Object, PdfError> {
-        let source = &*self.source;
-        let key = match name {
-            Object::Name(key) => {
-                let dests = source.entry(objects, &self.catalog, b"Dests")?;
-                return source.entry(objects, &dests, &key);
-            }
-            Object::String(key) => key,
+        let found = match name {
+            Object::Name(key) => self.dests(objects)?.find(&key),
+            Object::String(key) => self.leaf(objects, &key)?.and_then(|leaf| leaf.find(&key)),
             Object::Array(_)
             | Object::Boolean(_)
             | Object::Dictionary(_)
@@ -612,46 +760,9 @@ impl Part {
             | Object::Null
             | Object::Real(_)
             | Object::Reference(_)
-            | Object::Stream(..) => return Ok(Object::Null),
+            | Object::Stream(..) => None,
         };
-        let names = source.entry(objects, &self.catalog, b"Names")?;
-        let mut node = source.entry(objects, &names, b"Dests")?;
-        for _ in 0..=objects.depth_limit() {
-            if let Object::Array(pairs) = source.entry(objects, &node, b"Names")? {
-                let mut items = pairs.into_iter();
-                while let (Some(held), Some(value)) = (items.next(), items.next()) {
-                    if let Object::String(found) = source.direct(objects, held)?
-                        && found == key
-                    {
-                        return source.direct(objects, value);
-                    }
-                }
-                return Ok(Object::Null);
-            }
-            let Object::Array(kids) = source.entry(objects, &node, b"Kids")? else {
-                return Ok(Object::Null);
-            };
-            let mut below = None;
-            for kid in kids {
-                let child = source.direct(objects, kid)?;
-                if let Object::Array(limits) = source.entry(objects, &child, b"Limits")? {
-                    let mut bounds = limits.into_iter();
-                    if let (Some(Object::String(low)), Some(Object::String(high))) =
-                        (bounds.next(), bounds.next())
-                        && low <= key
-                        && key <= high
-                    {
-                        below = Some(child);
-                        break;
-                    }
-                }
-            }
-            let Some(found) = below else {
-                return Ok(Object::Null);
-            };
-            node = found;
-        }
-        Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
+        self.source.direct(objects, found.unwrap_or(Object::Null))
     }
 
     /// A part of `pages`, those from `first` to before `end`, of the document of `source` and
@@ -912,6 +1023,7 @@ impl Part {
 
 impl View for Part {
     fn generation(&self, objects: Objects<'_>, number: u32) -> Result<Option<u16>, PdfError> {
+        self.source.fresh(OPERATION)?;
         if self.locate(number).is_some() {
             return Ok(Some(0));
         }
@@ -923,6 +1035,7 @@ impl View for Part {
         number: u32,
         edited: Option<(u16, Object)>,
     ) -> Result<Option<(u16, Object)>, PdfError> {
+        self.source.fresh(OPERATION)?;
         let objects = self.store.objects(OPERATION);
         let found = match edited {
             Some(own) => Some(own),
@@ -989,15 +1102,14 @@ pub(crate) fn refuse(
         return Err(objects.malformed());
     };
     let mut lost = encrypted;
-    for (key, held_value) in catalog {
-        let value = overlay.direct(objects, held_value)?;
+    for (key, value) in catalog {
         lost |= match key.as_slice() {
             b"Dests" | b"OpenAction" | b"PageLabels" | b"Pages" | b"Type" => false,
             b"AcroForm" => matches!(
-                overlay.entry(objects, &value, b"Fields")?,
+                overlay.entry(objects, &overlay.direct(objects, value)?, b"Fields")?,
                 Object::Array(items) if !items.is_empty()
             ),
-            b"Names" => match value {
+            b"Names" => match overlay.direct(objects, value)? {
                 Object::Dictionary(trees) => trees
                     .into_iter()
                     .any(|(tree, root)| tree != b"Dests" && !matches!(root, Object::Null)),
@@ -1011,8 +1123,9 @@ pub(crate) fn refuse(
                 | Object::Stream(..)
                 | Object::String(_) => false,
             },
-            b"Outlines" => held(&value, b"First")?,
-            other => !CARRIED.contains(&other) && !matches!(value, Object::Null),
+            b"Outlines" => held(&overlay.direct(objects, value)?, b"First")?,
+            other if CARRIED.contains(&other) => false,
+            _ => !matches!(overlay.direct(objects, value)?, Object::Null),
         };
     }
     if lost {

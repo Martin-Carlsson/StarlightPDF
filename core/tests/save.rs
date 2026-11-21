@@ -1521,13 +1521,12 @@ fn allow_loss_keeps_the_appearance_of_an_outside_link() -> Result<(), String> {
 }
 
 /// Every part carries the page mode, viewer preferences and extensions, page labels from its
-/// first page and an open action to a page it holds (ISO 32000-2:2020, 7.7.2, 12.2, 12.3.2,
-/// 12.4.2: pages 0 and 1 are labelled i and ii, 2 and 3 A-5 and A-6).
+/// first page and an open action to a page it holds; one to another part's page, view state, is
+/// left out without `allow_loss` (ISO 32000-2:2020, 7.7.2, 12.2, 12.3.2, 12.4.2: pages 0 and 1
+/// are labelled i and ii, 2 and 3 A-5 and A-6).
 #[test]
 fn split_parts_carry_catalog_entries() -> Result<(), String> {
-    let mut options = by_ranges(&[1, 3]);
-    options.allow_loss = true;
-    let saved = parts("split/open-action.pdf", &options)?;
+    let saved = parts("split/open-action.pdf", &by_ranges(&[1, 3]))?;
     ensure(saved.len() == 2, "not two parts")?;
     let roman = |start| {
         Value::Dictionary(Dictionary::from([

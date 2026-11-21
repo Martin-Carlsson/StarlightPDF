@@ -28,12 +28,12 @@ pub(crate) enum Data {
 /// The overlay's state.
 #[derive(Debug, Default)]
 struct Edits {
+    /// Changes made, which make [`Reading`]s from before them stale.
+    changes: u64,
     /// The number the next added object gets.
     next: u32,
     /// Changed and added objects, by number.
     objects: BTreeMap<u32, (u16, Object)>,
-    /// The [`Reading`]s alive: while any is, changes fail with [`ErrorCode::Busy`].
-    readers: usize,
     /// The trailer's `Root` and `Info` entries, when changed.
     trailer: Option<Dictionary>,
 }
@@ -72,9 +72,14 @@ pub(crate) struct Overlay {
     view: Option<Box<dyn View>>,
 }
 
-/// An overlay read by a split's parts, which fails changes with [`ErrorCode::Busy`] while alive.
+/// An overlay read by a split's parts, stale once it changes.
 #[derive(Debug)]
-pub(crate) struct Reading(Arc<Overlay>);
+pub(crate) struct Reading {
+    /// The overlay's changes when read first.
+    changes: u64,
+    /// The overlay.
+    overlay: Arc<Overlay>,
+}
 
 /// Objects computed or rewritten on read.
 pub(crate) trait View: Debug + Send + Sync {
@@ -152,7 +157,7 @@ impl Object {
 impl Overlay {
     /// Adds `object` under a new number, generation 0.
     pub(crate) fn add(&self, object: Object) -> Result<ObjectId, PdfError> {
-        let mut edits = self.writable("Overlay::add")?;
+        let mut edits = self.writable();
         let number = edits.next;
         edits.next = number
             .checked_add(1)
@@ -266,18 +271,16 @@ impl Overlay {
     }
 
     /// Replaces object `id`.
-    pub(crate) fn set(&self, id: ObjectId, object: Object) -> Result<(), PdfError> {
+    pub(crate) fn set(&self, id: ObjectId, object: Object) {
         let _old = self
-            .writable("Overlay::set")?
+            .writable()
             .objects
             .insert(id.number, (id.generation, object));
-        Ok(())
     }
 
     /// Replaces the trailer's `Root` and `Info` with those of `trailer`.
-    pub(crate) fn set_trailer(&self, trailer: Dictionary) -> Result<(), PdfError> {
-        self.writable("Overlay::set_trailer")?.trailer = Some(trailer);
-        Ok(())
+    pub(crate) fn set_trailer(&self, trailer: Dictionary) {
+        self.writable().trailer = Some(trailer);
     }
 
     /// The trailer's `Root` and `Info`, changed here or read from `objects`; none without a
@@ -304,28 +307,38 @@ impl Overlay {
         }
     }
 
-    /// The state, locked to change; [`ErrorCode::Busy`] while a [`Reading`] is alive.
-    fn writable(&self, operation: &'static str) -> Result<MutexGuard<'_, Edits>, PdfError> {
-        let edits = self.edits();
-        if edits.readers > 0 {
-            return Err(PdfError::new(ErrorCode::Busy, operation));
-        }
-        Ok(edits)
+    /// The state, locked to change, the change counted.
+    fn writable(&self) -> MutexGuard<'_, Edits> {
+        let mut edits = self.edits();
+        edits.changes = edits.changes.wrapping_add(1);
+        edits
     }
 }
 
 impl Reading {
-    /// The same overlay, read until dropped.
+    /// The same overlay, as stale as this.
     pub(crate) fn again(&self) -> Self {
-        Self::new(&self.0)
+        Self {
+            changes: self.changes,
+            overlay: Arc::clone(&self.overlay),
+        }
     }
 
-    /// `overlay`, read until dropped.
+    /// Fails with [`ErrorCode::StaleHandle`] once the overlay changed.
+    pub(crate) fn fresh(&self, operation: &'static str) -> Result<(), PdfError> {
+        if self.overlay.edits().changes == self.changes {
+            Ok(())
+        } else {
+            Err(PdfError::new(ErrorCode::StaleHandle, operation))
+        }
+    }
+
+    /// `overlay`, as it is now.
     pub(crate) fn new(overlay: &Arc<Overlay>) -> Self {
-        let mut edits = overlay.edits();
-        edits.readers = edits.readers.saturating_add(1);
-        drop(edits);
-        Self(Arc::clone(overlay))
+        Self {
+            changes: overlay.edits().changes,
+            overlay: Arc::clone(overlay),
+        }
     }
 }
 
@@ -333,13 +346,6 @@ impl Deref for Reading {
     type Target = Overlay;
 
     fn deref(&self) -> &Overlay {
-        &self.0
-    }
-}
-
-impl Drop for Reading {
-    fn drop(&mut self) {
-        let mut edits = self.0.edits();
-        edits.readers = edits.readers.saturating_sub(1);
+        &self.overlay
     }
 }

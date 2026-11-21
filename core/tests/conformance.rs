@@ -259,6 +259,8 @@ struct Case {
     part: Option<u32>,
     /// `password=`.
     password: String,
+    /// `path=`.
+    path: String,
     /// The limits, when any is given.
     policy: Option<ResourcePolicyOptions>,
     /// `read=`.
@@ -604,7 +606,7 @@ fn inserted(case: &Case) -> Result<String, Failure> {
 fn keys(family: &str) -> Option<(Vec<&'static str>, &'static [&'static str])> {
     let (own, needs): (&[&str], &[&str]) = match family {
         "open" | "page_count" | "catalog" | "encryption" => (&[], &[]),
-        "object" => (&["id"], &["id"]),
+        "object" => (&["id", "path"], &[]),
         "stream_data" => (&["id", "decode"], &["id"]),
         "page" | "rotation" => (&["index"], &["index"]),
         "boundary" => (&["index", "box"], &["index", "box"]),
@@ -792,6 +794,30 @@ fn object_at(document: &Document, id: ObjectId) -> Result<Object, Failure> {
         .ok_or_else(|| Failure::Case(format!("cannot parse {syntax}")))
 }
 
+/// The object `path`, `/`-separated keys and array indices, reaches from the catalog through
+/// the references on the way; its last step must be a reference.
+fn reached(document: &Document, path: &str) -> Result<ObjectId, Failure> {
+    let missing = |step: &str| Failure::Case(format!("path {path}: no {step}"));
+    let mut value = Object::Reference(document.catalog()?);
+    for step in path.split('/') {
+        value = match resolve(document, Some(value))? {
+            Object::Array(items) => step
+                .parse::<usize>()
+                .ok()
+                .and_then(|at| items.into_iter().nth(at)),
+            dictionary @ Object::Dictionary(_) => entry(dictionary, step),
+            Object::Name(_) | Object::Other(_) | Object::Reference(_) => None,
+        }
+        .ok_or_else(|| missing(step))?;
+    }
+    match value {
+        Object::Reference(id) => Ok(id),
+        Object::Array(_) | Object::Dictionary(_) | Object::Name(_) | Object::Other(_) => {
+            Err(missing("reference at its end"))
+        }
+    }
+}
+
 /// Opens `source` with `case`'s options.
 fn open(source: &Source, case: &Case) -> Result<Document, PdfError> {
     let policy = case.policy.as_ref().map(ResourcePolicy::new).transpose()?;
@@ -924,7 +950,17 @@ fn inspect(family: &str, case: &Case, document: &Document) -> Result<String, Fai
             let id = document.catalog()?;
             Ok(format!("{} {}", id.number, id.generation))
         }
-        "object" => Ok(document.object(&object(case))?),
+        "object" => {
+            let mut options = object(case);
+            match (has(case, "id"), has(case, "path")) {
+                (true, false) => {}
+                (false, true) => options.id = reached(document, &case.path)?,
+                (true, true) | (false, false) => {
+                    return Err(Failure::Case(String::from("object takes id= or path=")));
+                }
+            }
+            Ok(document.object(&options)?)
+        }
         "stream_data" => {
             let bytes = stream_data(document, case, case.decode)?;
             Ok(if bytes.is_empty() {
@@ -1068,6 +1104,7 @@ fn set(case: &mut Case, key: &str, value: &str) -> Option<()> {
             case.id.generation = generation.parse().ok()?;
         }
         "index" => case.index = value.parse().ok()?,
+        "path" => case.path = String::from(value),
         "box" => case.kind = BOXES.iter().find(|pair| pair.0 == value)?.1,
         "key" => {
             [

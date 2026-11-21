@@ -7,10 +7,11 @@ use alloc::sync::Arc;
 use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::io::{self, Cursor, Write as _};
+use std::path::PathBuf;
 
 use starlightpdf::arrange::{SplitBy, SplitOptions};
 use starlightpdf::document::{Document, OpenOptions, PageOptions, SaveOptions};
-use starlightpdf::input::{ReadAt, ReadAtSourceOptions, Source};
+use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::objects::{ObjectId, StreamDataOptions};
 use starlightpdf::output::{Append, AppendSinkOptions, Sink};
 use starlightpdf::page::BoundaryOptions;
@@ -30,6 +31,10 @@ const LARGE_SPLIT_BOUND: usize = 294_912;
 /// Most bytes opening the file of small objects, splitting it and saving each part to a sink may
 /// hold allocated at once; measured 98,456,531.
 const SMALL_SPLIT_BOUND: usize = 104_857_600;
+
+/// Most bytes opening split/packed-kids.pdf and splitting it may hold allocated at once; measured
+/// 78,936.
+const PACKED_KIDS_BOUND: usize = 98_304;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
@@ -777,4 +782,28 @@ fn split_and_save_many_small_objects_is_bounded() {
         floors,
         SMALL_SPLIT_BOUND,
     );
+}
+
+/// A page tree root in an object stream whose `Kids` holds a million references, more than the
+/// file's objects, fails as malformed without holding them (ISO 32000-2:2020, 7.5.7, 7.7.3.2).
+#[test]
+fn split_of_more_packed_kids_than_objects_is_bounded() {
+    let mut file = FileSourceOptions::default();
+    file.file = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../corpus/split/packed-kids.pdf"
+    ));
+    let mut options = SplitOptions::default();
+    options.by = SplitBy::Pages;
+    options.count = 1;
+    let (result, top) = peak(|| -> Result<(), PdfError> {
+        let source = Source::from_file(&file)?;
+        drop(Document::open(&source, None, &OpenOptions::default())?.split(&options)?);
+        Ok(())
+    });
+    assert_eq!(
+        result.map_err(|error| error.code()),
+        Err(ErrorCode::Malformed)
+    );
+    bounded(Some(top), PACKED_KIDS_BOUND);
 }

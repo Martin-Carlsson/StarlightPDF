@@ -834,7 +834,8 @@ impl Document {
             .map_err(|error| to_py(&error))
     }
 
-    /// The parts: `by` `"Pages"`, `count` each, or `"Ranges"`, one from each of `starts`.
+    /// The parts: `by` `"Pages"`, `count` each, or `"Ranges"`, one from each of `starts`; after
+    /// this document's next edit, they and the iterator fail `StaleHandle`.
     #[pyo3(signature = (*, by = "Pages", count = 0, starts = Vec::new(), allow_loss = false))]
     fn split(
         &self,

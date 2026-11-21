@@ -103,6 +103,36 @@ def object_id(given: dict[str, str]) -> starlightpdf.ObjectId:
     return starlightpdf.ObjectId(number=int(number), generation=int(generation))
 
 
+def read_object(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """Read the object `id=` names or `path=` reaches."""
+    if ("id" in given) == ("path" in given):
+        msg = "object takes id= or path="
+        raise ValueError(msg)
+    if "id" in given:
+        return document.object(object_id(given))
+    return document.object(as_id(reached(document, given["path"])))
+
+
+def reached(document: starlightpdf.Document, path: str) -> Ref:
+    """Return the reference `path`, keys and indices from the catalog, reaches."""
+    catalog = document.catalog
+    value: Obj | None = Ref(catalog.number, catalog.generation)
+    for step in path.split("/"):
+        held = resolve(document, value)
+        if isinstance(held, list):
+            fits = step.isdigit() and int(step) < len(held)
+            value = held[int(step)] if fits else None
+        else:
+            value = entry(held, step)
+        if value is None:
+            msg = f"path {path}: no {step}"
+            raise ValueError(msg)
+    if not isinstance(value, Ref):
+        msg = f"path {path}: no reference at its end"
+        raise TypeError(msg)
+    return value
+
+
 def page(document: starlightpdf.Document, given: dict[str, str]) -> starlightpdf.Page:
     """Get the page `index=` gives."""
     return document.page(index=int(given["index"]))
@@ -217,9 +247,9 @@ READS: dict[
         ),
     ),
     "object": (
-        {"id"},
-        {"id"},
-        lambda document, given: document.object(object_id(given)),
+        {"id", "path"},
+        set(),
+        read_object,
     ),
     "stream_data": (
         {"id", "decode"},

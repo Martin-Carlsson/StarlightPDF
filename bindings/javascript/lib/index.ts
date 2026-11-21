@@ -202,8 +202,18 @@ const collected = new FinalizationRegistry<number>((handle) => {
 /** `made`, holding `handle`. */
 function hold<T extends object>(made: T, handle: number): T {
   handles.set(made, handle);
-  collected.register(made, handle);
+  collected.register(made, handle, made);
   return made;
+}
+
+/** Frees the handle `made` holds now, not when collected. */
+async function release(made: object): Promise<void> {
+  const handle = handles.get(made);
+  if (handle !== undefined) {
+    handles.delete(made);
+    collected.unregister(made);
+    await call("free", handle).catch(() => undefined);
+  }
 }
 
 /** The core's unsigned integer types' largest values. */
@@ -559,18 +569,22 @@ export class Document {
     return call("setInfoDictionary", { document: handles.get(this) ?? 0, options });
   }
 
-  /** The parts, in order, one at a time. */
+  /** The parts, in order, one at a time; after this document's next edit, they and the iteration fail `StaleHandle`. */
   split(options: SplitOptions): AsyncIterable<Document> {
     const arg = { document: handles.get(this) ?? 0, options };
     return {
       async *[Symbol.asyncIterator](): AsyncGenerator<Document> {
         const cursor = hold({}, await call("split", arg));
-        for (;;) {
-          const part = await call("nextPart", handles.get(cursor) ?? 0);
-          if (part === null) {
-            return;
+        try {
+          for (;;) {
+            const part = await call("nextPart", handles.get(cursor) ?? 0);
+            if (part === null) {
+              return;
+            }
+            yield hold(new Document(), part);
           }
-          yield hold(new Document(), part);
+        } finally {
+          await release(cursor);
         }
       },
     };

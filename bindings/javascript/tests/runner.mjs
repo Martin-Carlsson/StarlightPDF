@@ -135,6 +135,32 @@ function objectId(given) {
   return { generation: integer(generation), number: integer(number) };
 }
 
+/** The object `id=` names or `path=` reaches. @type {(api: Api, document: Document, given: Map<string, string>) => Promise<string>} */
+async function readObject(_api, document, given) {
+  const path = given.get("path");
+  if (given.has("id") === (path !== undefined)) {
+    throw new Error("object takes id= or path=");
+  }
+  return document.object({ id: path === undefined ? objectId(given) : await reached(document, path) });
+}
+
+/** The reference `path`, keys and indices from the catalog, reaches. @type {(document: Document, path: string) => Promise<ObjectId>} */
+async function reached(document, path) {
+  /** @type {Obj | undefined} */
+  let value = { ref: await document.catalog() };
+  for (const step of path.split("/")) {
+    const held = await resolve(document, value);
+    value = "array" in held ? (/^\d+$/u.test(step) ? held.array[Number(step)] : undefined) : entry(held, step);
+    if (value === undefined) {
+      throw new Error(`path ${path}: no ${step}`);
+    }
+  }
+  if (!("ref" in value)) {
+    throw new Error(`path ${path}: no reference at its end`);
+  }
+  return value.ref;
+}
+
 /** @type {(document: Document, given: Map<string, string>) => Promise<Page>} */
 async function page(document, given) {
   return document.page({ index: integer(given.get("index")) });
@@ -188,10 +214,7 @@ const FAMILIES = new Map(
         takes: [],
       },
     ],
-    [
-      "object",
-      { needs: ["id"], read: async (_api, document, given) => document.object({ id: objectId(given) }), takes: ["id"] },
-    ],
+    ["object", { needs: [], read: readObject, takes: ["id", "path"] }],
     [
       "stream_data",
       {

@@ -115,6 +115,9 @@ pub(super) fn draw(
     let objects = page.store.objects(DRAW);
     let overlay = &*page.overlay;
     let mut dictionary = overlay.resolve(objects, page.id)?;
+    if !matches!(dictionary, Object::Dictionary(_)) {
+        return Err(objects.malformed());
+    }
     let image = raster::read(source, options.format, objects.decoded_limit())?;
     if image.dropped_profile() {
         objects.deviation(
@@ -188,7 +191,7 @@ pub(super) fn draw(
     resources.push((b"XObject".to_vec(), Object::Dictionary(xobjects)));
     dictionary.set(b"Resources", Some(Object::Dictionary(resources)));
     dictionary.set(b"Contents", Some(contents));
-    overlay.set(page.id, dictionary)?;
+    overlay.set(page.id, dictionary);
     Ok(())
 }
 

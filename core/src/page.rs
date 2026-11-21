@@ -906,6 +906,9 @@ fn find_held(
                 return Err(objects.malformed());
             };
             let child = overlay.resolve(objects, id)?;
+            if !matches!(child, Object::Dictionary(_)) {
+                return Err(objects.malformed());
+            }
             let pages = count(objects, overlay, &child)?;
             if child.get(b"Kids").is_none() && left == 0 {
                 return Ok(Page::new(id, store, overlay));

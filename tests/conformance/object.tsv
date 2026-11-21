@@ -131,7 +131,6 @@ object_file	tests/corpus/repair/scan-false-matches.pdf	id=9 0	null
 # 7.6.3: an integer object of an encrypted file, which has no strings to decrypt
 object_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=7 0	42
 object_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=7 0	42
-# 7.4.10, 7.6: a stream saved decrypted loses its own Crypt filter and its parameters; object 7 is sixth in reach order: Root, Info, Pages,
-#   page, then its contents
-object_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	id=6 0	<< /Length 44 >>
-object_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	id=6 0	<< /Length 44 >>
+# 7.4.10, 7.6: a stream saved decrypted loses its own Crypt filter and its parameters; it is the page's second content stream
+object_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
+object_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
