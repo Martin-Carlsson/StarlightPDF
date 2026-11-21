@@ -1,6 +1,8 @@
 //! A document's changed and added objects, held in memory over its source (ISO 32000-2:2020, 7.3).
 
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use core::fmt::Debug;
 use core::mem::replace;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -12,8 +14,12 @@ use crate::{ErrorCode, PdfError};
 pub(crate) type Dictionary = Vec<(Vec<u8>, Object)>;
 
 /// A stream's data.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Data {
+    /// These bytes.
+    Bytes(Vec<u8>),
+    /// Written at save time.
+    Produced(Arc<dyn Produce>),
     /// The stored bytes of the source's stream object, decrypted.
     Stored(ObjectId),
 }
@@ -57,6 +63,19 @@ pub(crate) enum Object {
 /// Changed and added objects over a source.
 #[derive(Debug, Default)]
 pub(crate) struct Overlay(Mutex<Edits>);
+
+/// Stream data written at save time.
+pub(crate) trait Produce: Debug + Send + Sync {
+    /// Bytes [`Produce::write`] writes.
+    fn length(&self) -> u64;
+
+    /// Writes the data in pieces to `out`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `out` or reading the data fails with.
+    fn write(&self, out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>) -> Result<(), PdfError>;
+}
 
 impl Object {
     /// The value of `key`, when a dictionary or stream holds it.

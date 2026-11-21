@@ -437,38 +437,62 @@ fn write(
     object: Object,
 ) -> Result<(), PdfError> {
     let mut text = format!("{number} 0 obj\n").into_bytes();
-    let Object::Stream(mut entries, Data::Stored(id)) = object else {
+    let Object::Stream(mut entries, data) = object else {
         value(&mut text, object, numbers)?;
         text.extend_from_slice(b"\nendobj\n");
         return out.put(&text);
     };
     entries.retain(|entry| entry.0 != b"Length");
     let malformed = || PdfError::new(ErrorCode::Malformed, OPERATION);
-    let (mut stored, known) = stored_data(objects, id)?.ok_or_else(malformed)?;
-    let length = if let Some(found) = known {
-        found
-    } else {
-        let counted = count(&mut *stored)?;
-        stored = stored_data(objects, id)?.ok_or_else(malformed)?.0;
-        counted
+    let mut head = |target: &mut Out<'_>, length: u64| {
+        entries.push((
+            b"Length".to_vec(),
+            Object::Integer(i64::try_from(length).map_err(|_error| malformed())?),
+        ));
+        value(&mut text, Object::Dictionary(entries.clone()), numbers)?;
+        text.extend_from_slice(b"\nstream\n");
+        target.put(&text)
     };
-    entries.push((
-        b"Length".to_vec(),
-        Object::Integer(i64::try_from(length).map_err(|_error| malformed())?),
-    ));
-    value(&mut text, Object::Dictionary(entries), numbers)?;
-    text.extend_from_slice(b"\nstream\n");
-    out.put(&text)?;
     let mut given = 0_u64;
-    let mut buffer = vec![0; CHUNK];
-    loop {
-        let pulled = stored.pull(&mut buffer)?;
-        let Some(bytes) = buffer.get(..pulled).filter(|bytes| !bytes.is_empty()) else {
-            break;
-        };
-        given = given.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
-        out.put(bytes)?;
-    }
+    let length = match data {
+        Data::Bytes(bytes) => {
+            let length = u64::try_from(bytes.len()).map_err(|_error| malformed())?;
+            head(out, length)?;
+            out.put(&bytes)?;
+            given = length;
+            length
+        }
+        Data::Produced(producer) => {
+            let length = producer.length();
+            head(out, length)?;
+            producer.write(&mut |bytes| {
+                given = given.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                out.put(bytes)
+            })?;
+            length
+        }
+        Data::Stored(id) => {
+            let (mut stored, known) = stored_data(objects, id)?.ok_or_else(malformed)?;
+            let length = if let Some(found) = known {
+                found
+            } else {
+                let counted = count(&mut *stored)?;
+                stored = stored_data(objects, id)?.ok_or_else(malformed)?.0;
+                counted
+            };
+            head(out, length)?;
+            let mut buffer = vec![0; CHUNK];
+            loop {
+                let pulled = stored.pull(&mut buffer)?;
+                let Some(bytes) = buffer.get(..pulled).filter(|bytes| !bytes.is_empty()) else {
+                    break;
+                };
+                given = given.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                out.put(bytes)?;
+            }
+            length
+        }
+    };
     if given != length {
         return Err(malformed());
     }

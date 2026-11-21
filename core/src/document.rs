@@ -905,7 +905,7 @@ impl Document {
             changed.set(b"Count", Some(Object::Integer(total)));
             overlay.set(id, changed);
         }
-        Ok(Page::new(page, &self.store))
+        Ok(Page::new(page, &self.store, &self.overlay))
     }
 
     /// Inserts pages of `from`, which may be this document.
@@ -1035,7 +1035,7 @@ impl Document {
     ///
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
     pub fn page(&self, options: &PageOptions) -> Result<Page, PdfError> {
-        page::find(&self.store, options.index)
+        page::find(&self.store, &self.overlay, options.index)
     }
 
     /// The number of pages: the root page tree node's `Count` (ISO 32000-2:2020, 7.7.3.2).

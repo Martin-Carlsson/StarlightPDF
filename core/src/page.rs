@@ -6,6 +6,8 @@
 //! [`Page::user_space_matrix`] maps them to user space. Page boundaries are in default user space
 //! (ISO 32000-2:2020, 14.11.2).
 
+mod image;
+
 use alloc::sync::Arc;
 
 use crate::annotations::{AddAnnotationOptions, Annotation, Annotations};
@@ -19,6 +21,7 @@ use crate::input::Source;
 use crate::layers::Layer;
 use crate::objects::ObjectId;
 use crate::output::Sink;
+use crate::overlay::Overlay;
 use crate::progress::Progress;
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
@@ -82,6 +85,8 @@ pub struct Matrix {
 pub struct Page {
     /// The page object.
     id: ObjectId,
+    /// The document's changes.
+    overlay: Arc<Overlay>,
     /// The document's shared state.
     store: Arc<Store>,
 }
@@ -228,9 +233,10 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_chart"))
     }
 
-    /// Draws an image; `mask` is a soft mask.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Draws a JPEG or PNG image with its top-left corner at `x`, `y`, at `width` × `height`
+    /// points, one given keeping the ratio, none at 72 DPI, as its Exif orientation shows it
+    /// unless ignored; the file is read again at save (ISO 32000-2:2020, 8.9). `mask`, `layer`
+    /// and `opacity` are not implemented; a `frame` other than 0 is invalid.
     ///
     /// # Errors
     ///
@@ -242,11 +248,10 @@ impl Page {
         layer: Option<&Layer>,
         options: &DrawImageOptions,
     ) -> Result<(), PdfError> {
-        let _: &Source = image;
-        let _: Option<&Source> = mask;
-        let _: Option<&Layer> = layer;
-        let _: &DrawImageOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_image"))
+        if mask.is_some() || layer.is_some() || options.opacity.is_some() {
+            return Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_image"));
+        }
+        image::draw(self, image, options)
     }
 
     /// Draws lines, shapes and curves.
@@ -349,10 +354,11 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::label"))
     }
 
-    /// The page object `id` of the document of `store`.
-    pub(crate) fn new(id: ObjectId, store: &Arc<Store>) -> Self {
+    /// The page object `id` of the document of `store` and `overlay`.
+    pub(crate) fn new(id: ObjectId, store: &Arc<Store>, overlay: &Arc<Overlay>) -> Self {
         Self {
             id,
+            overlay: Arc::clone(overlay),
             store: Arc::clone(store),
         }
     }
@@ -719,7 +725,11 @@ fn difference(left: &[u8], right: &[u8]) -> Vec<u8> {
 
 /// The page at `index` of the page tree, found by descending through each node's `Count`; past
 /// the last page is [`ErrorCode::InvalidArgument`] (ISO 32000-2:2020, 7.7.3).
-pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
+pub(crate) fn find(
+    store: &Arc<Store>,
+    overlay: &Arc<Overlay>,
+    index: u32,
+) -> Result<Page, PdfError> {
     let objects = store.objects("Document::page");
     let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
     let root = objects.get(catalog, b"Pages")?;
@@ -771,7 +781,7 @@ pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
                 }
                 .ok_or_else(|| objects.malformed())?
             } else if left == 0 {
-                return Ok(Page::new(kid, store));
+                return Ok(Page::new(kid, store, overlay));
             } else {
                 1
             };
