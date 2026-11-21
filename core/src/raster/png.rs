@@ -101,6 +101,8 @@ pub(super) struct Png {
     interlaced: bool,
     /// The tRNS colour key: grey, or red, green and blue (11.3.2.1).
     key: Option<[u16; 3]>,
+    /// The most bytes the samples may decode to.
+    limit: u64,
     /// Columns.
     width: u32,
 }
@@ -115,10 +117,8 @@ impl Pull for Idat<'_> {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
         while self.left == 0 {
             let mut header = [0; 8];
-            if self.source.read(self.next, &mut header, READ)? != header.len() {
-                return Err(malformed());
-            }
-            if header.get(4..) != Some(b"IDAT") {
+            let count = self.source.read(self.next, &mut header, READ)?;
+            if header.get(4..count) != Some(b"IDAT") {
                 return Ok(0);
             }
             self.left = u64::from(number(header.get(..4).unwrap_or_default()));
@@ -264,6 +264,7 @@ impl Png {
                 i64::from(self.channels()),
                 i64::from(self.bits),
                 i64::from(pass.width),
+                self.limit,
             )?;
             let mut row = buffer(self.row_bytes(pass.width))?;
             for index in 0..pass.height {
@@ -581,6 +582,7 @@ fn parse_header(data: &[u8]) -> Result<Png, PdfError> {
         idat: 0,
         interlaced: interlace == 1,
         key: None,
+        limit: 0,
         width,
     })
 }
@@ -620,6 +622,7 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
         return Err(malformed());
     }
     let mut png = parse_header(&chunk(&mut cursor, b"IHDR", 13, 13)?)?;
+    png.limit = limit;
     let mut chunks = Chunks::default();
     loop {
         if cursor.fill(&mut header)? != header.len() {
@@ -658,9 +661,11 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
         }
     }
     let components = if matches!(png.color, 0 | 4) { 1 } else { 3 };
-    if let Some(icc) = profile.as_ref() {
-        icc.check(source, components, limit)?;
-    }
+    let embedded = profile.is_some();
+    let kept = match profile {
+        Some(icc) => icc.check(source, components, limit)?.then_some(icc),
+        None => None,
+    };
     let indexed = png.color == 3;
     let entries = palette
         .as_ref()
@@ -678,6 +683,7 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
     Ok(Image {
         bits: png.bits,
         components,
+        dropped_profile: embedded && kept.is_none(),
         height: png.height,
         inverted: false,
         length: if png.decoded {
@@ -687,7 +693,7 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
         },
         orientation: orientation.unwrap_or(1),
         palette: palette.filter(|_| indexed),
-        profile,
+        profile: kept,
         source: source.clone(),
         width: png.width,
         png: Some(png),

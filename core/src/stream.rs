@@ -344,6 +344,7 @@ fn stage<'store>(
         integer(b"Colors", 1)?,
         integer(b"BitsPerComponent", 8)?,
         integer(b"Columns", 1)?,
+        store.decoded_limit(),
     )?))
 }
 

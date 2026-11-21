@@ -8,7 +8,6 @@ use crate::{ErrorCode, PdfError};
 const ICC_HEADER: u64 = 14;
 
 /// The frame header (B.2.2).
-#[derive(Clone, Copy)]
 struct Frame {
     /// Components.
     components: u8,
@@ -55,9 +54,8 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
             _ => 0,
         };
         let mut head = vec![0; usize::try_from(wanted.min(body)).unwrap_or(0)];
-        if cursor.fill(&mut head)? != head.len() {
-            return Err(malformed());
-        }
+        // A cut segment fails at the next marker.
+        let _: usize = cursor.fill(&mut head)?;
         cursor.skip(body.saturating_sub(wanted));
         match marker {
             0xC0..=0xC2 => {
@@ -90,9 +88,8 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
         }
     }
     let found = frame.ok_or_else(malformed)?;
-    let profile = if icc.is_empty() {
-        None
-    } else {
+    let embedded = !icc.is_empty();
+    let profile = if embedded {
         let parts = icc
             .into_iter()
             .collect::<Option<Vec<_>>>()
@@ -102,12 +99,16 @@ pub(super) fn read(source: &Source, limit: u64) -> Result<Image, PdfError> {
             length: parts.iter().map(|&(_, length)| length).sum(),
             parts,
         };
-        profile.check(source, found.components, limit)?;
-        Some(profile)
+        profile
+            .check(source, found.components, limit)?
+            .then_some(profile)
+    } else {
+        None
     };
     Ok(Image {
         bits: 8,
         components: found.components,
+        dropped_profile: embedded && profile.is_none(),
         height: found.height,
         inverted: adobe && found.components == 4,
         length: source.size(READ)?,

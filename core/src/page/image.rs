@@ -115,10 +115,14 @@ pub(super) fn draw(
     let objects = page.store.objects(DRAW);
     let overlay = &*page.overlay;
     let mut dictionary = overlay.resolve(objects, page.id)?;
-    if !matches!(dictionary, Object::Dictionary(_)) {
-        return Err(PdfError::new(ErrorCode::StaleHandle, DRAW));
-    }
     let image = raster::read(source, options.format, objects.decoded_limit())?;
+    if image.dropped_profile() {
+        objects.deviation(
+            "8.6.5.5",
+            "an image's ICC profile is not of its colour space; the device space applies",
+            None,
+        )?;
+    }
     let orientation = if options.ignore_orientation {
         1
     } else {
@@ -211,9 +215,6 @@ fn dictionary_entries(
 /// `value` in fixed point, its shortest decimal cut to [`DIGITS`] fraction digits; `None` when
 /// not finite or too large.
 fn fixed(value: f64) -> Option<i128> {
-    if !value.is_finite() {
-        return None;
-    }
     let text = value.to_string();
     let magnitude = text.trim_start_matches('-');
     let (whole, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));

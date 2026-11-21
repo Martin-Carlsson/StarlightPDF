@@ -8,9 +8,6 @@ use crate::{ErrorCode, PdfError};
 /// The error operation name.
 const OPERATION: &str = "predictor";
 
-/// The most pixels a row may hold.
-const MAX_COLUMNS: u64 = 0x1_0000;
-
 /// The most components a pixel may hold: a `DeviceN` space's most (ISO 32000-2:2020, Annex C).
 const MAX_COLORS: u64 = 32;
 
@@ -26,6 +23,8 @@ pub(crate) struct Predictor<P> {
     colors: usize,
     /// Components per row.
     components: usize,
+    /// The most bytes a row may hold.
+    limit: usize,
     /// The row being served, grown as its data arrives.
     current: Vec<u8>,
     /// The input.
@@ -67,6 +66,9 @@ impl<P: Pull> Predictor<P> {
                 };
             }
             filled = filled.wrapping_add(read);
+            if filled > self.limit {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
+            }
         }
         if self.png {
             self.png_row(kind.first().copied().ok_or_else(malformed)?)?;
@@ -132,13 +134,14 @@ impl<P: Pull> Predictor<P> {
     /// # Errors
     ///
     /// [`ErrorCode::Malformed`] for a parameter out of range, [`ErrorCode::LimitExceeded`] for
-    /// more than [`MAX_COLUMNS`] columns or [`MAX_COLORS`] colors.
+    /// more than [`MAX_COLORS`] colors; reading a row of more than `limit` bytes fails with it.
     pub(crate) fn with_parameters(
         inner: P,
         predictor: i64,
         colors: i64,
         bits_per_component: i64,
         columns: i64,
+        limit: u64,
     ) -> Result<Self, PdfError> {
         let png = match predictor {
             2 => false,
@@ -152,28 +155,29 @@ impl<P: Pull> Predictor<P> {
         let colors_count = positive(colors).ok_or_else(malformed)?;
         let columns_count = positive(columns).ok_or_else(malformed)?;
         let bits = positive(bits_per_component).ok_or_else(malformed)?;
-        let limit = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
-        if columns_count > MAX_COLUMNS || colors_count > MAX_COLORS {
-            return Err(limit());
+        let exceeded = || PdfError::new(ErrorCode::LimitExceeded, OPERATION);
+        if colors_count > MAX_COLORS {
+            return Err(exceeded());
         }
-        let pixel_bits = colors_count.checked_mul(bits).ok_or_else(limit)?;
+        let pixel_bits = colors_count.checked_mul(bits).ok_or_else(exceeded)?;
         let row = pixel_bits
             .checked_mul(columns_count)
             .and_then(|row_bits| row_bits.checked_add(7))
-            .ok_or_else(limit)?
+            .ok_or_else(exceeded)?
             >> 3_u32;
-        let width = usize::try_from(row).ok().ok_or_else(limit)?;
+        let width = usize::try_from(row).ok().ok_or_else(exceeded)?;
         Ok(Self {
             bits: u32::try_from(bits).ok().ok_or_else(malformed)?,
-            colors: usize::try_from(colors_count).ok().ok_or_else(limit)?,
+            colors: usize::try_from(colors_count).ok().ok_or_else(exceeded)?,
             components: usize::try_from(colors_count.saturating_mul(columns_count))
                 .ok()
-                .ok_or_else(limit)?,
+                .ok_or_else(exceeded)?,
             current: Vec::new(),
             inner,
+            limit: usize::try_from(limit).unwrap_or(usize::MAX),
             pixel: usize::try_from(pixel_bits.wrapping_add(7) >> 3_u32)
                 .ok()
-                .ok_or_else(limit)?,
+                .ok_or_else(exceeded)?,
             png,
             previous: Vec::new(),
             served: 0,

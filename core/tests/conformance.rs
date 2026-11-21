@@ -19,7 +19,6 @@ use starlightpdf::document::{
 use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::images::ImageFormat;
 use starlightpdf::input::{BytesSourceOptions, FileSourceOptions, Source};
-use starlightpdf::layers::AddLayerOptions;
 use starlightpdf::limits::{ResourcePolicy, ResourcePolicyOptions};
 use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::objects::{ObjectId, ObjectOptions, StreamDataOptions};
@@ -51,13 +50,12 @@ const CIPHERS: [(Cipher, &str); 4] = [
 const COLOR_SPACES: [(ColorSpace, &str); 1] = [(ColorSpace::Gray, "Gray")];
 
 /// The keys without a value.
-const FLAGS: [&str; 8] = [
+const FLAGS: [&str; 7] = [
     "allow_loss",
     "break_signatures",
     "cancel",
     "decode",
     "ignore_orientation",
-    "layer",
     "saved",
     "strict",
 ];
@@ -113,9 +111,10 @@ const PERMISSIONS: [(Permission, &str); 7] = [
 ];
 
 /// Each `read=` value of `draw_image`.
-const READS: [&str; 9] = [
+const READS: [&str; 10] = [
     "bits",
     "color_space",
+    "decode",
     "filter",
     "icc_sha256",
     "mask_samples_sha256",
@@ -234,8 +233,10 @@ const STANDARDS: [(Standard, &str); 1] = [(Standard::PdfA2B, "PdfA2B")];
 struct Case {
     /// `decode`.
     decode: bool,
-    /// `x=`, `y=`, `width=`, `height=`, `ignore_orientation`, `format=`, `opacity=`.
+    /// `x=`, `y=`, `width=`, `height=`, `ignore_orientation`, `format=`, `frame=`, `opacity=`.
     draw: DrawImageOptions,
+    /// `draws=`: how many times to draw; 0 means 1.
+    draws: u32,
     /// `id=`.
     id: ObjectId,
     /// `index=`.
@@ -248,6 +249,8 @@ struct Case {
     kind: Boundary,
     /// `mask=`.
     mask: Option<String>,
+    /// `on=`.
+    on: Option<String>,
     /// `page_width=`, `page_height=`.
     page: InsertBlankPageOptions,
     /// `page=`, in order.
@@ -428,20 +431,27 @@ fn color_space(document: &Document, value: Option<Object>) -> Result<String, Fai
     }
 }
 
-/// Creates a document of one page, draws `path`'s image as `case` says, saves, reopens and reads `read=`.
+/// Draws `path`'s image as `case` says, `draws=` times, on page `index=` of the PDF `on=` or else on a new
+/// document's one page, saves, reopens and reads `read=`.
 fn drawn(path: &str, case: &Case) -> Result<String, Failure> {
-    let document = Document::create(None, &CreateOptions::default())?;
-    let page = document.insert_blank_page(&case.page)?;
+    let (document, page) = if let Some(on) = case.on.as_deref() {
+        let document = open(&from_bytes(on)?, case)?;
+        let mut options = PageOptions::default();
+        options.index = case.index;
+        let page = document.page(&options)?;
+        (document, page)
+    } else {
+        let document = Document::create(None, &CreateOptions::default())?;
+        let page = document.insert_blank_page(&case.page)?;
+        (document, page)
+    };
     let image = from_bytes(path)?;
     let mask = case.mask.as_deref().map(from_bytes).transpose()?;
-    let mut options = AddLayerOptions::default();
-    options.name = String::from("layer");
-    let layer = has(case, "layer")
-        .then(|| document.add_layer(&options))
-        .transpose()?;
-    page.draw_image(&image, mask.as_ref(), layer.as_ref(), &case.draw)?;
+    for _ in 0..case.draws.max(1) {
+        page.draw_image(&image, mask.as_ref(), None, &case.draw)?;
+    }
     let saved = reopen(twice(&document, &SaveOptions::default(), false)?, case)?;
-    image_read(&saved, &case.read)
+    image_read(&saved, case.index, &case.read)
 }
 
 /// The value of `key` in `dictionary`, if it is a dictionary holding it.
@@ -511,25 +521,25 @@ fn icc(document: &Document, value: Option<Object>) -> Result<Option<ObjectId>, F
     }
 }
 
-/// What `read` gives of the one image on the first page of `document`, found from the catalog.
-fn image_read(document: &Document, read: &str) -> Result<String, Failure> {
+/// What `read` gives of the image the last `Do` paints on kid `index` of `document`'s root page tree node.
+fn image_read(document: &Document, index: u32, read: &str) -> Result<String, Failure> {
     let catalog = object_at(document, document.catalog()?)?;
     let pages = resolve(document, entry(catalog, "Pages"))?;
-    let first = match resolve(document, entry(pages, "Kids"))? {
-        Object::Array(items) => items.into_iter().next(),
+    let kid = match resolve(document, entry(pages, "Kids"))? {
+        Object::Array(items) => items
+            .into_iter()
+            .nth(usize::try_from(index).unwrap_or(usize::MAX)),
         Object::Dictionary(_) | Object::Name(_) | Object::Other(_) | Object::Reference(_) => None,
     };
-    let page = resolve(document, first)?;
-    let resources = resolve(document, entry(page.clone(), "Resources"))?;
-    let id = match resolve(document, entry(resources, "XObject"))? {
-        Object::Dictionary(entries) => match entries.into_iter().next().map(|pair| pair.1) {
-            Some(Object::Reference(id)) => Some(id),
-            Some(Object::Array(_) | Object::Dictionary(_) | Object::Name(_) | Object::Other(_))
-            | None => None,
-        },
-        Object::Array(_) | Object::Name(_) | Object::Other(_) | Object::Reference(_) => None,
+    let page = resolve(document, kid)?;
+    let (label, ctm) = painted(document, page.clone())?;
+    let resources = resolve(document, entry(page, "Resources"))?;
+    let id = match entry(resolve(document, entry(resources, "XObject"))?, &label) {
+        Some(Object::Reference(id)) => Some(id),
+        Some(Object::Array(_) | Object::Dictionary(_) | Object::Name(_) | Object::Other(_))
+        | None => None,
     }
-    .ok_or_else(|| Failure::Case(String::from("no image XObject on the page")))?;
+    .ok_or_else(|| Failure::Case(format!("no XObject /{label} on the page")))?;
     let image = object_at(document, id)?;
     let field = |key: &str| entry(image.clone(), key);
     let digest = |found: Option<Object>| -> Result<String, Failure> {
@@ -540,7 +550,18 @@ fn image_read(document: &Document, read: &str) -> Result<String, Failure> {
         }
     };
     match read {
-        "matrix" => matrix(document, page),
+        "matrix" => Ok(ctm),
+        "decode" => match field("Decode") {
+            Some(Object::Array(items)) => Ok(items
+                .into_iter()
+                .map(|item| number(Some(item)))
+                .collect::<Result<Vec<String>, Failure>>()?
+                .join(" ")),
+            Some(
+                Object::Dictionary(_) | Object::Name(_) | Object::Other(_) | Object::Reference(_),
+            ) => Err(Failure::Case(String::from("Decode is not an array"))),
+            None => Ok(String::from("none")),
+        },
         "size" => Ok(format!(
             "{} {}",
             number(field("Width"))?,
@@ -603,11 +624,14 @@ fn keys(family: &str) -> Option<(Vec<&'static str>, &'static [&'static str])> {
         "draw_image" => {
             return Some((
                 vec![
+                    "draws",
                     "format",
+                    "frame",
                     "height",
                     "ignore_orientation",
-                    "layer",
+                    "index",
                     "mask",
+                    "on",
                     "opacity",
                     "page_height",
                     "page_width",
@@ -646,9 +670,9 @@ where
     text.split(',').map(|item| lookup(names, item)).collect()
 }
 
-/// The CTM in effect at the `Do` that paints the page's image, relative to default user space: the product of every
-/// `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4), each number rounded to 4 fraction digits.
-fn matrix(document: &Document, page: Object) -> Result<String, Failure> {
+/// The name the last `Do` in `page`'s content paints, and the CTM in effect there relative to default user space: the
+/// product of every `cm` in effect (ISO 32000-2:2020, 8.3.4, 8.4.4), each number rounded to 4 fraction digits.
+fn painted(document: &Document, page: Object) -> Result<(String, String), Failure> {
     let streams = match entry(page, "Contents") {
         Some(Object::Reference(id)) => vec![id],
         Some(Object::Array(items)) => items
@@ -671,6 +695,7 @@ fn matrix(document: &Document, page: Object) -> Result<String, Failure> {
     let mut states: Vec<[f64; 6]> = Vec::new();
     let mut current = [1.0_f64, 0.0_f64, 0.0_f64, 1.0_f64, 0.0_f64, 0.0_f64];
     let mut operands: Vec<String> = Vec::new();
+    let mut last = None;
     for token in tokens(&text) {
         match token.as_str() {
             "q" => states.push(current),
@@ -696,7 +721,17 @@ fn matrix(document: &Document, page: Object) -> Result<String, Failure> {
                     me.mul_add(cb, mf.mul_add(cd, cf)),
                 ];
             }
-            "Do" => return Ok(current.map(round).join(" ")),
+            "Do" => {
+                let label = operands
+                    .last()
+                    .and_then(|operand| operand.strip_prefix('/'));
+                last = Some((
+                    String::from(
+                        label.ok_or_else(|| Failure::Case(String::from("Do takes a name")))?,
+                    ),
+                    current.map(round).join(" "),
+                ));
+            }
             _ => {}
         }
         let first = token.chars().next().unwrap_or(' ');
@@ -706,7 +741,7 @@ fn matrix(document: &Document, page: Object) -> Result<String, Failure> {
             operands.push(token);
         }
     }
-    Err(Failure::Case(String::from("no Do in the page's content")))
+    last.ok_or_else(|| Failure::Case(String::from("no Do in the page's content")))
 }
 
 /// The value `names` gives `value`, or `unknown`.
@@ -1069,13 +1104,16 @@ fn set(case: &mut Case, key: &str, value: &str) -> Option<()> {
         "opacity" => case.draw.opacity = Some(real()?),
         "ignore_orientation" => case.draw.ignore_orientation = true,
         "format" => case.draw.format = Some(lookup(&FORMATS, value)?),
+        "frame" => case.draw.frame = value.parse().ok()?,
+        "draws" => case.draws = value.parse().ok()?,
         "mask" => case.mask = text(),
+        "on" => case.on = text(),
         "read" => {
             READS.contains(&value).then_some(())?;
             case.read = String::from(value);
         }
-        // `saved`, `cancel`, `layer`: their presence in `seen`.
-        "saved" | "cancel" | "layer" => {}
+        // `saved`, `cancel`: their presence in `seen`.
+        "saved" | "cancel" => {}
         _ => set_save(&mut case.save, key, value)?,
     }
     Some(())

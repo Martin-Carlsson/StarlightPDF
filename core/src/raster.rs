@@ -55,6 +55,8 @@ pub(crate) struct Image {
     bits: u8,
     /// Components of the base colour space.
     components: u8,
+    /// A profile not of the colour space was left out.
+    dropped_profile: bool,
     /// Rows.
     height: u32,
     /// Stored values are inverted.
@@ -174,6 +176,11 @@ impl Image {
         self.components
     }
 
+    /// An ICC profile not of the image's colour space was left out.
+    pub(crate) const fn dropped_profile(&self) -> bool {
+        self.dropped_profile
+    }
+
     /// The image needs `Decode` `[1 0]` per component (8.9.5.2).
     pub(crate) const fn decode_inverted(&self) -> bool {
         self.inverted
@@ -277,8 +284,9 @@ impl Image {
 }
 
 impl Profile {
-    /// Fails unless the profile is for `components` components and decodes within `limit` bytes.
-    fn check(&self, source: &Source, components: u8, limit: u64) -> Result<(), PdfError> {
+    /// Whether the profile is for `components` components; fails unless one that is decodes within
+    /// `limit` bytes.
+    fn check(&self, source: &Source, components: u8, limit: u64) -> Result<bool, PdfError> {
         let raw = Ranges::new(source, &self.parts, READ);
         let mut data: Box<dyn Pull + '_> = if self.compressed {
             Box::new(Inflate::new(raw))
@@ -292,14 +300,17 @@ impl Profile {
             3 => b"RGB ",
             _ => b"CMYK",
         };
-        if fill(&mut data, &mut header)? != header.len() || header.get(16..20) != Some(expected) {
+        if fill(&mut data, &mut header)? != header.len() {
             return Err(malformed());
+        }
+        if header.get(16..20) != Some(expected) {
+            return Ok(false);
         }
         let mut total = 128_u64;
         let mut scratch = vec![0; STEP];
         loop {
             match data.pull(&mut scratch)? {
-                0 => return Ok(()),
+                0 => return Ok(true),
                 count => total = total.saturating_add(u64::try_from(count).unwrap_or(u64::MAX)),
             }
             if total > limit {
