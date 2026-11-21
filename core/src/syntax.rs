@@ -984,7 +984,7 @@ fn push_hex(out: &mut String, byte: u8, upper: bool) {
 
 /// Appends `name` in canonical syntax: `#xx` for bytes outside `!` to `~` and delimiters
 /// (ISO 32000-2:2020, 7.3.5).
-fn write_name(out: &mut String, name: &[u8]) {
+pub(crate) fn write_name(out: &mut String, name: &[u8]) {
     out.push('/');
     for &byte in name {
         if byte.is_ascii_graphic() && is_regular(byte) && byte != b'#' {
@@ -998,7 +998,7 @@ fn write_name(out: &mut String, name: &[u8]) {
 
 /// Appends `bytes` in canonical syntax: literal when all printable ASCII, else hexadecimal
 /// (ISO 32000-2:2020, 7.3.4).
-fn write_string(out: &mut String, bytes: &[u8]) {
+pub(crate) fn write_string(out: &mut String, bytes: &[u8]) {
     if bytes.iter().all(|byte| (0x20..=0x7E).contains(byte)) {
         out.push('(');
         for &byte in bytes {

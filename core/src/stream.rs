@@ -8,6 +8,7 @@ use crate::input::Source;
 use crate::lzw::Lzw;
 use crate::objects::{ObjectId, XrefKind};
 use crate::output::Sink;
+use crate::overlay::{Data, Dictionary, Object, Overlay};
 use crate::predictor::Predictor;
 use crate::pull::Pull;
 use crate::run_length::RunLength;
@@ -28,6 +29,9 @@ pub(crate) struct Feeder<'data> {
     /// The offset of the next byte to pull.
     end: u64,
 }
+
+/// A filter's integer parameter by key, or the default given.
+type Parameter<'lookup> = dyn Fn(&[u8], i64) -> Result<i64, PdfError> + 'lookup;
 
 /// A stream's stored bytes and, when known, their count.
 pub(crate) type Stored<'data> = (Box<dyn Pull + 'data>, Option<u64>);
@@ -188,7 +192,18 @@ fn chain<'store>(
         let Value::Name(filter) = name else {
             return Err(store.malformed());
         };
-        data = limited(stage(store, data, &filter, found, indirect)?);
+        let integer = |key: &[u8], default: i64| -> Result<i64, PdfError> {
+            let Some(at) = found else {
+                return Ok(default);
+            };
+            match store.get(at, key)? {
+                None => Ok(default),
+                Some(value) => resolve(store, value, indirect)?
+                    .integer()
+                    .ok_or_else(|| store.malformed()),
+            }
+        };
+        data = limited(stage(store, data, &filter, &integer)?);
     }
     Ok(data)
 }
@@ -278,6 +293,162 @@ fn entries(
         .collect()
 }
 
+/// The filters of the stream whose dictionary is `entries` and their parameters, resolved
+/// through `overlay`; more than [`FILTERS`] is too many (ISO 32000-2:2020, 7.3.8, 7.4).
+fn filters(
+    store: Objects<'_>,
+    overlay: &Overlay,
+    entries: Dictionary,
+) -> Result<Vec<(Vec<u8>, Object)>, PdfError> {
+    let malformed = || store.malformed();
+    let dictionary = Object::Dictionary(entries);
+    let list = |key: &[u8]| -> Result<Vec<Object>, PdfError> {
+        let items = match overlay.entry(store, &dictionary, key)? {
+            Object::Null => Vec::new(),
+            Object::Array(items) if items.len() > FILTERS => {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, store.operation()));
+            }
+            Object::Array(items) => items,
+            other @ (Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_)) => vec![other],
+        };
+        items
+            .into_iter()
+            .map(|item| overlay.direct(store, item))
+            .collect()
+    };
+    let mut parameters = list(b"DecodeParms")?.into_iter();
+    let mut found = Vec::new();
+    for name in list(b"Filter")? {
+        let Object::Name(filter) = name else {
+            return Err(malformed());
+        };
+        let given = parameters.next().unwrap_or(Object::Null);
+        if !matches!(given, Object::Dictionary(_) | Object::Null) {
+            return Err(malformed());
+        }
+        found.push((filter, given));
+    }
+    Ok(found)
+}
+
+/// Writes `data`, of a stream held in memory whose dictionary is `entries`, to `sink`, decoded
+/// when `decode` by its filters resolved through `overlay`; the source's stream as [`write`]
+/// writes it. Produced data with filters it cannot read in order is [`ErrorCode::Unsupported`]
+/// (ISO 32000-2:2020, 7.3.8, 7.4).
+pub(crate) fn held(
+    store: Objects<'_>,
+    overlay: &Overlay,
+    (entries, data): (Dictionary, Data),
+    decode: bool,
+    sink: &Sink,
+) -> Result<(), PdfError> {
+    let operation = store.operation();
+    if let Data::Stored(id) = data {
+        return write(store, id, decode, sink);
+    }
+    let undone = if decode {
+        filters(store, overlay, entries)?
+    } else {
+        Vec::new()
+    };
+    match data {
+        Data::Stored(id) => write(store, id, decode, sink),
+        Data::Bytes(bytes) => pour(
+            store,
+            overlay,
+            (Box::new(bytes.as_slice()), decode),
+            undone,
+            sink,
+        ),
+        Data::Produced(producer) if undone.is_empty() => {
+            producer.write(&mut |bytes| sink.write(bytes, operation))
+        }
+        Data::Produced(producer) => {
+            let stored = producer
+                .pull()
+                .ok_or_else(|| PdfError::new(ErrorCode::Unsupported, operation))?;
+            pour(store, overlay, (stored, true), undone, sink)
+        }
+    }
+}
+
+/// The bytes of `data`, of a stream held in memory; the source's stream's read through to count
+/// them when encrypted (ISO 32000-2:2020, 7.3.8).
+pub(crate) fn length(store: Objects<'_>, data: Data) -> Result<u64, PdfError> {
+    match data {
+        Data::Bytes(bytes) => u64::try_from(bytes.len()).map_err(|_error| store.malformed()),
+        Data::Produced(producer) => Ok(producer.length()),
+        Data::Stored(id) => {
+            let (mut stored, known) = stored_data(store, id)?.ok_or_else(|| store.malformed())?;
+            if let Some(found) = known {
+                return Ok(found);
+            }
+            let mut scratch = [0; STEP];
+            let mut total = 0_u64;
+            loop {
+                match stored.pull(&mut scratch)? {
+                    0 => return Ok(total),
+                    count => {
+                        total = total.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Writes `stored` to `sink`, when decoding with `filters` and their parameters undone, each
+/// stage at most the policy's decoded limit (ISO 32000-2:2020, 7.4).
+fn pour<'data>(
+    store: Objects<'data>,
+    overlay: &Overlay,
+    (stored, decode): (Box<dyn Pull + 'data>, bool),
+    filters: Vec<(Vec<u8>, Object)>,
+    sink: &Sink,
+) -> Result<(), PdfError> {
+    let operation = store.operation();
+    let limited = |data| -> Box<dyn Pull + 'data> {
+        Box::new(Limited {
+            data,
+            left: store.decoded_limit(),
+            operation,
+        })
+    };
+    let mut data = if decode { limited(stored) } else { stored };
+    for (name, parameters) in filters {
+        let integer = |key: &[u8], default: i64| -> Result<i64, PdfError> {
+            match overlay.entry(store, &parameters, key)? {
+                Object::Null => Ok(default),
+                Object::Integer(value) => Ok(value),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => Err(store.malformed()),
+            }
+        };
+        data = limited(stage(store, data, &name, &integer)?);
+    }
+    let mut buffer = [0; STEP];
+    loop {
+        let count = data.pull(&mut buffer)?;
+        let Some(bytes) = buffer.get(..count).filter(|bytes| !bytes.is_empty()) else {
+            return Ok(());
+        };
+        sink.write(bytes, operation)?;
+    }
+}
+
 /// `value`, or the object it refers to as `indirect` allows; a reference it does not allow is
 /// [`ErrorCode::Malformed`].
 fn resolve(store: Objects<'_>, value: Value, indirect: Indirect) -> Result<Value, PdfError> {
@@ -298,26 +469,14 @@ fn resolve(store: Objects<'_>, value: Value, indirect: Indirect) -> Result<Value
     }
 }
 
-/// `data` with filter `name` undone, with the parameters at `parameters`; `Crypt` was undone with
-/// the stored data (ISO 32000-2:2020, 7.4.2 to 7.4.5 and 7.4.10).
+/// `data` with filter `name` undone, with the integer parameters `integer` gives by key and
+/// default; `Crypt` was undone with the stored data (ISO 32000-2:2020, 7.4.2 to 7.4.5 and 7.4.10).
 fn stage<'store>(
     store: Objects<'store>,
     data: Box<dyn Pull + 'store>,
     name: &[u8],
-    parameters: Option<At>,
-    indirect: Indirect,
+    integer: &Parameter<'_>,
 ) -> Result<Box<dyn Pull + 'store>, PdfError> {
-    let integer = |key: &[u8], default: i64| -> Result<i64, PdfError> {
-        let Some(at) = parameters else {
-            return Ok(default);
-        };
-        match store.get(at, key)? {
-            None => Ok(default),
-            Some(found) => resolve(store, found, indirect)?
-                .integer()
-                .ok_or_else(|| store.malformed()),
-        }
-    };
     let decoded: Box<dyn Pull + 'store> = match name {
         b"ASCIIHexDecode" => return Ok(Box::new(AsciiHex::new(data))),
         b"ASCII85Decode" => return Ok(Box::new(Ascii85::new(data))),

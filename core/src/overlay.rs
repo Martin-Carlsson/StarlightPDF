@@ -8,7 +8,9 @@ use core::ops::Deref;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::objects::{ObjectId, XrefKind};
+use crate::pull::Pull;
 use crate::store::Objects;
+use crate::syntax::{write_name, write_string};
 use crate::{ErrorCode, PdfError};
 
 /// A dictionary's entries, in order, each key once.
@@ -100,6 +102,9 @@ pub(crate) trait Produce: Debug + Send + Sync {
     /// Bytes [`Produce::write`] writes.
     fn length(&self) -> u64;
 
+    /// The data read in order, when it is stored bytes; `None` when made a piece at a time.
+    fn pull(&self) -> Option<Box<dyn Pull + '_>>;
+
     /// Writes the data in pieces to `out`.
     ///
     /// # Errors
@@ -133,6 +138,46 @@ impl Object {
             | Self::Reference(_)
             | Self::String(_)) => other,
         };
+    }
+
+    /// The object in canonical PDF syntax, as [`Document::object`](crate::document::Document::object)
+    /// gives it; a stream as its dictionary (ISO 32000-2:2020, 7.3).
+    pub(crate) fn syntax(self, out: &mut String) {
+        match self {
+            Self::Array(items) => {
+                out.push('[');
+                for (at, item) in items.into_iter().enumerate() {
+                    if at > 0 {
+                        out.push(' ');
+                    }
+                    item.syntax(out);
+                }
+                out.push(']');
+            }
+            Self::Boolean(flag) => out.push_str(if flag { "true" } else { "false" }),
+            Self::Dictionary(entries) | Self::Stream(entries, _) => {
+                out.push_str("<<");
+                for (key, value) in entries {
+                    out.push(' ');
+                    write_name(out, &key);
+                    out.push(' ');
+                    value.syntax(out);
+                }
+                out.push_str(" >>");
+            }
+            Self::Integer(number) => out.push_str(&number.to_string()),
+            Self::Name(bytes) => write_name(out, &bytes),
+            Self::Null => out.push_str("null"),
+            Self::Real(number) if number.is_finite() => out.push_str(&number.to_string()),
+            Self::Real(_) => out.push('0'),
+            Self::Reference(id) => {
+                out.push_str(&id.number.to_string());
+                out.push(' ');
+                out.push_str(&id.generation.to_string());
+                out.push_str(" R");
+            }
+            Self::String(bytes) => write_string(out, &bytes),
+        }
     }
 
     /// The value of `key`, when this dictionary or stream holds it.

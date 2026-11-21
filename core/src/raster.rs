@@ -174,6 +174,22 @@ impl Image {
         self.components
     }
 
+    /// The stored data read in order, as [`Image::write_data`] writes it; `None` when written a
+    /// row at a time.
+    pub(crate) fn data(&self) -> Option<Box<dyn Pull + '_>> {
+        match self.png.as_ref() {
+            None => Some(Box::new(Ranges {
+                left: self.length,
+                offset: 0,
+                operation: WRITE,
+                parts: [].iter(),
+                source: &self.source,
+            })),
+            Some(png) if png.decoded() => None,
+            Some(png) => Some(Box::new(png.idat(&self.source))),
+        }
+    }
+
     /// The image needs `Decode` `[1 0]` per component (8.9.5.2).
     pub(crate) const fn decode_inverted(&self) -> bool {
         self.inverted
@@ -225,6 +241,14 @@ impl Image {
     /// The base space's ICC profile, for `ICCBased` (8.6.5.5).
     pub(crate) const fn profile(&self) -> Option<&Profile> {
         self.profile.as_ref()
+    }
+
+    /// The ICC profile's stored bytes read in order, as [`Image::write_profile`] writes them;
+    /// `None` without one.
+    pub(crate) fn profile_data(&self) -> Option<Box<dyn Pull + '_>> {
+        self.profile.as_ref().map(|profile| -> Box<dyn Pull + '_> {
+            Box::new(Ranges::new(&self.source, &profile.parts, WRITE))
+        })
     }
 
     /// Columns.

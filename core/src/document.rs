@@ -302,7 +302,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_article(&self, options: &AddArticleOptions) -> Result<(), PdfError> {
         let _: &AddArticleOptions = options;
         Err(PdfError::new(
@@ -317,7 +317,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn add_attachment(
         &self,
         source: &Source,
@@ -337,7 +337,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn add_bookmark(
         &self,
         parent: Option<&Bookmark>,
@@ -357,7 +357,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn add_font(&self, source: &Source, options: &AddFontOptions) -> Result<Font, PdfError> {
         let _: &Source = source;
         let _: &AddFontOptions = options;
@@ -373,7 +373,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_layer(&self, options: &AddLayerOptions) -> Result<Layer, PdfError> {
         let _: &AddLayerOptions = options;
         Err(PdfError::new(
@@ -388,7 +388,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_object(&self, options: &AddObjectOptions) -> Result<ObjectId, PdfError> {
         let _: &AddObjectOptions = options;
         Err(PdfError::new(
@@ -403,7 +403,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_verification_data(
         &self,
         options: &AddVerificationDataOptions,
@@ -421,7 +421,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn apply_redactions(
         &self,
         progress: Option<&dyn Progress>,
@@ -481,9 +481,20 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn catalog(&self) -> Result<ObjectId, PdfError> {
-        self.store.objects("Document::catalog").catalog()
+        let objects = self.store.objects("Document::catalog");
+        if !self.overlay.is_changed() {
+            return objects.catalog();
+        }
+        match Object::Dictionary(self.overlay.trailer(objects)?).take(b"Root") {
+            Some(Object::Reference(root))
+                if matches!(self.overlay.resolve(objects, root)?, Object::Dictionary(_)) =>
+            {
+                Ok(root)
+            }
+            Some(_) | None => Err(objects.malformed()),
+        }
     }
 
     /// Discards unsaved changes, releases the source and invalidates handles; never writes.
@@ -492,7 +503,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`].
+    /// [`ErrorCode::NotImplemented`].
     pub fn close(&self, options: &CloseOptions) -> Result<(), PdfError> {
         let _: &CloseOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::close"))
@@ -621,7 +632,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn delete_label_range(&self, options: &DeleteLabelRangeOptions) -> Result<(), PdfError> {
         let _: &DeleteLabelRangeOptions = options;
         Err(PdfError::new(
@@ -710,7 +721,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn flatten(
         &self,
         progress: Option<&dyn Progress>,
@@ -741,7 +752,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn generate_appearances(
         &self,
         progress: Option<&dyn Progress>,
@@ -775,7 +786,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn import_data(
         &self,
         source: &Source,
@@ -841,7 +852,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
         let objects = self.store.objects("Document::info_dictionary");
         let info = self.info(objects)?.2;
@@ -880,7 +891,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn insert_blank_page(&self, options: &InsertBlankPageOptions) -> Result<Page, PdfError> {
         /// The operation.
         const INSERT: &str = "Document::insert_blank_page";
@@ -961,7 +972,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn insert_pages(&self, from: &Self, options: &InsertPagesOptions) -> Result<(), PdfError> {
         let _: &Self = from;
         let _: &InsertPagesOptions = options;
@@ -977,7 +988,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn insert_toc(&self, options: &InsertTocOptions) -> Result<(), PdfError> {
         let _: &InsertTocOptions = options;
         Err(PdfError::new(
@@ -1025,14 +1036,44 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::layers"))
     }
 
-    /// An object as PDF syntax, from the body, an object stream or a later update; a stream gives
-    /// its dictionary; a free or missing object is `null` (ISO 32000-2:2020, 7.3, 7.5.6, 7.5.7).
+    /// An object as PDF syntax, as changed, from the body, an object stream or a later update; a
+    /// stream gives its dictionary, with the `Length` a save writes when changed; a free or
+    /// missing object is `null`, and in a part so are the source's page tree nodes and other
+    /// parts' pages (ISO 32000-2:2020, 7.3, 7.5.6, 7.5.7).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn object(&self, options: &ObjectOptions) -> Result<String, PdfError> {
-        self.store.objects("Document::object").object(options.id)
+        let objects = self.store.objects("Document::object");
+        let id = options.id;
+        let Some((generation, found)) = self.overlay.get(id.number)? else {
+            return objects.object(id);
+        };
+        if generation != id.generation {
+            return Ok(String::from("null"));
+        }
+        let object = match found {
+            Object::Stream(mut entries, data) => {
+                let length = i64::try_from(stream::length(objects, data)?)
+                    .map_err(|_error| objects.malformed())?;
+                entries.retain(|entry| entry.0 != b"Length");
+                entries.push((b"Length".to_vec(), Object::Integer(length)));
+                Object::Dictionary(entries)
+            }
+            other @ (Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::String(_)) => other,
+        };
+        let mut text = String::new();
+        object.syntax(&mut text);
+        Ok(text)
     }
 
     /// Opens `source`, reading its header and cross-reference data (ISO 32000-2:2020, 7.5); a
@@ -1082,7 +1123,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn page(&self, options: &PageOptions) -> Result<Page, PdfError> {
         page::find(&self.store, &self.overlay, options.index)
     }
@@ -1091,7 +1132,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn page_count(&self) -> Result<u32, PdfError> {
         let objects = self.store.objects("Document::page_count");
         let overlay = &*self.overlay;
@@ -1131,7 +1172,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn prepare_signature(
         &self,
         sink: &Sink,
@@ -1170,7 +1211,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn recognize(
         &self,
         progress: Option<&dyn Progress>,
@@ -1190,7 +1231,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn replace_text(
         &self,
         progress: Option<&dyn Progress>,
@@ -1210,7 +1251,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
     pub fn revert(&self, options: &RevertOptions) -> Result<(), PdfError> {
         let _: &RevertOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::revert"))
@@ -1222,7 +1263,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn sanitize(
         &self,
         progress: Option<&dyn Progress>,
@@ -1246,7 +1287,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::SignaturesWouldBreak`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::SignaturesWouldBreak`], [`ErrorCode::StaleHandle`].
     pub fn save(
         &self,
         sink: &Sink,
@@ -1329,7 +1370,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_collection(&self, options: &SetCollectionOptions) -> Result<(), PdfError> {
         let _: &SetCollectionOptions = options;
         Err(PdfError::new(
@@ -1344,7 +1385,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_destination(&self, options: &SetDestinationOptions) -> Result<(), PdfError> {
         let _: &SetDestinationOptions = options;
         Err(PdfError::new(
@@ -1355,11 +1396,9 @@ impl Document {
 
     /// Sets the document information dictionary (ISO 32000-2:2020, 14.3.3).
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_info_dictionary(&self, options: &SetInfoDictionaryOptions) -> Result<(), PdfError> {
         /// The operation.
         const SET: &str = "Document::set_info_dictionary";
@@ -1416,7 +1455,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_label_range(&self, options: &SetLabelRangeOptions) -> Result<(), PdfError> {
         let _: &SetLabelRangeOptions = options;
         Err(PdfError::new(
@@ -1431,7 +1470,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_language(&self, options: &SetLanguageOptions) -> Result<(), PdfError> {
         let _: &SetLanguageOptions = options;
         Err(PdfError::new(
@@ -1446,7 +1485,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_object(&self, options: &SetObjectOptions) -> Result<(), PdfError> {
         let _: &SetObjectOptions = options;
         Err(PdfError::new(
@@ -1461,7 +1500,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn set_output_intent(
         &self,
         profile: &Source,
@@ -1481,7 +1520,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_script(&self, options: &SetScriptOptions) -> Result<(), PdfError> {
         let _: &SetScriptOptions = options;
         Err(PdfError::new(
@@ -1496,7 +1535,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn set_stream_data(
         &self,
         source: &Source,
@@ -1516,7 +1555,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_viewer_settings(&self, options: &SetViewerSettingsOptions) -> Result<(), PdfError> {
         let _: &SetViewerSettingsOptions = options;
         Err(PdfError::new(
@@ -1531,7 +1570,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn set_xfa(
         &self,
         source: Option<&Source>,
@@ -1551,7 +1590,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_xmp(&self, options: &SetXmpOptions) -> Result<(), PdfError> {
         let _: &SetXmpOptions = options;
         Err(PdfError::new(
@@ -1583,8 +1622,9 @@ impl Document {
     /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
     /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
     /// a link to a page in another part fail with [`ErrorCode::LossRefused`] unless
-    /// `allow_loss`, which leaves them out; such a link keeps its appearance. An open action to
-    /// a page in another part is view state, left out. A `count` of 0 and `starts` empty, not
+    /// `allow_loss`, which leaves them out; such a link keeps its appearance. So does an open
+    /// action other than a destination or a `GoTo` action without a next one; one to a page in
+    /// another part is view state, left out. A `count` of 0 and `starts` empty, not
     /// ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
     /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
     /// The parts read this document: after its next edit, they and the returned [`Documents`]
@@ -1645,7 +1685,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn stamp(
         &self,
         image: Option<&Source>,
@@ -1658,25 +1698,35 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::stamp"))
     }
 
-    /// Writes a stream's stored bytes, or with `decode` its data with its filters undone
-    /// (ISO 32000-2:2020, 7.4); [`ErrorCode::InvalidArgument`] when `id` is missing or not a
-    /// stream, [`ErrorCode::Unsupported`] for an image filter.
+    /// Writes a stream's stored bytes, as a save writes them when changed, or with `decode` its
+    /// data with its filters undone (ISO 32000-2:2020, 7.4); [`ErrorCode::InvalidArgument`] when
+    /// `id` is missing or not a stream, [`ErrorCode::Unsupported`] for an image filter.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), PdfError> {
         /// The operation.
         const STREAM_DATA: &str = "Document::stream_data";
-        sink.finish(
-            stream::write(
-                self.store.objects(STREAM_DATA),
-                options.id,
-                options.decode,
-                sink,
-            ),
-            STREAM_DATA,
-        )
+        let objects = self.store.objects(STREAM_DATA);
+        let id = options.id;
+        let written = match self.overlay.get(id.number) {
+            Err(error) => Err(error),
+            Ok(None) => stream::write(objects, id, options.decode, sink),
+            Ok(Some((generation, Object::Stream(entries, data))))
+                if generation == id.generation =>
+            {
+                stream::held(
+                    objects,
+                    &self.overlay,
+                    (entries, data),
+                    options.decode,
+                    sink,
+                )
+            }
+            Ok(Some(_)) => Err(PdfError::new(ErrorCode::InvalidArgument, STREAM_DATA)),
+        };
+        sink.finish(written, STREAM_DATA)
     }
 
     /// Builds a structure tree with reading order from the layout.
@@ -1685,7 +1735,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
     pub fn tag(
         &self,
         progress: Option<&dyn Progress>,
@@ -1730,7 +1780,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn version(&self) -> Result<Version, PdfError> {
         let objects = self.store.objects("Document::version");
         let header = objects.version();
@@ -1840,9 +1890,7 @@ impl Documents {
         };
         let source = parts.source.clone();
         let mut part = Part::new((&parts.reading, &source.store), &parts.pages, range)?;
-        if !parts.allow_loss {
-            part.refuse_links()?;
-        }
+        part.prepare(parts.allow_loss)?;
         let (catalog, next) = (part.catalog()?, part.next());
         parts.next = parts.next.saturating_add(1);
         let sparse = u64::from(range.1.saturating_sub(range.0)).saturating_mul(SPARSE)

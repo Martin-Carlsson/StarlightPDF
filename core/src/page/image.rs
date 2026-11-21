@@ -11,6 +11,7 @@ use crate::drawing::DrawImageOptions;
 use crate::input::Source;
 use crate::objects::ObjectId;
 use crate::overlay::{Data, Dictionary, Object, Overlay, Produce};
+use crate::pull::Pull;
 use crate::raster::{self, Filter, Image, Profile};
 use crate::store::Objects;
 use crate::{ErrorCode, PdfError};
@@ -59,6 +60,14 @@ impl Produce for Part {
             Kind::Data => self.image.length(),
             Kind::Mask => self.image.mask().map_or(0, |mask| mask.1),
             Kind::Profile => self.image.profile().map_or(0, Profile::length),
+        }
+    }
+
+    fn pull(&self) -> Option<Box<dyn Pull + '_>> {
+        match self.kind {
+            Kind::Data => self.image.data(),
+            Kind::Mask => None,
+            Kind::Profile => self.image.profile_data(),
         }
     }
 

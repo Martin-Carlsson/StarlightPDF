@@ -43,6 +43,17 @@ const OPERATION: &str = "Document::split";
 /// The mark of a page tree node in [`Pages`].
 const NODE: u32 = 1 << 31;
 
+/// A name tree kid's `Limits`, as read (ISO 32000-2:2020, 7.9.6).
+#[derive(Clone, Debug)]
+enum Bounds {
+    /// Its first and last key.
+    Held(Vec<u8>, Vec<u8>),
+    /// Missing or not two strings.
+    Missing,
+    /// Not read yet.
+    Unread,
+}
+
 /// Where a walk of the page tree stopped: the next page's index and the kids left per level.
 #[derive(Debug)]
 struct Cursor {
@@ -112,10 +123,13 @@ pub(crate) struct Part {
     first: u32,
     /// New nodes per level, the pages' parents first, the root last.
     levels: Vec<u32>,
-    /// The part's pages, when [`Part::refuse_links`] has listed them.
+    /// The part's pages, when [`Part::prepare`] has listed them.
     listed: Option<Vec<ObjectId>>,
     /// The document's pages.
     pages: Arc<Pages>,
+    /// The destinations the strings its pages' links name name, null when none, once
+    /// [`Part::prepare`] has read them.
+    resolved: Option<Named>,
     /// The document's changes, as when split.
     source: Reading,
     /// The document's shared state.
@@ -552,6 +566,60 @@ impl Part {
             .collect()
     }
 
+    /// The kid of `kids` whose `Limits` hold `key`, searched by them, and its last key; the
+    /// `Limits` read kept in `limits` (ISO 32000-2:2020, 7.9.6).
+    fn kid(
+        &self,
+        objects: Objects<'_>,
+        (kids, limits): (&[Object], &mut [Bounds]),
+        key: &[u8],
+    ) -> Result<Option<(Object, Vec<u8>)>, PdfError> {
+        let source = &*self.source;
+        let (mut low, mut high) = (0, kids.len());
+        while low < high {
+            let middle =
+                low.saturating_add(high.saturating_sub(low).checked_div(2).unwrap_or_default());
+            let Some(slot) = limits.get_mut(middle) else {
+                return Ok(None);
+            };
+            let kid = kids.get(middle).cloned().unwrap_or(Object::Null);
+            if matches!(slot, Bounds::Unread) {
+                let child = source.direct(objects, kid.clone())?;
+                *slot = match source.entry(objects, &child, b"Limits")? {
+                    Object::Array(pair) => {
+                        let mut bounds = pair.into_iter();
+                        match (bounds.next(), bounds.next()) {
+                            (Some(Object::String(first)), Some(Object::String(last))) => {
+                                Bounds::Held(first, last)
+                            }
+                            _ => Bounds::Missing,
+                        }
+                    }
+                    Object::Boolean(_)
+                    | Object::Dictionary(_)
+                    | Object::Integer(_)
+                    | Object::Name(_)
+                    | Object::Null
+                    | Object::Real(_)
+                    | Object::Reference(_)
+                    | Object::Stream(..)
+                    | Object::String(_) => Bounds::Missing,
+                };
+            }
+            let Bounds::Held(first, last) = slot.clone() else {
+                return Ok(None);
+            };
+            if key < first.as_slice() {
+                high = middle;
+            } else if key > last.as_slice() {
+                low = middle.saturating_add(1);
+            } else {
+                return Ok(Some((kid, last)));
+            }
+        }
+        Ok(None)
+    }
+
     /// The part's page label ranges, keys and dictionaries of a number tree's `Nums`: the range
     /// of its first page from 0, its `St` moved on, then those starting in the part
     /// (ISO 32000-2:2020, 7.9.7, 12.4.2).
@@ -752,7 +820,10 @@ impl Part {
     fn named(&self, objects: Objects<'_>, name: Object) -> Result<Object, PdfError> {
         let found = match name {
             Object::Name(key) => self.dests(objects)?.find(&key),
-            Object::String(key) => self.leaf(objects, &key)?.and_then(|leaf| leaf.find(&key)),
+            Object::String(key) => match self.resolved.as_ref().and_then(|held| held.find(&key)) {
+                Some(found) => Some(found),
+                None => self.leaf(objects, &key)?.and_then(|leaf| leaf.find(&key)),
+            },
             Object::Array(_)
             | Object::Boolean(_)
             | Object::Dictionary(_)
@@ -763,6 +834,23 @@ impl Part {
             | Object::Stream(..) => None,
         };
         self.source.direct(objects, found.unwrap_or(Object::Null))
+    }
+
+    /// The strings by which `annotation` names its destination, by `Dest` or a `GoTo` action
+    /// (ISO 32000-2:2020, 12.3.2.4, 12.5.6.5, 12.6.4.2).
+    fn names(&self, objects: Objects<'_>, annotation: &Object) -> Result<Vec<Vec<u8>>, PdfError> {
+        let source = &*self.source;
+        let action = source.entry(objects, annotation, b"A")?;
+        let mut found = Vec::new();
+        for destination in [annotation.get(b"Dest"), goto(&action)]
+            .into_iter()
+            .flatten()
+        {
+            if let Object::String(key) = source.direct(objects, destination)? {
+                found.push(key);
+            }
+        }
+        Ok(found)
     }
 
     /// A part of `pages`, those from `first` to before `end`, of the document of `source` and
@@ -799,6 +887,7 @@ impl Part {
             levels,
             listed: None,
             pages: Arc::clone(pages),
+            resolved: None,
             source: source.again(),
             store: Arc::clone(store),
             stored: objects.size(),
@@ -896,7 +985,7 @@ impl Part {
                 Some((_, true)) | None => None,
             });
         };
-        let Some(destination) = goto(&action).filter(|_| action.get(b"Next").is_none()) else {
+        let Some(destination) = alone(&action) else {
             return Ok(None);
         };
         Ok(match self.aim(objects, destination)? {
@@ -960,6 +1049,52 @@ impl Part {
             .map(|at| at.saturating_sub(self.first))
     }
 
+    /// Lists the part's pages and reads the destinations the strings their links name name, in
+    /// one pass over the name tree; then, unless `allow_loss`, fails with
+    /// [`ErrorCode::LossRefused`] when a link leads to a page outside the part
+    /// (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5, 12.6.4.2).
+    pub(crate) fn prepare(&mut self, allow_loss: bool) -> Result<(), PdfError> {
+        if !self.pages.annotated {
+            return Ok(());
+        }
+        let objects = self.store.objects(OPERATION);
+        let (mut listed, mut keys) = (Vec::new(), Vec::new());
+        let mut walked = self
+            .pages
+            .walked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.pages.walk(
+            (objects, &self.source),
+            (self.first, self.end),
+            &mut walked,
+            &mut |id| {
+                listed.push(id);
+                annotations(objects, &self.source, id, &mut |annotation| {
+                    keys.extend(self.names(objects, &annotation)?);
+                    Ok(())
+                })
+            },
+        )?;
+        drop(walked);
+        keys.sort_unstable();
+        keys.dedup();
+        let resolved = self.resolve(objects, keys)?;
+        self.resolved = Some(resolved);
+        if !allow_loss {
+            for &id in &listed {
+                annotations(objects, &self.source, id, &mut |annotation| {
+                    if self.lost(objects, &annotation)? {
+                        return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
+                    }
+                    Ok(())
+                })?;
+            }
+        }
+        self.listed = Some(listed);
+        Ok(())
+    }
+
     /// Object `number` of the document and its generation.
     fn raw(&self, objects: Objects<'_>, number: u32) -> Result<Option<(u16, Object)>, PdfError> {
         if let Some(found) = self.source.get(number)? {
@@ -979,40 +1114,69 @@ impl Part {
         )))
     }
 
-    /// Fails with [`ErrorCode::LossRefused`] when an annotation of a page of the part links to
-    /// a page outside it, listing the part's pages (ISO 32000-2:2020, 12.5.6.5, 12.6.4.2).
-    pub(crate) fn refuse_links(&mut self) -> Result<(), PdfError> {
-        if !self.pages.annotated {
-            return Ok(());
+    /// The destinations `keys`, sorted, name in the catalog's `Dests` name tree, null when none,
+    /// read in one pass: each node once, only those whose `Limits` hold a key, a kid's `Limits`
+    /// read at most twice per key; a node reached twice is malformed (ISO 32000-2:2020, 7.9.6,
+    /// 12.3.2.4).
+    fn resolve(&self, objects: Objects<'_>, keys: Vec<Vec<u8>>) -> Result<Named, PdfError> {
+        if keys.is_empty() {
+            return Ok(Named::new(None, Vec::new()));
         }
-        let objects = self.store.objects(OPERATION);
         let source = &*self.source;
-        let mut listed = Vec::new();
-        let mut walked = self
-            .pages
-            .walked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        self.pages.walk(
-            (objects, source),
-            (self.first, self.end),
-            &mut walked,
-            &mut |id| {
-                listed.push(id);
-                let page = source.resolve(objects, id)?;
-                if let Object::Array(annotations) = source.entry(objects, &page, b"Annots")? {
-                    for annotation in annotations {
-                        if self.lost(objects, &source.direct(objects, annotation)?)? {
-                            return Err(PdfError::new(ErrorCode::LossRefused, OPERATION));
-                        }
+        let malformed = || objects.malformed();
+        let mut values = vec![Object::Null; keys.len()];
+        let mut filled = vec![false; keys.len()];
+        let names = source.entry(objects, &self.catalog, b"Names")?;
+        let root = names.get(b"Dests").unwrap_or(Object::Null);
+        let mut stack = vec![(root, 0..keys.len(), 0_u32)];
+        let mut seen = BTreeSet::new();
+        while let Some((held, range, depth)) = stack.pop() {
+            if depth > objects.depth_limit() {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION));
+            }
+            if let Object::Reference(id) = held
+                && !seen.insert(id.number)
+            {
+                return Err(malformed());
+            }
+            let node = source.direct(objects, held)?;
+            let wanted = keys.get(range.clone()).unwrap_or_default();
+            if let Object::Array(pairs) = source.entry(objects, &node, b"Names")? {
+                let mut items = pairs.into_iter();
+                while let (Some(name), Some(value)) = (items.next(), items.next()) {
+                    let Object::String(key) = source.direct(objects, name)? else {
+                        continue;
+                    };
+                    let Ok(offset) = wanted.binary_search(&key) else {
+                        continue;
+                    };
+                    let at = range.start.saturating_add(offset);
+                    if let (Some(slot), Some(done)) = (values.get_mut(at), filled.get_mut(at))
+                        && !*done
+                    {
+                        *slot = value;
+                        *done = true;
                     }
                 }
-                Ok(())
-            },
-        )?;
-        drop(walked);
-        self.listed = Some(listed);
-        Ok(())
+                continue;
+            }
+            let Object::Array(kids) = source.entry(objects, &node, b"Kids")? else {
+                continue;
+            };
+            let mut limits = vec![Bounds::Unread; kids.len()];
+            let mut at = range.start;
+            while let Some(key) = keys.get(at).filter(|_| at < range.end) {
+                let Some((kid, last)) = self.kid(objects, (&kids, &mut limits), key)? else {
+                    at = at.saturating_add(1);
+                    continue;
+                };
+                let rest = keys.get(at..range.end).unwrap_or_default();
+                let end = at.saturating_add(rest.partition_point(|other| *other <= last));
+                stack.push((kid, at..end, depth.saturating_add(1)));
+                at = end;
+            }
+        }
+        Ok(Named::new(None, keys.into_iter().zip(values).collect()))
     }
 
     /// The new root node's number.
@@ -1052,6 +1216,10 @@ impl View for Part {
                     drop(built);
                     Some((0, node))
                 }
+                None if self.outside(number) => self
+                    .source
+                    .generation(objects, number)?
+                    .map(|generation| (generation, Object::Null)),
                 None => self.raw(objects, number)?,
             },
         };
@@ -1074,6 +1242,33 @@ fn goto(object: &Object) -> Option<Object> {
     }
 }
 
+/// The destination of `action` when it is a `GoTo` action without a next action
+/// (ISO 32000-2:2020, 12.6.2, 12.6.4.2).
+fn alone(action: &Object) -> Option<Object> {
+    goto(action).filter(|_| {
+        action
+            .get(b"Next")
+            .is_none_or(|next| matches!(next, Object::Null))
+    })
+}
+
+/// Gives `visit` each annotation of page `id` of the document of `objects` and `source`
+/// (ISO 32000-2:2020, 12.5.2).
+fn annotations(
+    objects: Objects<'_>,
+    source: &Overlay,
+    id: ObjectId,
+    visit: &mut dyn FnMut(Object) -> Result<(), PdfError>,
+) -> Result<(), PdfError> {
+    let page = source.resolve(objects, id)?;
+    if let Object::Array(items) = source.entry(objects, &page, b"Annots")? {
+        for item in items {
+            visit(source.direct(objects, item)?)?;
+        }
+    }
+    Ok(())
+}
+
 /// A reference to object `number`, generation 0.
 const fn reference(number: u32) -> Object {
     Object::Reference(ObjectId {
@@ -1085,8 +1280,9 @@ const fn reference(number: u32) -> Object {
 /// Fails with [`ErrorCode::LossRefused`] when a part of the document of `objects` and `overlay`
 /// would lose its encryption, when `encrypted`, or an entry of its catalog: form fields, a
 /// structure tree, bookmarks, name trees but destinations, threads, associated files,
-/// document actions or any other entry a part neither keeps nor rewrites (ISO 32000-2:2020,
-/// 7.6, 7.7.2, 7.7.4, 12.3.3, 12.4.3, 12.6.3, 12.7, 14.7, 14.13).
+/// document actions, an open action other than a destination or a `GoTo` action without a next
+/// one, or any other entry a part neither keeps nor rewrites (ISO 32000-2:2020, 7.6, 7.7.2,
+/// 7.7.4, 12.3.3, 12.4.3, 12.6.2, 12.6.3, 12.7, 14.7, 14.13).
 pub(crate) fn refuse(
     objects: Objects<'_>,
     overlay: &Overlay,
@@ -1104,7 +1300,19 @@ pub(crate) fn refuse(
     let mut lost = encrypted;
     for (key, value) in catalog {
         lost |= match key.as_slice() {
-            b"Dests" | b"OpenAction" | b"PageLabels" | b"Pages" | b"Type" => false,
+            b"Dests" | b"PageLabels" | b"Pages" | b"Type" => false,
+            b"OpenAction" => match overlay.direct(objects, value)? {
+                action @ Object::Dictionary(_) => alone(&action).is_none(),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => false,
+            },
             b"AcroForm" => matches!(
                 overlay.entry(objects, &overlay.direct(objects, value)?, b"Fields")?,
                 Object::Array(items) if !items.is_empty()

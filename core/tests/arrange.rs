@@ -7,14 +7,16 @@ use alloc::sync::Arc;
 use core::error::Error;
 use core::ops::Range;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::io;
 use std::path::PathBuf;
+use std::{fs, io};
 
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::document::{CreateOptions, Document, OpenOptions, PageOptions, SaveOptions};
+use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::input::{
     BytesSourceOptions, FileSourceOptions, ReadAt, ReadAtSourceOptions, Source,
 };
+use starlightpdf::objects::{ObjectId, ObjectOptions, StreamDataOptions};
 use starlightpdf::output::{MemorySinkOptions, Sink};
 use starlightpdf::page::{Boundary, BoundaryOptions, Page};
 use starlightpdf::{ErrorCode, PdfError};
@@ -28,9 +30,6 @@ const PAGES: usize = 4_096;
 /// Links of [`Counted::named`], one per destination name.
 const LINKS: usize = 1_024;
 
-/// Names per leaf of [`Counted::named`]'s destinations.
-const LEAF: usize = 32;
-
 /// The crop boxes and rotations of split/pages.pdf's pages (ISO 32000-2:2020, 7.7.3.4: the
 /// root gives `MediaBox` 0 0 612 792 and `Rotate` 90, the node over pages 1 and 2 `CropBox`
 /// 10 10 600 780 and `Rotate` 180).
@@ -41,6 +40,9 @@ const SOURCE_PAGES: [&str; 5] = [
     "0 0 420 595 0",
     "50 50 450 650 90",
 ];
+
+/// The name link `at` of [`Counted::named`] uses, by its index.
+type Order = fn(usize) -> usize;
 
 /// A PDF that counts the bytes it serves, in all and from objects it watches.
 struct Counted {
@@ -70,20 +72,20 @@ impl Counted {
         Self::new(&objects, 2..3)
     }
 
-    /// A page with [`LINKS`] links, each to it by a name of the destinations name tree, whose
-    /// root holds leaves of [`LEAF`] names each: catalog 1, root page tree node 2, page 3, the
-    /// name tree from 4, watched (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5).
-    fn named() -> Self {
+    /// A page with [`LINKS`] links, link `at` to it by name `order(at)` of the destinations name
+    /// tree, whose root holds leaves of `leaf` names each: catalog 1, root page tree node 2, page
+    /// 3, the name tree from 4, watched (ISO 32000-2:2020, 7.9.6, 12.3.2.4, 12.5.6.5).
+    fn named(leaf: usize, order: Order) -> Self {
         let name = |at: usize| format!("(d{at:05})");
         let links: Vec<String> = (0..LINKS)
             .map(|at| {
                 format!(
                     "<< /Type /Annot /Subtype /Link /Rect [0 0 9 9] /Dest {} >>",
-                    name(at)
+                    name(order(at))
                 )
             })
             .collect();
-        let leaves = LINKS.div_ceil(LEAF);
+        let leaves = LINKS.div_ceil(leaf);
         let kids: Vec<String> = (5..leaves.saturating_add(5))
             .map(|kid| format!("{kid} 0 R"))
             .collect();
@@ -96,9 +98,9 @@ impl Counted {
             ),
             format!("<< /Kids [{}] >>", kids.join(" ")),
         ];
-        for leaf in 0..leaves {
-            let first = leaf.saturating_mul(LEAF);
-            let last = first.saturating_add(LEAF).min(LINKS).saturating_sub(1);
+        for index in 0..leaves {
+            let first = index.saturating_mul(leaf);
+            let last = first.saturating_add(leaf).min(LINKS).saturating_sub(1);
             let names: Vec<String> = (first..=last)
                 .map(|at| format!("{} [3 0 R /Fit]", name(at)))
                 .collect();
@@ -227,6 +229,63 @@ fn open_counted(counted: &Arc<Counted>) -> Result<Document, PdfError> {
     Document::open(&source, None, &OpenOptions::default())
 }
 
+/// Object `id` of `document` as PDF syntax.
+fn text(document: &Document, id: ObjectId) -> Result<String, PdfError> {
+    let mut options = ObjectOptions::default();
+    options.id = id;
+    document.object(&options)
+}
+
+/// The data of stream `id` of `document`, decoded when `decode`.
+fn data(document: &Document, id: ObjectId, decode: bool) -> Result<Vec<u8>, PdfError> {
+    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+    let mut options = StreamDataOptions::default();
+    options.id = id;
+    options.decode = decode;
+    document.stream_data(&sink, &options)?;
+    sink.take_bytes()
+}
+
+/// Object `number`, generation 0.
+fn id(number: u32) -> ObjectId {
+    let mut found = ObjectId::default();
+    found.number = number;
+    found
+}
+
+/// The object the reference after `key` in the PDF syntax `syntax` refers to, the first of an
+/// array.
+fn referred(syntax: &str, key: &str) -> Result<ObjectId, Box<dyn Error>> {
+    let rest = syntax
+        .split(&format!("{key} "))
+        .nth(1)
+        .ok_or_else(|| format!("no {key} in {syntax}"))?;
+    let mut words = rest.trim_start_matches('[').split(' ');
+    let mut found = id(words.next().unwrap_or_default().parse()?);
+    found.generation = words.next().unwrap_or_default().parse()?;
+    Ok(found)
+}
+
+/// The first page of `document`, found from its catalog by `object`.
+fn first_page(document: &Document) -> Result<String, Box<dyn Error>> {
+    let catalog = text(document, document.catalog()?)?;
+    let pages = text(document, referred(&catalog, "/Pages")?)?;
+    Ok(text(document, referred(&pages, "/Kids")?)?)
+}
+
+/// `document` saved and opened again.
+fn saved(document: &Document) -> Result<Document, PdfError> {
+    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+    let _report = document.save(&sink, None, &SaveOptions::default())?;
+    let mut options = BytesSourceOptions::default();
+    options.bytes = Arc::new(sink.take_bytes()?);
+    Document::open(
+        &Source::from_bytes(&options)?,
+        None,
+        &OpenOptions::default(),
+    )
+}
+
 /// A split by `count` pages.
 fn by_pages(count: u32) -> SplitOptions {
     let mut options = SplitOptions::default();
@@ -268,16 +327,91 @@ fn inserted_pages_keep_their_index_size_and_rotation() -> Result<(), Box<dyn Err
     expected.insert(2, "0 0 200 100 0");
     expected.insert(0, "0 0 300 400 0");
     same(&every(&document)?, &expected)?;
-    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
-    let _report = document.save(&sink, None, &SaveOptions::default())?;
-    let mut options = BytesSourceOptions::default();
-    options.bytes = Arc::new(sink.take_bytes()?);
-    let saved = Document::open(
-        &Source::from_bytes(&options)?,
-        None,
-        &OpenOptions::default(),
-    )?;
-    same(&every(&saved)?, &expected)?;
+    same(&every(&saved(&document)?)?, &expected)?;
+    Ok(())
+}
+
+/// `object` and `stream_data` read a part as split and a document as edited, before saving: the
+/// part's page with its inherited attributes its own, another part's page null; after an edit
+/// the edit, and the part fails `StaleHandle` (ISO 32000-2:2020, 7.3.10, 7.7.3.4; handles ADR).
+#[test]
+fn objects_read_parts_and_edits() -> Result<(), Box<dyn Error>> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /MediaBox [0 0 612 792] /Count 2 /Kids [3 0 R 4 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /Contents 6 0 R >>",
+        "<< /Length 3 >>\nstream\nabc\nendstream",
+        "<< /Length 3 >>\nstream\ndef\nendstream",
+    ]
+    .map(String::from);
+    let document = open_counted(&Arc::new(Counted::new(&objects, 0..0)))?;
+    let part = document.split(&by_pages(1))?.next()?.ok_or("no part")?;
+    if !text(&part, id(3))?.contains("/MediaBox [0 0 612 792]") {
+        return Err("a part's page does not hold its inherited media box".into());
+    }
+    if text(&part, id(4))? != "null" || data(&part, id(5), false)? != b"abc" {
+        return Err("a part's objects read wrong".into());
+    }
+    drop(document.insert_blank_page(&InsertBlankPageOptions::default())?);
+    if !text(&document, id(2))?.contains("/Count 3") {
+        return Err("an edited object read as before the edit".into());
+    }
+    let codes = [
+        text(&part, id(3)).err().map(|error| error.code()),
+        data(&part, id(5), false).err().map(|error| error.code()),
+    ];
+    if codes != [Some(ErrorCode::StaleHandle); 2] {
+        return Err(format!("{codes:?}, not StaleHandle").into());
+    }
+    Ok(())
+}
+
+/// Images drawn on a page read before saving: a JPEG's bytes unchanged, a PNG's samples as after
+/// saving, as many as its header gives, with the content painting them (ISO 32000-2:2020, 7.4.8,
+/// 8.9.5; ISO/IEC 15948:2004, 11.2.2).
+#[test]
+fn drawn_images_read_before_saving() -> Result<(), Box<dyn Error>> {
+    let document = Document::create(None, &CreateOptions::default())?;
+    let page = document.insert_blank_page(&InsertBlankPageOptions::default())?;
+    let jpeg = fs::read(format!("{CORPUS}/images/baseline-rgb.jpg"))?;
+    let png = fs::read(format!("{CORPUS}/images/c2-b8.png"))?;
+    for image in [&jpeg, &png] {
+        let mut options = BytesSourceOptions::default();
+        options.bytes = Arc::new(image.clone());
+        page.draw_image(
+            &Source::from_bytes(&options)?,
+            None,
+            None,
+            &DrawImageOptions::default(),
+        )?;
+    }
+    let drawn = first_page(&document)?;
+    let content = data(&document, referred(&drawn, "/Contents")?, false)?;
+    let painted = referred(&drawn, "/Im1")?;
+    let length = format!("/Length {}", jpeg.len());
+    if !content.ends_with(b"/Im1 Do Q\n")
+        || data(&document, painted, false)? != jpeg
+        || !text(&document, painted)?.contains(&length)
+    {
+        return Err("a drawn JPEG read wrong".into());
+    }
+    let samples = data(&document, referred(&drawn, "/Im2")?, true)?;
+    // IHDR's width and height, big-endian, at bytes 16 and 20 (ISO/IEC 15948:2004, 11.2.2).
+    let header = |at: usize| {
+        png.get(at..at.saturating_add(4))
+            .unwrap_or_default()
+            .iter()
+            .fold(0_u32, |value, &byte| {
+                value.wrapping_shl(8) | u32::from(byte)
+            })
+    };
+    let size = usize::try_from(header(16).saturating_mul(header(20)).saturating_mul(3))?;
+    let reopened = saved(&document)?;
+    let after = data(&reopened, referred(&first_page(&reopened)?, "/Im2")?, true)?;
+    if samples.len() != size || samples != after {
+        return Err("a drawn PNG's samples read wrong".into());
+    }
     Ok(())
 }
 
@@ -359,18 +493,29 @@ fn refusing_loss_reads_no_page_tree_node() -> Result<(), Box<dyn Error>> {
 }
 
 /// Splitting off a page whose links name their destinations and saving it reads the name tree
-/// a bounded number of times, not once per link (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
+/// a bounded number of times, not once per link: links in key order over leaves of 32 names, and
+/// links alternating between two leaves (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
 #[test]
 fn named_links_read_the_name_tree_a_few_times() -> Result<(), Box<dyn Error>> {
-    let named = Arc::new(Counted::named());
-    let parts = open_counted(&named)?.split(&by_pages(1))?;
-    let part = parts.next()?.ok_or("no part")?;
-    let sink = Sink::in_memory(&MemorySinkOptions::default())?;
-    let _report = part.save(&sink, None, &SaveOptions::default())?;
-    let read = named.watched_served.load(Ordering::Relaxed);
-    let tree = named.watched.len();
-    if read > 64 * tree {
-        return Err(format!("{read} bytes of a {tree}-byte name tree read").into());
+    let cases: [(usize, Order); 2] = [
+        (32, |at| at),
+        (LINKS >> 1, |at| {
+            (at & 1).saturating_mul(LINKS >> 1).saturating_add(at >> 1)
+        }),
+    ];
+    for (leaf, order) in cases {
+        let named = Arc::new(Counted::named(leaf, order));
+        let parts = open_counted(&named)?.split(&by_pages(1))?;
+        let part = parts.next()?.ok_or("no part")?;
+        let sink = Sink::in_memory(&MemorySinkOptions::default())?;
+        let _report = part.save(&sink, None, &SaveOptions::default())?;
+        let read = named.watched_served.load(Ordering::Relaxed);
+        let tree = named.watched.len();
+        if read > 64 * tree {
+            return Err(
+                format!("leaves of {leaf}: {read} bytes of a {tree}-byte name tree read").into(),
+            );
+        }
     }
     Ok(())
 }
