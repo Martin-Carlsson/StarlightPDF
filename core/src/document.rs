@@ -1568,8 +1568,9 @@ impl Document {
     /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
     /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
     /// a link or open action to a page in another part fail with [`ErrorCode::LossRefused`]
-    /// unless `allow_loss`, which leaves them out; such a link keeps its appearance. A `count` of 0 and `starts` empty,
-    /// not ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
+    /// unless `allow_loss`, which leaves them out; such a link keeps its appearance. A `count`
+    /// of 0 and `starts` empty, not ascending or past the last page fail with
+    /// [`ErrorCode::InvalidArgument`];
     /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
     ///
     /// # Errors

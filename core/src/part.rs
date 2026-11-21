@@ -111,14 +111,20 @@ impl Debug for Pages {
 }
 
 impl Level {
-    /// Reads the next batch when none is left.
+    /// Reads the next batch when none is left; all the kids in an object stream, whose data a
+    /// later batch would decode again from its start.
     fn fill(&mut self, objects: Objects<'_>) -> Result<(), PdfError> {
         let Some(at) = self.at.filter(|_| self.batch.is_empty()) else {
             return Ok(());
         };
         let mut reader = objects.reader(at)?;
         self.at = None;
-        while self.batch.len() < BATCH {
+        let size = if at.packed().is_some() {
+            usize::MAX
+        } else {
+            BATCH
+        };
+        while self.batch.len() < size {
             match reader.item()? {
                 Token::Reference(id) => self.batch.push_back(id),
                 Token::ArrayEnd => return Ok(()),
@@ -989,9 +995,8 @@ fn slot(index: &mut [u32], number: u32) -> Option<&mut u32> {
 /// Whether `id` of the document of `objects` and `overlay` is a page tree node, else a page, and
 /// whether a page has annotations, read without its kids (ISO 32000-2:2020, 7.7.3).
 fn kind(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<(bool, bool), PdfError> {
-    if overlay.get(id.number)?.is_some() {
-        let object = overlay.resolve(objects, id)?;
-        if !matches!(object, Object::Dictionary(_)) {
+    if let Some((generation, object)) = overlay.get(id.number)? {
+        if generation != id.generation || !matches!(object, Object::Dictionary(_)) {
             return Err(objects.malformed());
         }
         return Ok((
