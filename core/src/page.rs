@@ -22,7 +22,12 @@ use crate::output::Sink;
 use crate::progress::Progress;
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
+use crate::store::{Objects, Store};
+use crate::syntax::{At, Token, Value};
 use crate::{ErrorCode, PdfError};
+
+/// The media box of a page without one: US Letter, as viewers show it.
+const LETTER: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
 
 /// A page boundary (ISO 32000-2:2020, 14.11.2).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -75,8 +80,10 @@ pub struct Matrix {
 /// A page; it follows the page when others move, and fails with [`ErrorCode::StaleHandle`] once deleted.
 #[derive(Clone, Debug)]
 pub struct Page {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// The page object.
+    id: ObjectId,
+    /// The document's shared state.
+    store: Arc<Store>,
 }
 
 impl Page {
@@ -138,16 +145,38 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::blocks"))
     }
 
-    /// A page boundary, in default user space.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// A page boundary, in default user space: `MediaBox` and `CropBox` inherited, `CropBox`
+    /// defaulting to the media box and the others to the crop box, each with corners normalized
+    /// and clipped to the media box (ISO 32000-2:2020, 7.7.3.4, 7.9.5 and 14.11.2). A missing
+    /// media box is US Letter, with a warning unless strict.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn boundary(&self, options: &BoundaryOptions) -> Result<Rect, PdfError> {
-        let _: &BoundaryOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Page::boundary"))
+        let objects = self.store.objects("Page::boundary");
+        let media = if let Some(found) = inherited(objects, self.id, b"MediaBox")? {
+            rectangle(objects, &found)?
+        } else {
+            objects.deviation("7.7.3.3", "MediaBox missing", None)?;
+            LETTER
+        };
+        let crop = match inherited(objects, self.id, b"CropBox")? {
+            Some(found) => clip(rectangle(objects, &found)?, media),
+            None => media,
+        };
+        let key: &[u8] = match options.kind {
+            Boundary::Art => b"ArtBox",
+            Boundary::Bleed => b"BleedBox",
+            Boundary::Crop => return Ok(rect(crop)),
+            Boundary::Media => return Ok(rect(media)),
+            Boundary::Trim => b"TrimBox",
+        };
+        let page = objects.dictionary(Some(Value::Reference(self.id)))?;
+        Ok(rect(match own(objects, page, key)? {
+            Some(found) => clip(rectangle(objects, &found)?, media),
+            None => crop,
+        }))
     }
 
     /// Deletes the page.
@@ -351,15 +380,25 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::rotate_by"))
     }
 
-    /// The rotation in degrees clockwise.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The rotation in degrees clockwise: `Rotate`, inherited, as 0, 90, 180 or 270
+    /// (ISO 32000-2:2020, 7.7.3.3); one not a multiple of 90 is 0, with a warning unless strict.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn rotation(&self) -> Result<u16, PdfError> {
-        Err(PdfError::new(ErrorCode::NotImplemented, "Page::rotation"))
+        let objects = self.store.objects("Page::rotation");
+        let degrees = inherited(objects, self.id, b"Rotate")?.map_or(Some(0), |found| {
+            found
+                .integer()
+                .filter(|value| value.checked_rem(90) == Some(0))?
+                .checked_rem_euclid(360)
+        });
+        if let Some(found) = degrees.and_then(|value| u16::try_from(value).ok()) {
+            return Ok(found);
+        }
+        objects.deviation("7.7.3.3", "Rotate not a multiple of 90", None)?;
+        Ok(0)
     }
 
     /// Scales the page and its content.
@@ -635,4 +674,234 @@ pub enum TransitionStyle {
     Uncover,
     /// A line sweeps across the page.
     Wipe,
+}
+
+/// `rectangle`, normalized, reduced to its intersection with `media` (ISO 32000-2:2020, 14.11.2).
+const fn clip(rectangle: [f64; 4], media: [f64; 4]) -> [f64; 4] {
+    let [left, bottom, right, top] = rectangle;
+    let [media_left, media_bottom, media_right, media_top] = media;
+    let low_x = left.max(media_left);
+    let low_y = bottom.max(media_bottom);
+    [
+        low_x,
+        low_y,
+        right.min(media_right).max(low_x),
+        top.min(media_top).max(low_y),
+    ]
+}
+
+/// `left` less `right`, both `width` digits, most significant first, modulo 10 to the `width`.
+fn difference(left: &[u8], right: &[u8]) -> Vec<u8> {
+    let mut borrow = 0_u8;
+    let mut digits: Vec<u8> = left
+        .iter()
+        .rev()
+        .zip(right.iter().rev())
+        .map(|(&minuend, &subtrahend)| {
+            let taken = subtrahend.saturating_add(borrow);
+            borrow = u8::from(minuend < taken);
+            minuend
+                .saturating_add(borrow.saturating_mul(10))
+                .saturating_sub(taken)
+        })
+        .collect();
+    digits.reverse();
+    digits
+}
+
+/// The page at `index` of the page tree, found by descending through each node's `Count`; past
+/// the last page is [`ErrorCode::InvalidArgument`] (ISO 32000-2:2020, 7.7.3).
+pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
+    let objects = store.objects("Document::page");
+    let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
+    let root = objects.get(catalog, b"Pages")?;
+    // The nodes descended through, by id; the root, when direct, has none.
+    let mut path: Vec<ObjectId> = root
+        .as_ref()
+        .and_then(Value::reference)
+        .into_iter()
+        .collect();
+    let mut dictionary = objects.dictionary(root)?;
+    let mut depth: u32 = 0;
+    let mut left = u64::from(index);
+    loop {
+        if depth >= objects.depth_limit() {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+        }
+        depth = depth.saturating_add(1);
+        let kids = objects
+            .get(dictionary, b"Kids")?
+            .as_ref()
+            .and_then(Value::array)
+            .ok_or_else(|| objects.malformed())?;
+        let mut reader = objects.reader(kids)?;
+        drop(reader.token()?);
+        loop {
+            let kid = match reader.item()? {
+                Token::Reference(kid) => kid,
+                Token::ArrayEnd if depth == 1 => {
+                    return Err(PdfError::new(
+                        ErrorCode::InvalidArgument,
+                        objects.operation(),
+                    ));
+                }
+                Token::ArrayEnd
+                | Token::ArrayStart
+                | Token::DictionaryEnd
+                | Token::DictionaryStart
+                | Token::Integer(_)
+                | Token::Keyword(_)
+                | Token::Name(_)
+                | Token::Real(_)
+                | Token::String(_) => return Err(objects.malformed()),
+            };
+            let child = objects.dictionary(Some(Value::Reference(kid)))?;
+            let pages = if objects.get(child, b"Kids")?.is_some() {
+                match own(objects, child, b"Count")? {
+                    Some(Value::Integer(count)) => u64::try_from(count).ok(),
+                    Some(_) | None => None,
+                }
+                .ok_or_else(|| objects.malformed())?
+            } else if left == 0 {
+                return Ok(Page {
+                    id: kid,
+                    store: Arc::clone(store),
+                });
+            } else {
+                1
+            };
+            if left < pages {
+                if path.contains(&kid) {
+                    return Err(objects.malformed());
+                }
+                path.push(kid);
+                dictionary = child;
+                break;
+            }
+            left = left.saturating_sub(pages);
+        }
+    }
+}
+
+/// The digits of `text`, a shortest decimal, with `scale` fraction digits, as `width` digits
+/// modulo 10 to the `width`, most significant first.
+fn fixed(text: &str, scale: usize, width: usize) -> Vec<u8> {
+    let magnitude = text.trim_start_matches('-');
+    let (whole, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));
+    let mut digits = vec![0; width.saturating_sub(whole.len()).saturating_sub(scale)];
+    digits.extend(
+        whole
+            .bytes()
+            .chain(fraction.bytes())
+            .map(|byte| byte.saturating_sub(b'0')),
+    );
+    digits.resize(width, 0);
+    if text.starts_with('-') {
+        difference(&vec![0; width], &digits)
+    } else {
+        digits
+    }
+}
+
+/// The value of `key` in the page tree node `id` or the nearest ancestor that has it
+/// (ISO 32000-2:2020, 7.7.3.4).
+fn inherited(objects: Objects<'_>, id: ObjectId, key: &[u8]) -> Result<Option<Value>, PdfError> {
+    let mut node = id;
+    for _ in 0..=objects.depth_limit() {
+        let dictionary = objects.dictionary(Some(Value::Reference(node)))?;
+        if let Some(found) = own(objects, dictionary, key)? {
+            return Ok(Some(found));
+        }
+        match objects.get(dictionary, b"Parent")? {
+            Some(Value::Reference(parent)) => node = parent,
+            Some(_) | None => return Ok(None),
+        }
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+}
+
+/// The value of `key` in `dictionary`, resolved; null is none (ISO 32000-2:2020, 7.3.7).
+fn own(objects: Objects<'_>, dictionary: At, key: &[u8]) -> Result<Option<Value>, PdfError> {
+    let found = match objects.get(dictionary, key)? {
+        Some(Value::Reference(id)) => Some(objects.resolve(id)?),
+        other => other,
+    };
+    Ok(found.filter(|value| *value != Value::Null))
+}
+
+/// `[left, bottom, right, top]` as a [`Rect`].
+fn rect(rectangle: [f64; 4]) -> Rect {
+    let [left, bottom, right, top] = rectangle;
+    Rect {
+        height: span(top, bottom),
+        width: span(right, left),
+        x: left,
+        y: bottom,
+    }
+}
+
+/// The rectangle array `value`, corners normalized to `[left, bottom, right, top]`, its
+/// elements direct or indirect (ISO 32000-2:2020, 7.3.6 and 7.9.5).
+fn rectangle(objects: Objects<'_>, value: &Value) -> Result<[f64; 4], PdfError> {
+    let mut reader = objects.reader(value.array().ok_or_else(|| objects.malformed())?)?;
+    drop(reader.token()?);
+    let mut numbers = [0.0_f64; 4];
+    for number in &mut numbers {
+        *number = match reader.item()? {
+            Token::Integer(integer) => integer.to_string().parse().ok(),
+            Token::Real(real) => Some(real),
+            Token::Reference(id) => match objects.resolve(id)? {
+                Value::Integer(integer) => integer.to_string().parse().ok(),
+                Value::Real(real) => Some(real),
+                Value::Array(_)
+                | Value::Boolean(_)
+                | Value::Dictionary(_)
+                | Value::Name(_)
+                | Value::Null
+                | Value::Reference(_)
+                | Value::String(_) => None,
+            },
+            Token::ArrayEnd
+            | Token::ArrayStart
+            | Token::DictionaryEnd
+            | Token::DictionaryStart
+            | Token::Keyword(_)
+            | Token::Name(_)
+            | Token::String(_) => None,
+        }
+        .ok_or_else(|| objects.malformed())?;
+    }
+    if reader.token()? != Token::ArrayEnd {
+        return Err(objects.malformed());
+    }
+    let [x0, y0, x1, y1] = numbers;
+    Ok([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])
+}
+
+/// `high` less `low`, not above it, exact from their shortest decimals and then rounded once.
+fn span(high: f64, low: f64) -> f64 {
+    let (high_text, low_text) = (high.to_string(), low.to_string());
+    let scale = |text: &str| {
+        text.split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len())
+    };
+    let places = scale(&high_text).max(scale(&low_text));
+    let width = high_text
+        .len()
+        .max(low_text.len())
+        .saturating_add(places)
+        .saturating_add(1);
+    let digits = difference(
+        &fixed(&high_text, places, width),
+        &fixed(&low_text, places, width),
+    );
+    let point = width.saturating_sub(places);
+    let mut text = String::with_capacity(width.saturating_add(1));
+    for (at, &digit) in digits.iter().enumerate() {
+        if at == point {
+            text.push('.');
+        }
+        text.push(char::from(b'0'.saturating_add(digit)));
+    }
+    text.parse().unwrap_or_default()
 }

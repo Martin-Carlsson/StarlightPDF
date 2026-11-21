@@ -1,0 +1,167 @@
+# operation	arguments	expected
+# Repair, ISO 32000-2:2020, 7.3.8.1 and 7.3.8.2: Length wrong or missing; the data runs to the EOL before endstream
+stream_data_bytes	tests/corpus/repair/length-wrong.pdf	id=4 0	302030206d2031303020313030206c2053
+stream_data_file	tests/corpus/repair/length-wrong.pdf	id=4 0	302030206d2031303020313030206c2053
+stream_data_bytes	tests/corpus/repair/length-missing.pdf	id=4 0	302030206d2031303020313030206c2053
+stream_data_file	tests/corpus/repair/length-missing.pdf	id=4 0	302030206d2031303020313030206c2053
+stream_data_bytes	tests/corpus/repair/length-wrong.pdf	strict	id=4 0	Malformed
+stream_data_file	tests/corpus/repair/length-wrong.pdf	strict	id=4 0	Malformed
+stream_data_bytes	tests/corpus/repair/length-missing.pdf	strict	id=4 0	Malformed
+stream_data_file	tests/corpus/repair/length-missing.pdf	strict	id=4 0	Malformed
+# ISO 32000-2:2020, 7.3.8.2: the stored bytes with an indirect Length, unchanged by decode without a Filter; an empty stream
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=3 0	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_file	tests/corpus/streams/filters.pdf	id=3 0	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_bytes	tests/corpus/streams/filters.pdf	strict	id=3 0	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_file	tests/corpus/streams/filters.pdf	strict	id=3 0	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=3 0	decode	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_file	tests/corpus/streams/filters.pdf	id=3 0	decode	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=5 0	decode	empty
+stream_data_file	tests/corpus/streams/filters.pdf	id=5 0	decode	empty
+# 7.3.8.2: without decode a filtered stream gives its stored bytes
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=10 0	78daf348cdc9c9d75170cb492c495504001eff044e
+stream_data_file	tests/corpus/streams/filters.pdf	id=10 0	78daf348cdc9c9d75170cb492c495504001eff044e
+# 7.4.2 ASCIIHexDecode: white space, both cases, an odd final digit
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=6 0	decode	48656c6c6f20
+stream_data_file	tests/corpus/streams/filters.pdf	id=6 0	decode	48656c6c6f20
+# 7.4.3 ASCII85Decode: z, white space, a partial final group
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=7 0	decode	0000000048656c6c6f2c20776f726c64
+stream_data_file	tests/corpus/streams/filters.pdf	id=7 0	decode	0000000048656c6c6f2c20776f726c64
+# 7.4.4.2 and 7.4.4.3 LZWDecode: 9 to 10 bit codes with EarlyChange 1 (default) and 0
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=8 0	decode	000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+stream_data_file	tests/corpus/streams/filters.pdf	id=8 0	decode	000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=9 0	decode	000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+stream_data_file	tests/corpus/streams/filters.pdf	id=9 0	decode	000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+# 7.4.4.1 FlateDecode
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=10 0	decode	48656c6c6f2c20466c61746521
+stream_data_file	tests/corpus/streams/filters.pdf	id=10 0	decode	48656c6c6f2c20466c61746521
+# 7.4.5 RunLengthDecode: literal and repeat runs, EOD
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=11 0	decode	4142434444444445
+stream_data_file	tests/corpus/streams/filters.pdf	id=11 0	decode	4142434444444445
+# Decoding stops at the EOD marker; the data after it is ignored: 7.4.2 >, 7.4.3 ~> after a partial group,
+# 7.4.3 a partial group at the end of the data, 7.4.4.2 a Clear code mid-stream then EOD (257), 7.4.5 128
+stream_data_bytes	tests/corpus/streams/end-of-data.pdf	id=3 0	decode	486960
+stream_data_file	tests/corpus/streams/end-of-data.pdf	id=3 0	decode	486960
+stream_data_bytes	tests/corpus/streams/end-of-data.pdf	id=4 0	decode	48656c6c6f
+stream_data_file	tests/corpus/streams/end-of-data.pdf	id=4 0	decode	48656c6c6f
+stream_data_bytes	tests/corpus/streams/end-of-data.pdf	id=5 0	decode	48656c6c6f
+stream_data_file	tests/corpus/streams/end-of-data.pdf	id=5 0	decode	48656c6c6f
+stream_data_bytes	tests/corpus/streams/end-of-data.pdf	id=6 0	decode	414243444344
+stream_data_file	tests/corpus/streams/end-of-data.pdf	id=6 0	decode	414243444344
+stream_data_bytes	tests/corpus/streams/end-of-data.pdf	id=7 0	decode	616263
+stream_data_file	tests/corpus/streams/end-of-data.pdf	id=7 0	decode	616263
+# 7.4.4.1 FlateDecode (RFC 1951, 3.2.3): fixed, stored, dynamic, stored and fixed blocks
+stream_data_bytes	tests/corpus/streams/flate-block-types.pdf	id=3 0	decode	61626361626361626361626361626361626361626361626330203120342039203136203235203336203439203634203831203320323420343720373220322033312036322039352033332037302031322035332039362034342039312034332039342035302038203635203237203838203534203232203839203631203335203131203836203636203438203332203138203620393320383520373920373520373320373320373520373920383520393320362031382033322034382036362038362031312033352036312038392032322035342038382032372036352038203530203934203433203931203434203936203533203132203730203333203935203632203331203220373220343720323420332038312036342034392033362032352031362039203420312030203120342039203136203235203336203439203634203831203320323420343720373220322033312036322039352033332037302031322035332039362078797a78797a78797a78797a78797a78797a
+stream_data_file	tests/corpus/streams/flate-block-types.pdf	id=3 0	decode	61626361626361626361626361626361626361626361626330203120342039203136203235203336203439203634203831203320323420343720373220322033312036322039352033332037302031322035332039362034342039312034332039342035302038203635203237203838203534203232203839203631203335203131203836203636203438203332203138203620393320383520373920373520373320373320373520373920383520393320362031382033322034382036362038362031312033352036312038392032322035342038382032372036352038203530203934203433203931203434203936203533203132203730203333203935203632203331203220373220343720323420332038312036342034392033362032352031362039203420312030203120342039203136203235203336203439203634203831203320323420343720373220322033312036322039352033332037302031322035332039362078797a78797a78797a78797a78797a78797a
+# 7.4.1 and 7.3.8.2: ASCII85Decode ASCIIHexDecode LZWDecode FlateDecode RunLengthDecode chained; a DecodeParms array with null
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=12 0	decode	436861696e65643a2061616161616161616161206262626262626262626221
+stream_data_file	tests/corpus/streams/filters.pdf	id=12 0	decode	436861696e65643a2061616161616161616161206262626262626262626221
+stream_data_bytes	tests/corpus/streams/filters.pdf	id=13 0	decode	0a141e0f1923
+stream_data_file	tests/corpus/streams/filters.pdf	id=13 0	decode	0a141e0f1923
+# 7.4.4.4 predictors; PNG (ISO/IEC 15948, 9): 10 BitsPerComponent 4 Columns 3, 11 BitsPerComponent 16, 12, 13 Colors 2, 14 Colors 3,
+# 15 rows of filter types 0 to 4; TIFF 2 (TIFF 6.0, 14): Colors 3 under LZWDecode, BitsPerComponent 16, BitsPerComponent 4 Colors 2
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=3 0	decode	1230abc0
+stream_data_file	tests/corpus/streams/predictors.pdf	id=3 0	decode	1230abc0
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=4 0	decode	01f00210ffff0001
+stream_data_file	tests/corpus/streams/predictors.pdf	id=4 0	decode	01f00210ffff0001
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=5 0	decode	c8643200d25a3cff055f3dfe
+stream_data_file	tests/corpus/streams/predictors.pdf	id=5 0	decode	c8643200d25a3cff055f3dfe
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=6 0	decode	faf0fbeffffec80a
+stream_data_file	tests/corpus/streams/predictors.pdf	id=6 0	decode	faf0fbeffffec80a
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=7 0	decode	0ac81e28be3c0cd2195ab4460b00ff64aa5a
+stream_data_file	tests/corpus/streams/predictors.pdf	id=7 0	decode	0ac81e28be3c0cd2195ab4460b00ff64aa5a
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=8 0	decode	0102030409070503090807faff80000364788ca0
+stream_data_file	tests/corpus/streams/predictors.pdf	id=8 0	decode	0102030409070503090807faff80000364788ca0
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=9 0	decode	0a141e0f122805ff006464646365006201ff
+stream_data_file	tests/corpus/streams/predictors.pdf	id=9 0	decode	0a141e0f122805ff006464646365006201ff
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=10 0	decode	12340001ffff
+stream_data_file	tests/corpus/streams/predictors.pdf	id=10 0	decode	12340001ffff
+stream_data_bytes	tests/corpus/streams/predictors.pdf	id=11 0	decode	123f0af00f55
+stream_data_file	tests/corpus/streams/predictors.pdf	id=11 0	decode	123f0af00f55
+# 7.4.6 CCITTFaxDecode, 7.4.7 JBIG2Decode, 7.4.8 DCTDecode, 7.4.9 JPXDecode: stored bytes, but not decoded, also last in a chain
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=3 0	ffd8ffd9
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=3 0	ffd8ffd9
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=3 0	decode	Unsupported
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=3 0	decode	Unsupported
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=4 0	decode	Unsupported
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=4 0	decode	Unsupported
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=5 0	decode	Unsupported
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=5 0	decode	Unsupported
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=6 0	decode	Unsupported
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=6 0	decode	Unsupported
+stream_data_bytes	tests/corpus/streams/image-filters.pdf	id=7 0	decode	Unsupported
+stream_data_file	tests/corpus/streams/image-filters.pdf	id=7 0	decode	Unsupported
+# Resource policy decoded-data limit: 13 bytes decode from 21 stored
+stream_data_bytes	tests/corpus/streams/filters.pdf	decoded_limit=13	id=10 0	decode	48656c6c6f2c20466c61746521
+stream_data_file	tests/corpus/streams/filters.pdf	decoded_limit=13	id=10 0	decode	48656c6c6f2c20466c61746521
+stream_data_bytes	tests/corpus/streams/filters.pdf	decoded_limit=12	id=10 0	decode	LimitExceeded
+stream_data_file	tests/corpus/streams/filters.pdf	decoded_limit=12	id=10 0	decode	LimitExceeded
+# An unfiltered stream read with decode: its 27 stored bytes are its decoded data
+stream_data_bytes	tests/corpus/streams/filters.pdf	decoded_limit=27	id=3 0	decode	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_file	tests/corpus/streams/filters.pdf	decoded_limit=27	id=3 0	decode	4254202f4631203132205466202873746f7265642920546a204554
+stream_data_bytes	tests/corpus/streams/filters.pdf	decoded_limit=26	id=3 0	decode	LimitExceeded
+stream_data_file	tests/corpus/streams/filters.pdf	decoded_limit=26	id=3 0	decode	LimitExceeded
+# ISO 32000-2:2020, 7.6.2 and 7.6.3 (Algorithm 1): stream data reads decrypted; RC4, AESV2, AESV3
+stream_data_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r3-empty-user-password.pdf	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=5 0	78da730a51d077335430325108495330375230373050084951d0084e4d2e4a2d5128484c4fd55408c952700d0100d8c60b00
+stream_data_file	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=5 0	78da730a51d077335430325108495330375230373050084951d0084e4d2e4a2d5128484c4fd55408c952700d0100d8c60b00
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r4-rc4-128.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r4-rc4-128.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r5-aes-256.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r5-aes-256.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r6-aes-256.pdf	password=user	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_bytes	tests/corpus/encryption/r6-empty-user-password.pdf	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r6-empty-user-password.pdf	id=5 0	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+# 7.6.2 then 7.4.4: decrypted before FlateDecode
+stream_data_bytes	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=5 0	decode	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+stream_data_file	tests/corpus/encryption/r3-rc4-128.pdf	password=user	id=5 0	decode	4254202f463120323420546620373220373030205464202853656372657420706167652920546a204554
+# 7.6.2 Table 20 EncryptMetadata false: the metadata stream (14.3.2) is not encrypted
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-encrypt-metadata-false.pdf	password=user	id=7 0	3c3f787061636b657420626567696e3d22222069643d2257354d304d7043656869487a7265537a4e54637a6b633964223f3e3c783a786d706d65746120786d6c6e733a783d2261646f62653a6e733a6d6574612f222f3e3c3f787061636b657420656e643d2272223f3e
+stream_data_file	tests/corpus/encryption/r4-aes-128-encrypt-metadata-false.pdf	password=user	id=7 0	3c3f787061636b657420626567696e3d22222069643d2257354d304d7043656869487a7265537a4e54637a6b633964223f3e3c783a786d706d65746120786d6c6e733a783d2261646f62653a6e733a6d6574612f222f3e3c3f787061636b657420656e643d2272223f3e
+stream_data_bytes	tests/corpus/encryption/r6-aes-256-encrypt-metadata-false.pdf	password=user	id=7 0	3c3f787061636b657420626567696e3d22222069643d2257354d304d7043656869487a7265537a4e54637a6b633964223f3e3c783a786d706d65746120786d6c6e733a783d2261646f62653a6e733a6d6574612f222f3e3c3f787061636b657420656e643d2272223f3e
+stream_data_file	tests/corpus/encryption/r6-aes-256-encrypt-metadata-false.pdf	password=user	id=7 0	3c3f787061636b657420626567696e3d22222069643d2257354d304d7043656869487a7265537a4e54637a6b633964223f3e3c783a786d706d65746120786d6c6e733a783d2261646f62653a6e733a6d6574612f222f3e3c3f787061636b657420656e643d2272223f3e
+# 7.4.10 and 7.6.6: a stream's own Crypt filter Identity overrides StmF
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=7 0	4254202f46312032342054662037322037303020546420284e6f7420656e637279707465642920546a204554
+stream_data_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=7 0	4254202f46312032342054662037322037303020546420284e6f7420656e637279707465642920546a204554
+# 7.4.10: decoding the Crypt filter in a Filter array leaves the data as its Identity crypt filter decrypted it
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=7 0	decode	4254202f46312032342054662037322037303020546420284e6f7420656e637279707465642920546a204554
+stream_data_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	id=7 0	decode	4254202f46312032342054662037322037303020546420284e6f7420656e637279707465642920546a204554
+# 7.6.2 Table 20 EFF: an embedded file stream (7.11.4) uses EFF (RC4), not StmF (AESV2)
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-embedded-file.pdf	password=user	id=7 0	41747461636865642066696c65
+stream_data_file	tests/corpus/encryption/r4-aes-128-embedded-file.pdf	password=user	id=7 0	41747461636865642066696c65
+# 7.5.8.2: a cross-reference stream is not encrypted
+stream_data_bytes	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=7 0	0000000000ffff010000000f000002000000080000010000004000000200000008000101000000ef000001000001610000010000034d0000010000029f0000
+stream_data_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=user	id=7 0	0000000000ffff010000000f000002000000080000010000004000000200000008000101000000ef000001000001610000010000034d0000010000029f0000
+# 7.4.4.4: a PNG row of 21846 RGB 8-bit pixels, 65538 bytes, under ASCIIHexDecode
+stream_data_bytes	tests/corpus/streams/predictor-wide-row.pdf	id=3 0	decode	48656c6c6f
+stream_data_file	tests/corpus/streams/predictor-wide-row.pdf	id=3 0	decode	48656c6c6f
+# 7.6.2: an encrypted stream of 17 filters gives its decrypted stored bytes; decoding it exceeds the 16-filter limit
+stream_data_bytes	tests/corpus/streams/many-filters-encrypted.pdf	id=3 0	343836353663366336663e
+stream_data_file	tests/corpus/streams/many-filters-encrypted.pdf	id=3 0	343836353663366336663e
+stream_data_bytes	tests/corpus/streams/many-filters-encrypted.pdf	id=3 0	decode	LimitExceeded
+stream_data_file	tests/corpus/streams/many-filters-encrypted.pdf	id=3 0	decode	LimitExceeded
+# 7.4.4.1 FlateDecode (RFC 1951, 3.2.7): a dynamic block with literal codes of 1 to 11 bits, under ASCIIHexDecode
+stream_data_bytes	tests/corpus/streams/flate-long-codes.pdf	id=3 0	decode	444444444444444488888888666655cf
+stream_data_file	tests/corpus/streams/flate-long-codes.pdf	id=3 0	decode	444444444444444488888888666655cf
+# 7.4.4.2: LZWDecode of the example codes 256 45 258 258 65 259 66 257; a code above 257 right after a clear
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=4 0	decode	2d2d2d2d2d412d2d2d42
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=4 0	decode	2d2d2d2d2d412d2d2d42
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=5 0	decode	Malformed
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=5 0	decode	Malformed
+# 7.4.3: ASCII85Decode with white-space inside ~>; z inside a group; a final group of one character
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=6 0	decode	4d616e20
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=6 0	decode	4d616e20
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=7 0	decode	Malformed
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=7 0	decode	Malformed
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=8 0	decode	Malformed
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=8 0	decode	Malformed
+# 7.4.4.4, Table 8: BitsPerComponent 3
+stream_data_bytes	tests/corpus/streams/filter-edges.pdf	id=9 0	decode	Malformed
+stream_data_file	tests/corpus/streams/filter-edges.pdf	id=9 0	decode	Malformed

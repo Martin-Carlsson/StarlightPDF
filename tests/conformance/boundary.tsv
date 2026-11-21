@@ -1,0 +1,41 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.7.3.4: MediaBox inherited from the root, two levels up
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=1	box=Media	0 0 612 792
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=1	box=Media	0 0 612 792
+# 7.7.3.4: CropBox defaults to MediaBox
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=0	box=Crop	0 0 612 792
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=0	box=Crop	0 0 612 792
+# 7.7.3.4: CropBox inherited from an intermediate node
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=1	box=Crop	36 36 540 720
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=1	box=Crop	36 36 540 720
+# 7.7.3.4: TrimBox not inheritable, so the intermediate node's is ignored and it defaults to CropBox
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=1	box=Trim	36 36 540 720
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=1	box=Trim	36 36 540 720
+# 7.7.3.4, 7.9.5: own MediaBox, corners in reverse order
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=4	box=Media	-100 -50 300 350
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=4	box=Media	-100 -50 300 350
+# 14.11.2: CropBox and BleedBox reduced to their intersection with the MediaBox inherited from the level above
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=3	box=Crop	0 700 595.5 142
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=3	box=Crop	0 700 595.5 142
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=3	box=Bleed	0 0 595.5 842
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=3	box=Bleed	0 0 595.5 842
+# 7.9.5: ArtBox given upper-left then lower-right
+boundary_bytes	tests/corpus/pages/nested-tree.pdf	index=3	box=Art	100 750 400 50
+boundary_file	tests/corpus/pages/nested-tree.pdf	index=3	box=Art	100 750 400 50
+# 7.7.3.4: MediaBox required yet missing; viewers use US Letter, strict rejects it
+boundary_bytes	tests/corpus/pages/media-box-missing.pdf	index=0	box=Media	0 0 612 792
+boundary_file	tests/corpus/pages/media-box-missing.pdf	index=0	box=Media	0 0 612 792
+boundary_bytes	tests/corpus/pages/media-box-missing.pdf	strict	index=0	box=Media	Malformed
+boundary_file	tests/corpus/pages/media-box-missing.pdf	strict	index=0	box=Media	Malformed
+# 7.7.2: the second page under a direct page tree root
+boundary_bytes	tests/corpus/pages/pages-direct.pdf	index=1	box=Media	0 0 200 100
+boundary_file	tests/corpus/pages/pages-direct.pdf	index=1	box=Media	0 0 200 100
+# 7.9.5: a lower-left corner with more digits and fraction digits than the upper-right
+boundary_bytes	tests/corpus/pages/tree-faults.pdf	index=2	box=Media	-1000 -0.125 1001 1.125
+boundary_file	tests/corpus/pages/tree-faults.pdf	index=2	box=Media	-1000 -0.125 1001 1.125
+# 7.3.6, 7.9.5: a rectangle element given as an indirect reference
+boundary_bytes	tests/corpus/pages/box-elements.pdf	index=0	box=Media	0 0 612 792
+boundary_file	tests/corpus/pages/box-elements.pdf	index=0	box=Media	0 0 612 792
+# 7.9.5: a rectangle has four numbers; a fifth is Malformed
+boundary_bytes	tests/corpus/pages/box-elements.pdf	index=1	box=Media	Malformed
+boundary_file	tests/corpus/pages/box-elements.pdf	index=1	box=Media	Malformed

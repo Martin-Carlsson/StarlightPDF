@@ -47,7 +47,7 @@ test("failures reject with PdfError carrying the same details as in Python", asy
   equal(String(error), `Document.open: ${error.message}`);
   // The operation in JavaScript's casing.
   const malformed = await api.Document.open(
-    await api.Source.fromBytes(await corpus("tests/corpus/page-count/startxref-beyond-eof.pdf")),
+    await api.Source.fromBytes(await corpus("tests/corpus/page-count/count-negative.pdf")),
   );
   const counting: unknown = await malformed.pageCount().then(
     () => undefined,
@@ -62,4 +62,26 @@ test("failures reject with PdfError carrying the same details as in Python", asy
 
 test("once the page's worker fails to load, every call rejects", async () => {
   deepEqual((await browse(await installed(), scenario("broken"))).result, ["Io", "Io"]);
+});
+
+test("a number outside the core's integer type rejects with RangeError instead of wrapping", async () => {
+  const { api } = await installed();
+  const document = await api.Document.open(await api.Source.fromBytes(await corpus(NESTED)));
+  const sink = await api.Sink.inMemory();
+  const calls: readonly (() => Promise<unknown>)[] = [
+    async () => api.ResourcePolicy.create({ decodedLimit: -1 }),
+    async () => api.ResourcePolicy.create({ objectLimit: 2 ** 53 }),
+    async () => api.ResourcePolicy.create({ warningLimit: 2 ** 32 }),
+    async () => document.object({ id: { generation: 65_536, number: 1 } }),
+    async () => document.object({ id: { generation: 0, number: -1 } }),
+    async () => document.page({ index: 0.5 }),
+    async () => document.streamData(sink, { id: { generation: 0, number: 2 ** 32 } }),
+  ];
+  for (const [index, made] of calls.entries()) {
+    const reason: unknown = await made().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    ok(reason instanceof RangeError, `call ${String(index)}: ${String(reason)}`);
+  }
 });

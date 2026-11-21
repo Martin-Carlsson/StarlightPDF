@@ -20,18 +20,24 @@ const GIB: usize = 0x4000_0000;
 /// A valid header (ISO 32000-2:2020, 7.5.2).
 const HEADER: &[u8] = b"%PDF-2.0\n";
 
+/// Most bytes open may be served of a 1 GiB file whose header, objects, table and trailer lie in
+/// its first and last 4 KiB: each of those ends served at most twice. A rebuild reads it all.
+const SERVED_BOUND: usize = 0x4000;
+
 /// An error's code and I/O cause.
 type Failure = (ErrorCode, Option<ErrorKind>);
 
 /// Fails every read.
 struct Failing;
 
-/// `HEADER`, then zeros up to `size`; counts the bytes it serves.
+/// `HEADER`, zeros, then `tail` ending at `size`; counts the bytes it serves.
 struct Header {
     /// Bytes served so far.
     served: AtomicUsize,
     /// The reported size.
     size: usize,
+    /// The last bytes.
+    tail: Vec<u8>,
 }
 
 impl ReadAt for Failing {
@@ -48,8 +54,13 @@ impl ReadAt for Header {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> io::Result<usize> {
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
         let count = self.size.saturating_sub(start).min(buffer.len());
+        let tail_at = self.size.saturating_sub(self.tail.len());
         for (byte, position) in buffer.iter_mut().take(count).zip(start..) {
-            *byte = HEADER.get(position).copied().unwrap_or_default();
+            *byte = position
+                .checked_sub(tail_at)
+                .map_or_else(|| HEADER.get(position), |at| self.tail.get(at))
+                .copied()
+                .unwrap_or_default();
         }
         let _previous = self.served.fetch_add(count, Ordering::Relaxed);
         Ok(count)
@@ -60,11 +71,45 @@ impl ReadAt for Header {
     }
 }
 
-/// A `Header` reporting `size`.
+/// A `Header` reporting `size`, without a tail.
 const fn header(size: usize) -> Header {
     Header {
         served: AtomicUsize::new(0),
         size,
+        tail: Vec::new(),
+    }
+}
+
+/// A `Header` of `size` bytes ending in a one-page PDF's objects, cross-reference table and
+/// trailer (ISO 32000-2:2020, 7.5.4, 7.5.5).
+fn valid(size: usize) -> Header {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+    ];
+    // Every offset, `startxref`'s too, is zero-padded, so the length does not depend on `start`.
+    let lay = |start: usize| {
+        let mut laid = Vec::new();
+        let mut entries = b"0000000000 65535 f\r\n".to_vec();
+        for (number, object) in (1_u32..).zip(objects) {
+            let at = start.saturating_add(laid.len());
+            entries.extend_from_slice(format!("{at:010} 00000 n\r\n").as_bytes());
+            laid.extend_from_slice(format!("{number} 0 obj\n{object}\nendobj\n").as_bytes());
+        }
+        let xref = start.saturating_add(laid.len());
+        laid.extend_from_slice(b"xref\n0 4\n");
+        laid.extend_from_slice(&entries);
+        laid.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref:010}\n%%EOF\n")
+                .as_bytes(),
+        );
+        laid
+    };
+    Header {
+        served: AtomicUsize::new(0),
+        size,
+        tail: lay(size.saturating_sub(lay(0).len())),
     }
 }
 
@@ -90,8 +135,8 @@ fn source_over_missing_file_fails_with_io_not_found() {
 }
 
 #[test]
-fn open_serves_at_most_1_kib_of_a_1_gib_source() {
-    let counted = Arc::new(header(GIB));
+fn open_does_not_read_the_body_of_a_1_gib_source() {
+    let counted = Arc::new(valid(GIB));
     let read_at: Arc<dyn ReadAt> = Arc::<Header>::clone(&counted);
     assert_eq!(
         open(Source::from_read_at(
@@ -102,7 +147,7 @@ fn open_serves_at_most_1_kib_of_a_1_gib_source() {
         "open"
     );
     let served = counted.served.load(Ordering::Relaxed);
-    assert!(served <= 1024, "served {served} bytes");
+    assert!(served <= SERVED_BOUND, "served {served} bytes");
 }
 
 #[test]

@@ -1,6 +1,8 @@
 //! Standards: validation, tagging and output intents.
 
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use std::sync::{Mutex, PoisonError};
 
 use crate::objects::ObjectId;
 use crate::{ErrorCode, PdfError};
@@ -24,20 +26,29 @@ pub struct Deviation {
 /// Deviations.
 #[derive(Clone, Debug)]
 pub struct Deviations {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// Those not yet taken, shared by clones.
+    rest: Arc<Mutex<VecDeque<Deviation>>>,
 }
 
 impl Deviations {
+    /// Deviations that yield `found` in order.
+    pub(crate) fn new(found: Vec<Deviation>) -> Self {
+        Self {
+            rest: Arc::new(Mutex::new(VecDeque::from(found))),
+        }
+    }
+
     /// The next deviation, or `None` after the last.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn next(&self) -> Result<Option<Deviation>, PdfError> {
-        Err(PdfError::new(ErrorCode::NotImplemented, "Deviations::next"))
+        Ok(self
+            .rest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pop_front())
     }
 }
 

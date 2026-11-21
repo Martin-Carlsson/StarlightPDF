@@ -1,0 +1,45 @@
+# operation	arguments	expected
+# ISO 32000-2:2020; a fault's warning cites the clause it breaks
+# 7.5.2: bytes before the header
+warnings_bytes	tests/corpus/repair/leading-bytes.pdf	ISO 32000-2:2020, 7.5.2
+warnings_file	tests/corpus/repair/leading-bytes.pdf	ISO 32000-2:2020, 7.5.2
+# 7.5.5: startxref wrong or missing
+warnings_bytes	tests/corpus/repair/startxref-wrong.pdf	ISO 32000-2:2020, 7.5.5
+warnings_file	tests/corpus/repair/startxref-wrong.pdf	ISO 32000-2:2020, 7.5.5
+warnings_bytes	tests/corpus/repair/startxref-missing.pdf	ISO 32000-2:2020, 7.5.5
+warnings_file	tests/corpus/repair/startxref-missing.pdf	ISO 32000-2:2020, 7.5.5
+# 7.5.5: a wrong startxref in a file whose only cross-reference data is a stream
+warnings_bytes	tests/corpus/repair/xref-stream-startxref-wrong.pdf	ISO 32000-2:2020, 7.5.5
+warnings_file	tests/corpus/repair/xref-stream-startxref-wrong.pdf	ISO 32000-2:2020, 7.5.5
+# 7.5.4: cross-reference table damaged or missing
+warnings_bytes	tests/corpus/repair/xref-damaged.pdf	ISO 32000-2:2020, 7.5.4
+warnings_file	tests/corpus/repair/xref-damaged.pdf	ISO 32000-2:2020, 7.5.4
+warnings_bytes	tests/corpus/repair/xref-missing.pdf	ISO 32000-2:2020, 7.5.4
+warnings_file	tests/corpus/repair/xref-missing.pdf	ISO 32000-2:2020, 7.5.4
+# 7.3.10: endobj missing, seen when the object is read
+warnings_bytes	tests/corpus/repair/endobj-missing.pdf	id=3 0	ISO 32000-2:2020, 7.3.10
+warnings_file	tests/corpus/repair/endobj-missing.pdf	id=3 0	ISO 32000-2:2020, 7.3.10
+# 7.3.8.2: stream Length wrong or missing, seen when the stream is read
+warnings_bytes	tests/corpus/repair/length-wrong.pdf	id=4 0	ISO 32000-2:2020, 7.3.8.2
+warnings_file	tests/corpus/repair/length-wrong.pdf	id=4 0	ISO 32000-2:2020, 7.3.8.2
+warnings_bytes	tests/corpus/repair/length-missing.pdf	id=4 0	ISO 32000-2:2020, 7.3.8.2
+warnings_file	tests/corpus/repair/length-missing.pdf	id=4 0	ISO 32000-2:2020, 7.3.8.2
+# Deviations in the order found; warning_limit keeps the first
+warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	ISO 32000-2:2020, 7.5.2;ISO 32000-2:2020, 7.3.8.2
+warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	ISO 32000-2:2020, 7.5.2;ISO 32000-2:2020, 7.3.8.2
+warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=1	ISO 32000-2:2020, 7.5.2
+warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=1	ISO 32000-2:2020, 7.5.2
+warnings_bytes	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=0	none
+warnings_file	tests/corpus/repair/two-faults.pdf	id=4 0	warning_limit=0	none
+# 7.5.4: reading an object a table entry misplaces rebuilds the table
+warnings_bytes	tests/corpus/repair/xref-entry-wrong.pdf	id=4 0	ISO 32000-2:2020, 7.5.4
+warnings_file	tests/corpus/repair/xref-entry-wrong.pdf	id=4 0	ISO 32000-2:2020, 7.5.4
+# 7.5.4: an older trailer holding a 300-byte keyword is damaged
+warnings_bytes	tests/corpus/repair/trailer-long-keyword.pdf	ISO 32000-2:2020, 7.5.4
+warnings_file	tests/corpus/repair/trailer-long-keyword.pdf	ISO 32000-2:2020, 7.5.4
+# 7.5.4: reading an object whose table entry is garbled rebuilds the table
+warnings_bytes	tests/corpus/repair/xref-entry-garbled.pdf	id=4 0	ISO 32000-2:2020, 7.5.4
+warnings_file	tests/corpus/repair/xref-entry-garbled.pdf	id=4 0	ISO 32000-2:2020, 7.5.4
+# 7.3.8.2: a stream whose Length is right reads with no warning
+warnings_bytes	tests/corpus/streams/filters.pdf	id=3 0	none
+warnings_file	tests/corpus/streams/filters.pdf	id=3 0	none

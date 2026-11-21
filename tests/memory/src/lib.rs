@@ -4,6 +4,9 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::Cell;
 use std::alloc::System;
 
+/// The modulus of Adler-32 (RFC 1950, 8.2).
+const ADLER: u64 = 0xFFF1;
+
 /// The allocator of every test binary linking this crate.
 #[global_allocator]
 static COUNTING: Counting = Counting;
@@ -90,4 +93,45 @@ where
     let result = work();
     let (_, top) = HELD.get();
     (result, top)
+}
+
+/// Adler-32 sums `(A, B)` after `count` copies of `byte` follow sums `state` (RFC 1950, 8.2):
+/// `A` gains `count × byte`, `B` gains `count × A + byte × count(count + 1)/2`.
+#[must_use]
+pub fn adler_run(state: (u64, u64), byte: u8, count: u64) -> Option<(u64, u64)> {
+    let (sum, total) = state;
+    let times = count.checked_rem(ADLER)?;
+    let triangle = count
+        .checked_mul(count.checked_add(1)?)?
+        .checked_div(2)?
+        .checked_rem(ADLER)?;
+    let filler = u64::from(byte);
+    Some((
+        sum.checked_add(times.checked_mul(filler)?)?
+            .checked_rem(ADLER)?,
+        total
+            .checked_add(times.checked_mul(sum)?)?
+            .checked_add(triangle.checked_mul(filler)?)?
+            .checked_rem(ADLER)?,
+    ))
+}
+
+/// The Adler-32 of sums `(A, B)` (RFC 1950, 8.2).
+#[must_use]
+pub fn adler_value(state: (u64, u64)) -> Option<u32> {
+    u32::try_from(state.1.checked_mul(0x0001_0000)?.checked_add(state.0)?).ok()
+}
+
+/// `LEN` and `NLEN` of a stored block of `length` bytes, after its header (RFC 1951, 3.2.4).
+#[must_use]
+pub fn stored_lengths(length: u16) -> Option<[u8; 4]> {
+    let complement = u16::MAX.checked_sub(length)?;
+    let low = |value: u16| u8::try_from(value.checked_rem(256)?).ok();
+    let high = |value: u16| u8::try_from(value.checked_div(256)?).ok();
+    Some([
+        low(length)?,
+        high(length)?,
+        low(complement)?,
+        high(complement)?,
+    ])
 }

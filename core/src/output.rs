@@ -1,8 +1,11 @@
 //! Output: sinks.
 
 use alloc::sync::Arc;
-use std::io;
+use core::fmt::{self, Debug, Formatter};
+use core::mem::take;
+use std::io::{self, ErrorKind};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use crate::{ErrorCode, PdfError};
 
@@ -29,36 +32,55 @@ pub struct FileSinkOptions {
     pub file: PathBuf,
 }
 
+/// Bytes held in memory.
+struct Memory(Mutex<Vec<u8>>);
+
 /// Options for [`Sink::in_memory`].
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct MemorySinkOptions;
 
 /// Output that only appends.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Sink {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// The output.
+    append: Arc<dyn Append>,
+    /// The output, when it is in memory.
+    memory: Option<Arc<Memory>>,
+}
+
+impl Append for Memory {
+    fn append(&self, bytes: &[u8]) -> io::Result<()> {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        held.try_reserve(bytes.len())
+            .map_err(|error| io::Error::new(ErrorKind::OutOfMemory, error))?;
+        held.extend_from_slice(bytes);
+        drop(held);
+        Ok(())
+    }
+}
+
+impl Debug for Sink {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sink").finish_non_exhaustive()
+    }
 }
 
 impl Sink {
-    /// A sink over a caller's `Append`.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// A sink over a caller's `Append`, which gets each write as it happens.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`].
+    /// None.
     pub fn from_append(
         append: &Arc<dyn Append>,
         options: &AppendSinkOptions,
     ) -> Result<Self, PdfError> {
-        let _: &Arc<dyn Append> = append;
         let _: &AppendSinkOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Sink::from_append",
-        ))
+        Ok(Self {
+            append: Arc::clone(append),
+            memory: None,
+        })
     }
 
     /// A sink over a file.
@@ -75,24 +97,37 @@ impl Sink {
 
     /// A sink that holds its bytes in memory, for [`Sink::take_bytes`].
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`].
+    /// None.
     pub fn in_memory(options: &MemorySinkOptions) -> Result<Self, PdfError> {
         let _: &MemorySinkOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Sink::in_memory"))
+        let memory = Arc::new(Memory(Mutex::new(Vec::new())));
+        Ok(Self {
+            append: Arc::<Memory>::clone(&memory),
+            memory: Some(memory),
+        })
     }
 
     /// Takes the bytes appended so far, leaving the sink empty.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::InvalidArgument`] unless the sink is in memory.
+    /// [`ErrorCode::InvalidArgument`] unless the sink is in memory.
     pub fn take_bytes(&self) -> Result<Vec<u8>, PdfError> {
-        Err(PdfError::new(ErrorCode::NotImplemented, "Sink::take_bytes"))
+        let memory = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| PdfError::new(ErrorCode::InvalidArgument, "Sink::take_bytes"))?;
+        Ok(take(
+            &mut *memory.0.lock().unwrap_or_else(PoisonError::into_inner),
+        ))
+    }
+
+    /// Appends `bytes`.
+    pub(crate) fn write(&self, bytes: &[u8], operation: &'static str) -> Result<(), PdfError> {
+        self.append
+            .append(bytes)
+            .map_err(|error| PdfError::io(&error, operation))
     }
 }

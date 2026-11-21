@@ -9,7 +9,7 @@ use std::io;
 use starlightpdf::ErrorCode;
 use starlightpdf::document::{Document, OpenOptions};
 use starlightpdf::input::{ReadAt, ReadAtSourceOptions, Source};
-use starlightpdf_memory::peak;
+use starlightpdf_memory::{adler_run, adler_value, peak, stored_lengths};
 
 /// Most bytes a page count may hold allocated at once.
 const BOUND: usize = 3_072;
@@ -40,9 +40,6 @@ const OBJECT_RUNS: u64 = 387_596;
 
 /// Bytes of a longest match (RFC 1951, 3.2.5).
 const RUN: u64 = 258;
-
-/// The modulus of Adler-32 (RFC 1950, 8.2).
-const ADLER: u64 = 0xFFF1;
 
 /// Elements or keys of a huge container.
 const MANY: u64 = 10_000_000;
@@ -129,35 +126,15 @@ impl ReadAt for Generated {
 impl Plain {
     /// Adler-32 of the data, computed byte by byte, runs by their sums (RFC 1950, 8.2).
     fn adler(&self) -> Option<u32> {
-        let step = |(sum, total): (u64, u64), input: u8| -> Option<(u64, u64)> {
-            let next = sum.checked_add(u64::from(input))?.checked_rem(ADLER)?;
-            Some((next, total.checked_add(next)?.checked_rem(ADLER)?))
-        };
         let mut state = (1_u64, 0_u64);
         for &byte in &self.prefix {
-            state = step(state, byte)?;
+            state = adler_run(state, byte, 1)?;
         }
-        let count = self.runs.checked_mul(RUN)?;
-        let triangle = count
-            .checked_mul(count.checked_add(1)?)?
-            .checked_div(2)?
-            .checked_rem(ADLER)?;
-        let filler = u64::from(self.filler);
-        state = (
-            state
-                .0
-                .checked_add(count.checked_rem(ADLER)?.checked_mul(filler)?)?
-                .checked_rem(ADLER)?,
-            state
-                .1
-                .checked_add(count.checked_rem(ADLER)?.checked_mul(state.0)?)?
-                .checked_add(triangle.checked_mul(filler)?)?
-                .checked_rem(ADLER)?,
-        );
+        state = adler_run(state, self.filler, self.runs.checked_mul(RUN)?)?;
         for &byte in &self.suffix {
-            state = step(state, byte)?;
+            state = adler_run(state, byte, 1)?;
         }
-        u32::try_from(state.1.checked_mul(0x0001_0000)?.checked_add(state.0)?).ok()
+        adler_value(state)
     }
 }
 
@@ -234,11 +211,21 @@ fn generated(open: &str, fill: Fill, length: u64, close: &str) -> Option<Generat
 
 /// Asserts the page count of `generated` and that its peak allocation is within `bound`.
 fn assert_page_count(generated: Option<Generated>, expected: Result<u32, ErrorCode>, bound: usize) {
+    assert_page_count_with(generated, &OpenOptions::default(), expected, bound);
+}
+
+/// [`assert_page_count`], opening with `options`.
+fn assert_page_count_with(
+    generated: Option<Generated>,
+    options: &OpenOptions,
+    expected: Result<u32, ErrorCode>,
+    bound: usize,
+) {
     let measured = generated.map(|source| {
         let read_at: Arc<dyn ReadAt> = Arc::new(source);
         peak(|| {
             Source::from_read_at(&read_at, &ReadAtSourceOptions::default())
-                .and_then(|opened| Document::open(&opened, None, &OpenOptions::default()))
+                .and_then(|opened| Document::open(&opened, None, options))
                 .and_then(|document| document.page_count())
                 .map_err(|error| error.code())
         })
@@ -276,6 +263,17 @@ fn name() {
     assert_page_count(generated("/Big /", LETTER, HUGE, ""), Ok(1), BOUND);
 }
 
+/// A huge key after the key looked up is not read whole; `Pages` repeats, the last counting
+/// (ISO 32000-2:2020, 7.3.5 and 7.3.7).
+#[test]
+fn key_after_the_key_looked_up() {
+    assert_page_count(
+        generated("/Pages 2 0 R /", LETTER, HUGE, " 1"),
+        Ok(1),
+        BOUND,
+    );
+}
+
 /// ISO 32000-2:2020, 7.3.7.
 #[test]
 fn ten_million_keys() {
@@ -300,12 +298,15 @@ fn ten_million_array_elements() {
     );
 }
 
-/// ISO 32000-2:2020, 7.3.3.
+/// ISO 32000-2:2020, 7.3.3; strict, as a tolerant open rebuilds the table.
 #[test]
-fn number_of_digits_fails_with_limit_exceeded() {
-    assert_page_count(
+fn number_of_digits_fails_with_malformed() {
+    let mut strict = OpenOptions::default();
+    strict.strict = true;
+    assert_page_count_with(
         generated("/Big ", DIGIT, HUGE, ""),
-        Err(ErrorCode::LimitExceeded),
+        &strict,
+        Err(ErrorCode::Malformed),
         BOUND,
     );
 }
@@ -527,7 +528,7 @@ fn encode(plain: &Plain, coding: Coding) -> Option<Encoded> {
     let mut head = vec![0x78, 0x9c, 0x00];
     head.extend(stored_block(&plain.prefix)?);
     head.extend(&plain.prefix);
-    let mut tail = stored_block(&plain.suffix)?;
+    let mut tail = stored_block(&plain.suffix)?.to_vec();
     tail.extend(&plain.suffix);
     let adler = plain.adler()?;
     for byte in [24, 16, 8, 0] {
@@ -566,15 +567,8 @@ fn length_of(text: &str) -> Option<u64> {
 }
 
 /// `LEN` and `NLEN` of a stored block of `data` (RFC 1951, 3.2.4), after the block's header.
-fn stored_block(data: &[u8]) -> Option<Vec<u8>> {
-    let length = u16::try_from(data.len()).ok()?;
-    let complement = u16::MAX.checked_sub(length)?;
-    let mut bytes = Vec::new();
-    for value in [length, complement] {
-        bytes.push(u8::try_from(value.checked_rem(256)?).ok()?);
-        bytes.push(u8::try_from(value.checked_div(256)?).ok()?);
-    }
-    Some(bytes)
+fn stored_block(data: &[u8]) -> Option<[u8; 4]> {
+    stored_lengths(u16::try_from(data.len()).ok()?)
 }
 
 /// The `N` pairs of object number and offset in an object stream's header, each object's length

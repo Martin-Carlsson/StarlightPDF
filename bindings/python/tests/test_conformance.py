@@ -1,5 +1,6 @@
 """Runs the conformance suite in tests/conformance/*.tsv through the binding."""
 
+import decimal
 import functools
 import pathlib
 import re
@@ -10,6 +11,10 @@ import starlightpdf
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SUITE_DIR = ROOT / "tests" / "conformance"
+LIMITS = ("decoded_limit", "object_limit", "warning_limit")
+OPEN = {"strict", "password", *LIMITS}
+FLAGS = {"strict", "decode"}
+BOXES = {"Art", "Bleed", "Crop", "Media", "Trim"}
 
 
 def source(kind: str, path: str) -> starlightpdf.Source:
@@ -25,23 +30,148 @@ def header_version(path: str) -> str:
     return f"{major}.{minor}"
 
 
-def open_document(kind: str, path: str) -> str:
-    """Open the file at `path`: `ok`."""
-    starlightpdf.Document.open(source(kind, path))
+def object_id(given: dict[str, str]) -> starlightpdf.ObjectId:
+    """Name the object `id=` gives."""
+    number, generation = given["id"].split(" ")
+    return starlightpdf.ObjectId(number=int(number), generation=int(generation))
+
+
+def page(document: starlightpdf.Document, given: dict[str, str]) -> starlightpdf.Page:
+    """Get the page `index=` gives."""
+    return document.page(index=int(given["index"]))
+
+
+def stream_data(
+    document: starlightpdf.Document, given: dict[str, str], *, decode: bool
+) -> bytes:
+    """Read the stream `id=` gives into an in-memory sink."""
+    sink = starlightpdf.Sink.in_memory()
+    document.stream_data(sink, object_id(given), decode=decode)
+    return sink.take_bytes()
+
+
+def number(value: float) -> str:
+    """`value` as the shortest decimal that round-trips, without exponent or `.0`."""
+    return format(decimal.Decimal(repr(value)).normalize(), "f")
+
+
+def read_page(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """Read the page: `ok`."""
+    page(document, given)
     return "ok"
 
 
-def page_count(kind: str, path: str) -> str:
-    """Page count of the file at `path`."""
-    return str(starlightpdf.Document.open(source(kind, path)).page_count)
+def boundary(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """Give the page's `box=` boundary as `x y width height`."""
+    if given["box"] not in BOXES:
+        msg = f"bad box {given['box']!r}"
+        raise ValueError(msg)
+    rect = page(document, given).boundary(kind=given["box"])
+    return " ".join(
+        number(value) for value in (rect.x, rect.y, rect.width, rect.height)
+    )
 
 
-OPERATIONS: dict[str, Callable[[str], str]] = {
-    "header_version": header_version,
-    "open_bytes": functools.partial(open_document, "bytes"),
-    "open_file": functools.partial(open_document, "file"),
-    "page_count_bytes": functools.partial(page_count, "bytes"),
-    "page_count_file": functools.partial(page_count, "file"),
+def encryption(document: starlightpdf.Document, _given: dict[str, str]) -> str:
+    """Give the cipher, whether certificates are used, and what is denied."""
+    found = document.encryption
+    certificate = "true" if found.certificate else "false"
+    return f"{found.cipher} {certificate} {','.join(found.restrictions) or 'none'}"
+
+
+def touch(document: starlightpdf.Document, given: dict[str, str]) -> None:
+    """Count the pages and, with `id=`, read that object and any stored stream data."""
+    _ = document.page_count
+    if "id" in given:
+        document.object(object_id(given))
+        try:
+            stream_data(document, given, decode=False)
+        except starlightpdf.PdfError as error:
+            if error.code != "InvalidArgument":
+                raise
+
+
+def warnings(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """List each warning's clause after `touch`."""
+    touch(document, given)
+    return ";".join(deviation.clause for deviation in document.warnings) or "none"
+
+
+def dropped_warnings(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """Count the warnings dropped after `touch`."""
+    touch(document, given)
+    return str(document.dropped_warnings)
+
+
+# Per operation: the keys it takes, those it needs, and what it reads after open.
+READS: dict[
+    str,
+    tuple[set[str], set[str], Callable[[starlightpdf.Document, dict[str, str]], str]],
+] = {
+    "open": (set(), set(), lambda _document, _given: "ok"),
+    "page_count": (set(), set(), lambda document, _given: str(document.page_count)),
+    "catalog": (
+        set(),
+        set(),
+        lambda document, _given: (
+            f"{document.catalog.number} {document.catalog.generation}"
+        ),
+    ),
+    "object": (
+        {"id"},
+        {"id"},
+        lambda document, given: document.object(object_id(given)),
+    ),
+    "stream_data": (
+        {"id", "decode"},
+        {"id"},
+        lambda document, given: (
+            stream_data(document, given, decode="decode" in given).hex() or "empty"
+        ),
+    ),
+    "page": ({"index"}, {"index"}, read_page),
+    "boundary": ({"index", "box"}, {"index", "box"}, boundary),
+    "rotation": (
+        {"index"},
+        {"index"},
+        lambda document, given: str(page(document, given).rotation),
+    ),
+    "encryption": (set(), set(), encryption),
+    "warnings": ({"id"}, set(), warnings),
+    "dropped_warnings": ({"id"}, set(), dropped_warnings),
+}
+
+
+def perform(family: str, kind: str, args: list[str]) -> str:
+    """Open the path first in `args` with the options after it; read as `family`."""
+    path, *options = args
+    takes, needs, read = READS[family]
+    given: dict[str, str] = {}
+    for arg in options:
+        key, equals, value = arg.partition("=")
+        if key not in OPEN | takes or (key in FLAGS) == bool(equals) or key in given:
+            msg = f"bad argument {arg!r}"
+            raise ValueError(msg)
+        given[key] = value
+    if not needs <= given.keys():
+        msg = f"needs {', '.join(sorted(needs - given.keys()))}"
+        raise ValueError(msg)
+    made = source(kind, path)
+    limits = {key: int(given[key]) for key in LIMITS if key in given}
+    policy = starlightpdf.ResourcePolicy(**limits) if limits else None
+    document = starlightpdf.Document.open(
+        made, policy, strict="strict" in given, password=given.get("password", "")
+    )
+    return read(document, given)
+
+
+OPERATIONS: dict[str, Callable[[list[str]], str]] = {
+    "header_version": lambda args: header_version(*args),
+    **{
+        f"{family}_{kind}": functools.partial(perform, family, kind)
+        for family in READS
+        for kind in ("bytes", "file")
+    },
 }
 
 
@@ -54,7 +184,7 @@ def check(operation: str, args: list[str], expected: str) -> str | None:
     if operation not in OPERATIONS:
         return f"unknown operation {operation!r}"
     try:
-        actual = OPERATIONS[operation](*args)
+        actual = OPERATIONS[operation](args)
     except starlightpdf.PdfError as error:
         actual = error.code
     except (OSError, TypeError, ValueError) as error:
@@ -126,6 +256,18 @@ class Conformance(unittest.TestCase):
         """An unknown operation fails."""
         with self.assertRaises(SuiteError):
             run([("s.tsv", "nope\tx\ty\n")])
+
+    def test_unknown_argument_fails(self) -> None:
+        """An unknown argument fails."""
+        with self.assertRaises(SuiteError):
+            run(
+                [
+                    (
+                        "s.tsv",
+                        "open_bytes\ttests/corpus/header/version-1.7.pdf\tnope\tok\n",
+                    )
+                ]
+            )
 
     def test_suite_without_cases_fails(self) -> None:
         """A suite with no cases fails."""

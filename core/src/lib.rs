@@ -136,8 +136,12 @@ extern crate alloc;
 pub mod analysis;
 pub mod annotations;
 pub mod arrange;
+mod ascii85;
+mod ascii_hex;
 pub mod attachments;
 pub mod compliance;
+mod crypto;
+mod decryption;
 pub mod document;
 pub mod drawing;
 pub mod edit;
@@ -149,6 +153,7 @@ mod inflate;
 pub mod input;
 pub mod layers;
 pub mod limits;
+mod lzw;
 pub mod metadata;
 pub mod navigation;
 mod object_stream;
@@ -159,9 +164,12 @@ mod predictor;
 pub mod progress;
 mod pull;
 pub mod rendering;
+mod repair;
+mod run_length;
 pub mod security;
 pub mod shapes;
 pub mod signatures;
+mod store;
 mod stream;
 mod syntax;
 mod xref;
@@ -170,9 +178,6 @@ mod xref_stream;
 use core::error::Error;
 use core::fmt::{self, Display, Formatter};
 use std::io;
-
-/// The bytes the header check needs.
-const HEADER_LEN: usize = 9;
 
 /// A part of the library a build can leave out.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -440,7 +445,7 @@ pub const fn library_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// [`header_version`], failing as `operation`; needs at most [`HEADER_LEN`] bytes.
+/// [`header_version`], failing as `operation`.
 fn parse_header(bytes: &[u8], operation: &'static str) -> Result<Version, PdfError> {
     match *bytes {
         [

@@ -12,7 +12,8 @@ addEventListener("message", (event: MessageEvent<{ arg: never; name: Name; port:
     )
     .then(
       (reply) => {
-        port.postMessage(reply);
+        // Moves, not copies, a sink's bytes.
+        port.postMessage(reply, "ok" in reply && reply.ok instanceof Uint8Array ? [reply.ok.buffer] : []);
       },
       (error: unknown) => {
         port.postMessage({ error });

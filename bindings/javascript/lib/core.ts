@@ -1,15 +1,38 @@
 // The core in this thread, its objects held by handle.
-import init, { Document, Source, headerVersion, libraryVersion } from "./wasm/starlightpdf_javascript.js";
+import type { Boundary, Deviation, Encryption, ObjectId, OpenOptions, Rect, ResourcePolicyOptions } from "./index.js";
+import init, {
+  Deviations,
+  Document,
+  Page,
+  ResourcePolicy,
+  Sink,
+  Source,
+  headerVersion,
+  libraryVersion,
+} from "./wasm/starlightpdf_javascript.js";
 import { add } from "./table.js";
 
 /** Each operation's argument and result. */
 export interface Signatures {
+  boundary: [{ kind: Boundary; page: number }, Rect];
+  catalog: [number, ObjectId];
+  droppedWarnings: [number, number];
+  encryption: [number, Encryption];
   free: [number, undefined];
   headerVersion: [Uint8Array, [number, number]];
   libraryVersion: [undefined, string];
-  open: [number, number];
+  nextWarning: [number, Deviation | null];
+  object: [{ document: number; id: ObjectId }, string];
+  open: [{ options: OpenOptions; policy: number | null; source: number }, number];
+  page: [{ document: number; index: number }, number];
   pageCount: [number, number];
+  policy: [ResourcePolicyOptions, number];
+  rotation: [number, number];
+  sink: [undefined, number];
   source: [Blob | Uint8Array, number];
+  streamData: [{ decode: boolean; document: number; id: ObjectId; sink: number }, undefined];
+  takeBytes: [number, Uint8Array];
+  warnings: [number, number];
 }
 
 /** An operation's name. */
@@ -23,17 +46,23 @@ await init({
 
 const sources = new Map<number, Source>();
 const documents = new Map<number, Document>();
+const pages = new Map<number, Page>();
+const policies = new Map<number, ResourcePolicy>();
+const sinks = new Map<number, Sink>();
+const cursors = new Map<number, Deviations>();
+const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors];
 let last = 0;
 
-/** A new handle. */
-function next(): number {
+/** Holds `made` in `kind`; its handle. */
+function hold<T>(kind: Map<number, T>, made: T): number {
   last += 1;
+  kind.set(last, made);
   return last;
 }
 
-/** The object `handle` holds in `held`. */
-function get<T>(held: Map<number, T>, handle: number): T {
-  const found = held.get(handle);
+/** The object `handle` holds in `kind`. */
+function get<T>(kind: Map<number, T>, handle: number): T {
+  const found = kind.get(handle);
   if (found === undefined) {
     throw new TypeError(`no object ${handle}`);
   }
@@ -41,10 +70,23 @@ function get<T>(held: Map<number, T>, handle: number): T {
 }
 
 const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } = {
+  boundary({ kind, page }) {
+    return get(pages, page).boundary(kind);
+  },
+  catalog(document) {
+    return get(documents, document).catalog();
+  },
+  droppedWarnings(document) {
+    return Number(get(documents, document).droppedWarnings());
+  },
+  encryption(document) {
+    return get(documents, document).encryption();
+  },
   free(handle) {
-    (sources.get(handle) ?? documents.get(handle))?.free();
-    sources.delete(handle);
-    documents.delete(handle);
+    for (const kind of held) {
+      kind.get(handle)?.free();
+      kind.delete(handle);
+    }
   },
   headerVersion(bytes) {
     const [major = 0, minor = 0] = headerVersion(bytes);
@@ -53,18 +95,48 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   libraryVersion() {
     return libraryVersion();
   },
-  open(source) {
-    const handle = next();
-    documents.set(handle, Document.open(get(sources, source)));
-    return handle;
+  nextWarning(cursor) {
+    const deviation = get(cursors, cursor).next();
+    return deviation && { ...deviation, offset: deviation.offset === null ? null : Number(deviation.offset) };
+  },
+  object({ document, id }) {
+    return get(documents, document).object(id.number, id.generation);
+  },
+  open({ options, policy, source }) {
+    const shared = policy === null ? undefined : get(policies, policy).share();
+    return hold(
+      documents,
+      Document.open(get(sources, source), shared, options.password ?? "", options.strict ?? false),
+    );
+  },
+  page({ document, index }) {
+    return hold(pages, get(documents, document).page(index));
   },
   pageCount(document) {
     return get(documents, document).pageCount();
   },
+  policy({ decodedLimit, objectLimit, warningLimit }) {
+    const big = (limit: number | undefined): bigint | undefined => (limit === undefined ? undefined : BigInt(limit));
+    return hold(policies, ResourcePolicy.create(big(decodedLimit), big(objectLimit), warningLimit));
+  },
+  rotation(page) {
+    return get(pages, page).rotation();
+  },
+  sink() {
+    return hold(sinks, Sink.inMemory());
+  },
   source(input) {
-    const handle = next();
-    sources.set(handle, Source.fromTable(add(input), BigInt(input instanceof Blob ? input.size : input.length)));
-    return handle;
+    const size = BigInt(input instanceof Blob ? input.size : input.length);
+    return hold(sources, Source.fromTable(add(input), size));
+  },
+  streamData({ decode, document, id, sink }) {
+    get(documents, document).streamData(get(sinks, sink), id.number, id.generation, decode);
+  },
+  takeBytes(sink) {
+    return get(sinks, sink).takeBytes();
+  },
+  warnings(document) {
+    return hold(cursors, get(documents, document).warnings());
   },
 };
 

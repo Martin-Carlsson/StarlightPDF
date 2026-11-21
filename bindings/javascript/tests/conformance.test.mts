@@ -52,6 +52,11 @@ test("the conformance runner reports as the other runners do", async (context) =
   await context.test("an unknown operation fails", async () => {
     deepEqual(await check(["s.tsv", "nope\tx\ty\n"]), ["s.tsv:1: unknown operation 'nope'"]);
   });
+  await context.test("an unknown argument fails", async () => {
+    deepEqual(await check(["s.tsv", "open_bytes\ttests/corpus/header/version-1.7.pdf\tnope\tok\n"]), [
+      "s.tsv:1: open_bytes: bad argument 'nope'",
+    ]);
+  });
   await context.test("a suite without cases fails", async () => {
     deepEqual(await check(["s.tsv", "# operation\targuments\texpected\n"]), ["no cases"]);
   });

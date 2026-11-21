@@ -63,9 +63,9 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 - 👨‍💻 **Open and parse:** from file, stream or memory; password-protected files; lazy loading of large files
 - 👨‍💻 **Document info:** page count, PDF version, page sizes, fonts used, embedded files, encryption status
 - 💤 **Metadata:** read title, author, subject, keywords, dates; XMP metadata
-- 💤 **Structure access:** raw objects, streams, cross-reference table, document catalog
+- 👨‍💻 **Structure access:** raw objects, streams, cross-reference table, document catalog
 - 💤 **Validation:** check a file against the PDF specification and report errors
-- 💤 **Repair:** recover damaged or malformed files, rebuild the cross-reference table
+- 👨‍💻 **Repair:** recover damaged or malformed files, rebuild the cross-reference table
 
 ### Content extraction
 
@@ -140,7 +140,7 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 
 - 💤 **Encryption:** RC4, AES-128, AES-256; user and owner passwords; certificate-based
 - 💤 **Permissions:** restrict printing, copying, editing, form filling
-- 💤 **Decryption:** remove protection with the password
+- 👨‍💻 **Decryption:** remove protection with the password
 - 💤 **Sanitizing:** remove hidden data, scripts, metadata, attachments
 
 ### Digital signatures

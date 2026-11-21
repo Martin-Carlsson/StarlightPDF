@@ -1,12 +1,22 @@
 //! Stream data: reading it raw, undoing its filters and consuming it in constant memory
 //! (ISO 32000-2:2020, 7.3.8 and 7.4).
 
+use crate::ascii_hex::AsciiHex;
+use crate::ascii85::Ascii85;
 use crate::inflate::Inflate;
 use crate::input::Source;
+use crate::lzw::Lzw;
+use crate::objects::{ObjectId, XrefKind};
+use crate::output::Sink;
 use crate::predictor::Predictor;
 use crate::pull::Pull;
-use crate::syntax::{Dictionary, Input, Reader, Token};
+use crate::run_length::RunLength;
+use crate::store::Objects;
+use crate::syntax::{At, Input, Keyword, Token, Value};
 use crate::{ErrorCode, PdfError};
+
+/// Filters one stream may chain.
+const FILTERS: usize = 16;
 
 /// Bytes discarded or read at a time.
 const STEP: usize = 4096;
@@ -14,9 +24,30 @@ const STEP: usize = 4096;
 /// Decoded stream data as bytes at an offset that only moves forward.
 pub(crate) struct Feeder<'data> {
     /// The data.
-    data: &'data mut dyn Pull,
+    data: Box<dyn Pull + 'data>,
     /// The offset of the next byte to pull.
     end: u64,
+}
+
+/// Which indirect references a stream's `Filter` and `DecodeParms` may hold.
+#[derive(Clone, Copy)]
+enum Indirect {
+    /// Any.
+    Any,
+    /// None.
+    Never,
+    /// Those to objects outside object streams.
+    Outside,
+}
+
+/// Data that fails with [`ErrorCode::LimitExceeded`] past a count of bytes.
+struct Limited<'data> {
+    /// The data.
+    data: Box<dyn Pull + 'data>,
+    /// Bytes still allowed.
+    left: u64,
+    /// The operation errors name.
+    operation: &'static str,
 }
 
 /// The raw bytes of a stream.
@@ -32,13 +63,8 @@ struct Raw<'source> {
 }
 
 impl<'data> Feeder<'data> {
-    /// Reads the rest of the data and discards it, so a fault anywhere in it fails.
-    pub(crate) fn finish(self) -> Result<(), PdfError> {
-        drain(self.data)
-    }
-
     /// A feeder at the start of `data`.
-    pub(crate) const fn new(data: &'data mut dyn Pull) -> Self {
+    pub(crate) const fn new(data: Box<dyn Pull + 'data>) -> Self {
         Self { data, end: 0 }
     }
 
@@ -52,7 +78,7 @@ impl<'data> Feeder<'data> {
     }
 }
 
-impl Input for &mut Feeder<'_> {
+impl Input for Feeder<'_> {
     fn fill(
         &mut self,
         offset: u64,
@@ -87,6 +113,17 @@ impl Pull for Box<dyn Pull + '_> {
     }
 }
 
+impl Pull for Limited<'_> {
+    fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
+        let count = self.data.pull(buf)?;
+        self.left = self
+            .left
+            .checked_sub(u64::try_from(count).unwrap_or(u64::MAX))
+            .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, self.operation))?;
+        Ok(count)
+    }
+}
+
 impl Pull for Raw<'_> {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
         let wanted = usize::try_from(self.remaining)
@@ -103,35 +140,79 @@ impl Pull for Raw<'_> {
     }
 }
 
-/// The stream data at `start`, with `FlateDecode` and a PNG predictor undone; another filter is [`ErrorCode::Unsupported`].
-pub(crate) fn decoder<'source>(
-    source: &'source Source,
+/// `data` with the filters of the stream whose dictionary is at `dictionary` undone, each stage at
+/// most the policy's decoded limit; an image or unknown filter is [`ErrorCode::Unsupported`]
+/// (ISO 32000-2:2020, 7.4).
+fn chain<'store>(
+    store: Objects<'store>,
+    stored: Box<dyn Pull + 'store>,
+    dictionary: At,
+    indirect: Indirect,
+) -> Result<Box<dyn Pull + 'store>, PdfError> {
+    let operation = store.operation();
+    let limited = |data| -> Box<dyn Pull + 'store> {
+        Box::new(Limited {
+            data,
+            left: store.decoded_limit(),
+            operation,
+        })
+    };
+    // More than `FILTERS` is too many.
+    let list = |key: &[u8]| {
+        let values = entries(
+            store,
+            store.get(dictionary, key)?,
+            indirect,
+            FILTERS.wrapping_add(1),
+        )?;
+        if values.len() > FILTERS {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, operation));
+        }
+        Ok(values)
+    };
+    let names = list(b"Filter")?;
+    let mut parameters = list(b"DecodeParms")?.into_iter();
+    if names.is_empty() {
+        return Ok(limited(stored));
+    }
+    let mut data = stored;
+    for name in names {
+        let found = match parameters.next() {
+            None | Some(Value::Null) => None,
+            Some(Value::Dictionary(at)) => Some(at),
+            Some(_) => return Err(store.malformed()),
+        };
+        let Value::Name(filter) = name else {
+            return Err(store.malformed());
+        };
+        data = limited(stage(store, data, &filter, found, indirect)?);
+    }
+    Ok(data)
+}
+
+/// The data of stream `id`, decrypted unless `id` is none, at `start`, decoded as [`chain`] does.
+/// An indirect `Filter` or `DecodeParms` is [`ErrorCode::Malformed`] when `direct_only`
+/// (ISO 32000-2:2020, 7.5.8.2), and one in an object stream otherwise, so object streams never
+/// need each other.
+pub(crate) fn decoder<'store>(
+    store: Objects<'store>,
+    id: Option<ObjectId>,
     start: u64,
     length: u64,
-    dictionary: &Dictionary,
-    operation: &'static str,
-) -> Result<Box<dyn Pull + 'source>, PdfError> {
-    let raw = Raw {
-        operation,
-        position: start,
-        remaining: length,
-        source,
-    };
-    let inflate = flate(source, dictionary, operation)?;
-    let parms = if inflate {
-        parms(dictionary, operation)?
+    dictionary: At,
+    direct_only: bool,
+) -> Result<Box<dyn Pull + 'store>, PdfError> {
+    let indirect = if direct_only {
+        Indirect::Never
     } else {
-        None
+        Indirect::Outside
     };
-    let data: Box<dyn Pull + 'source> = if inflate {
-        Box::new(Inflate::new(raw))
-    } else {
-        Box::new(raw)
-    };
-    Ok(match parms {
-        None => data,
-        Some(columns) => Box::new(Predictor::new(data, columns)?),
-    })
+    chain(
+        store,
+        stored(store, id, start, length, dictionary, indirect)?,
+        dictionary,
+        indirect,
+    )
 }
 
 /// Skips `count` bytes of `data`; the end before that is [`ErrorCode::Malformed`].
@@ -161,80 +242,181 @@ pub(crate) fn drain(data: &mut dyn Pull) -> Result<(), PdfError> {
     Ok(())
 }
 
-/// Whether the stream's `Filter` is `FlateDecode`, as a name or in an array of one; no filter is
-/// not (ISO 32000-2:2020, 7.3.8.2).
-fn flate(
-    source: &Source,
-    dictionary: &Dictionary,
-    operation: &'static str,
-) -> Result<bool, PdfError> {
-    let unsupported = || PdfError::new(ErrorCode::Unsupported, operation);
-    let Some(filter) = dictionary.get(b"Filter") else {
-        return Ok(false);
+/// The first `most` elements of `entry` when it is an array, else `entry` itself, none when
+/// absent, references resolved as `indirect` allows.
+fn entries(
+    store: Objects<'_>,
+    entry: Option<Value>,
+    indirect: Indirect,
+    most: usize,
+) -> Result<Vec<Value>, PdfError> {
+    let Some(value) = entry
+        .map(|found| resolve(store, found, indirect))
+        .transpose()?
+    else {
+        return Ok(Vec::new());
     };
-    if let Some(start) = filter.array() {
-        let mut reader = Reader::new(source, start, operation);
-        let mut names = 0_u32;
-        let mut is_flate = false;
-        let Token::ArrayStart = reader.token()? else {
-            return Err(PdfError::new(ErrorCode::Malformed, operation));
-        };
-        loop {
-            match reader.token()? {
-                Token::ArrayEnd => break,
-                Token::Name(name) => {
-                    names = names.saturating_add(1);
-                    is_flate = name == b"FlateDecode";
-                }
-                Token::ArrayStart
-                | Token::DictionaryEnd
-                | Token::DictionaryStart
-                | Token::Integer(_)
-                | Token::Keyword(_)
-                | Token::Other => return Err(PdfError::new(ErrorCode::Malformed, operation)),
-            }
+    let Some(start) = value.array() else {
+        return Ok(vec![value]);
+    };
+    let mut reader = store.reader(start)?;
+    drop(reader.token()?);
+    let mut values = Vec::new();
+    while values.len() < most {
+        let token = reader.item()?;
+        if token == Token::ArrayEnd {
+            break;
         }
-        return if names == 1 && is_flate {
-            Ok(true)
-        } else {
-            Err(unsupported())
-        };
+        values.push(reader.complete(token, store.depth_limit(), true)?);
     }
-    if filter.is_name(b"FlateDecode") {
-        Ok(true)
-    } else if filter.is_named() || filter.reference().is_some() {
-        Err(unsupported())
+    values
+        .into_iter()
+        .map(|found| resolve(store, found, indirect))
+        .collect()
+}
+
+/// `value`, or the object it refers to as `indirect` allows; a reference it does not allow is
+/// [`ErrorCode::Malformed`].
+fn resolve(store: Objects<'_>, value: Value, indirect: Indirect) -> Result<Value, PdfError> {
+    let Value::Reference(id) = value else {
+        return Ok(value);
+    };
+    let allowed = match indirect {
+        Indirect::Any => true,
+        Indirect::Never => false,
+        Indirect::Outside => store
+            .entry(id.number)?
+            .is_none_or(|entry| entry.kind != XrefKind::Compressed),
+    };
+    if allowed {
+        store.resolve(id)
     } else {
-        Err(PdfError::new(ErrorCode::Malformed, operation))
+        Err(store.malformed())
     }
 }
 
-/// The `Columns` of the stream's PNG predictor, none for predictor 1 (ISO 32000-2:2020, 7.4.4.4).
-fn parms(dictionary: &Dictionary, operation: &'static str) -> Result<Option<u64>, PdfError> {
-    let malformed = || PdfError::new(ErrorCode::Malformed, operation);
-    let unsupported = || PdfError::new(ErrorCode::Unsupported, operation);
-    if dictionary
-        .get(b"DecodeParms")
-        .is_some_and(|found| found.reference().is_some())
-    {
-        return Err(unsupported());
-    }
-    let integer = |key: &[u8], default: i64| {
-        dictionary
-            .get(key)
-            .map_or(Ok(default), |value| value.integer().ok_or_else(malformed))
+/// `data` with filter `name` undone, with the parameters at `parameters`; `Crypt` was undone with
+/// the stored data (ISO 32000-2:2020, 7.4.2 to 7.4.5 and 7.4.10).
+fn stage<'store>(
+    store: Objects<'store>,
+    data: Box<dyn Pull + 'store>,
+    name: &[u8],
+    parameters: Option<At>,
+    indirect: Indirect,
+) -> Result<Box<dyn Pull + 'store>, PdfError> {
+    let integer = |key: &[u8], default: i64| -> Result<i64, PdfError> {
+        let Some(at) = parameters else {
+            return Ok(default);
+        };
+        match store.get(at, key)? {
+            None => Ok(default),
+            Some(found) => resolve(store, found, indirect)?
+                .integer()
+                .ok_or_else(|| store.malformed()),
+        }
     };
-    let png = match integer(b"Predictor", 1)? {
-        2 => return Err(unsupported()),
-        1 => false,
-        10..=15 => true,
-        _ => return Err(malformed()),
+    let decoded: Box<dyn Pull + 'store> = match name {
+        b"ASCIIHexDecode" => return Ok(Box::new(AsciiHex::new(data))),
+        b"ASCII85Decode" => return Ok(Box::new(Ascii85::new(data))),
+        b"RunLengthDecode" => return Ok(Box::new(RunLength::new(data))),
+        b"Crypt" => return Ok(data),
+        b"FlateDecode" => Box::new(Inflate::new(data)),
+        b"LZWDecode" => {
+            let early_change = match integer(b"EarlyChange", 1)? {
+                0 => false,
+                1 => true,
+                _ => return Err(store.malformed()),
+            };
+            Box::new(Lzw::new(data, early_change))
+        }
+        _ => return Err(PdfError::new(ErrorCode::Unsupported, store.operation())),
     };
-    if integer(b"Colors", 1)? != 1 || integer(b"BitsPerComponent", 8)? != 8 {
-        return Err(unsupported());
+    let predictor = integer(b"Predictor", 1)?;
+    if predictor == 1 {
+        return Ok(decoded);
     }
-    let columns = u64::try_from(integer(b"Columns", 1)?)
-        .ok()
-        .ok_or_else(malformed)?;
-    Ok(png.then_some(columns))
+    Ok(Box::new(Predictor::with_parameters(
+        decoded,
+        predictor,
+        integer(b"Colors", 1)?,
+        integer(b"BitsPerComponent", 8)?,
+        integer(b"Columns", 1)?,
+    )?))
+}
+
+/// The stored bytes of stream `id`, decrypted unless `id` is none, whose data is `length` bytes
+/// at `start` and dictionary at `dictionary`, with the crypt filter its first `Crypt` filter
+/// names, else the default (ISO 32000-2:2020, 7.4.10 and 7.6).
+fn stored<'store>(
+    store: Objects<'store>,
+    id: Option<ObjectId>,
+    start: u64,
+    length: u64,
+    dictionary: At,
+    indirect: Indirect,
+) -> Result<Box<dyn Pull + 'store>, PdfError> {
+    let raw = Box::new(Raw {
+        operation: store.operation(),
+        position: start,
+        remaining: length,
+        source: store.source(),
+    });
+    let (Some(object), Some(handler)) = (id, store.security()) else {
+        return Ok(raw);
+    };
+    let first = |key: &[u8]| -> Result<Option<Value>, PdfError> {
+        Ok(entries(store, store.get(dictionary, key)?, indirect, 1)?
+            .into_iter()
+            .next())
+    };
+    let crypt = if first(b"Filter")?.is_some_and(|found| found.is_name(b"Crypt")) {
+        let parameters = first(b"DecodeParms")?.as_ref().and_then(Value::dictionary);
+        let name = parameters
+            .map(|at| store.get(at, b"Name"))
+            .transpose()?
+            .flatten();
+        Some(if let Some(Value::Name(found)) = name {
+            found
+        } else {
+            b"Identity".to_vec()
+        })
+    } else {
+        None
+    };
+    handler.stream(store, object, dictionary, crypt.as_deref(), raw)
+}
+
+/// Writes the data of stream `id` to `sink`, decoded when `decode`; a missing object or one that
+/// is not a stream is [`ErrorCode::InvalidArgument`] (ISO 32000-2:2020, 7.3.8).
+pub(crate) fn write(
+    store: Objects<'_>,
+    id: ObjectId,
+    decode: bool,
+    sink: &Sink,
+) -> Result<(), PdfError> {
+    let operation = store.operation();
+    let invalid = || PdfError::new(ErrorCode::InvalidArgument, operation);
+    let mut reader = store.located(id)?.ok_or_else(invalid)?;
+    let dictionary = reader
+        .value(store.depth_limit())?
+        .dictionary()
+        .ok_or_else(invalid)?;
+    let after = reader.position();
+    if reader.next_token()? != Some(Token::Keyword(Keyword::Stream)) {
+        return Err(invalid());
+    }
+    reader.seek(after);
+    let (start, length) = store.extent(&mut reader, dictionary, true)?;
+    let mut data = stored(store, Some(id), start, length, dictionary, Indirect::Any)?;
+    if decode {
+        data = chain(store, data, dictionary, Indirect::Any)?;
+    }
+    let mut buffer = [0; STEP];
+    loop {
+        let count = data.pull(&mut buffer)?;
+        let Some(bytes) = buffer.get(..count).filter(|bytes| !bytes.is_empty()) else {
+            return Ok(());
+        };
+        sink.write(bytes, operation)?;
+    }
 }
