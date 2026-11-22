@@ -784,7 +784,7 @@ fn split_and_save_many_small_objects_is_bounded() {
     );
 }
 
-/// A page tree root in an object stream whose `Kids` holds a million references, more than the
+/// A page tree root in an object stream whose `Kids` holds 20,000 references, more than the
 /// file's objects, fails as malformed without holding them (ISO 32000-2:2020, 7.5.7, 7.7.3.2).
 #[test]
 fn split_of_more_packed_kids_than_objects_is_bounded() {
