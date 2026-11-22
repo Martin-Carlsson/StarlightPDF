@@ -552,10 +552,11 @@ impl Part {
             (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
             (b"Pages".to_vec(), reference(self.root())),
         ];
-        let tagged = self
-            .catalog
-            .get(b"StructTreeRoot")
-            .is_some_and(|tree| !matches!(tree, Object::Null));
+        let tagged = !matches!(
+            self.source
+                .entry(objects, &self.catalog, b"StructTreeRoot")?,
+            Object::Null
+        );
         for key in CARRIED {
             if let Some(value) = self.catalog.get(key)
                 && !(key == b"MarkInfo" && tagged)
@@ -1052,7 +1053,8 @@ impl Part {
                 entries.push(entry);
             }
         }
-        if let Some(up) = parent
+        // A new node is the parent of a page already rewritten, then edited.
+        if let Some(up) = parent.filter(|up| self.locate(up.number).is_none())
             && INHERITED
                 .iter()
                 .any(|key| !entries.iter().any(|entry| entry.0 == *key))
@@ -1393,9 +1395,14 @@ pub(crate) fn refuse(
                 Object::Array(items) if !items.is_empty()
             ),
             b"Names" => match overlay.direct(objects, value)? {
-                Object::Dictionary(trees) => trees
-                    .into_iter()
-                    .any(|(tree, root)| tree != b"Dests" && !matches!(root, Object::Null)),
+                Object::Dictionary(trees) => {
+                    let mut other = false;
+                    for (tree, root) in trees {
+                        other |= tree != b"Dests"
+                            && !matches!(overlay.direct(objects, root)?, Object::Null);
+                    }
+                    other
+                }
                 Object::Array(_)
                 | Object::Boolean(_)
                 | Object::Integer(_)

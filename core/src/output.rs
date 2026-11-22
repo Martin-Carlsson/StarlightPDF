@@ -5,7 +5,7 @@ use core::fmt::{self, Debug, Formatter};
 use core::mem::take;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, absolute};
 use std::sync::{Mutex, PoisonError};
 
 use crate::{ErrorCode, PdfError};
@@ -245,11 +245,11 @@ impl Sink {
     }
 }
 
-/// `path` with its symbolic links resolved, a dangling one followed to where it leads.
+/// `path`, absolute, with its symbolic links resolved, a dangling one followed to where it leads.
 fn resolve(path: &Path) -> io::Result<PathBuf> {
     /// Links followed before giving up, as Linux's `SYMLOOP_MAX`.
     const LINKS: u32 = 40;
-    let mut current = path.to_path_buf();
+    let mut current = absolute(path)?;
     for _ in 0..LINKS {
         match fs::canonicalize(&current) {
             Err(error) if error.kind() == ErrorKind::NotFound => {}

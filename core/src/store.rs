@@ -612,6 +612,17 @@ impl<'store> Objects<'store> {
                         .filter(|entry| entry.0 != b"Length")
                         .collect();
                     if handler.is_some() {
+                        // Made direct, so an indirect `Crypt` filter is found.
+                        for entry in &mut kept {
+                            if matches!(entry.0.as_slice(), b"Filter" | b"DecodeParms") {
+                                for _ in 0..depth {
+                                    let Object::Reference(target) = entry.1 else {
+                                        break;
+                                    };
+                                    entry.1 = self.owned(target)?;
+                                }
+                            }
+                        }
                         kept = without_crypt(kept);
                     }
                     Object::Stream(kept, Data::Stored(id))

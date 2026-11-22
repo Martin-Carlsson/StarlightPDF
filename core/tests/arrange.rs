@@ -419,6 +419,51 @@ fn drawn_images_read_before_saving() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// A part's page an image is drawn on keeps its boundaries and rotation, before saving and after
+/// (ISO 32000-2:2020, 7.7.3.4, 8.9.5).
+#[test]
+fn a_parts_drawn_page_keeps_its_attributes() -> Result<(), Box<dyn Error>> {
+    // The first page inherits all but a crop box, which no node gives.
+    let part = corpus("split/pages.pdf")?
+        .split(&by_pages(2))?
+        .next()?
+        .ok_or("no part")?;
+    let mut image = BytesSourceOptions::default();
+    image.bytes = Arc::new(fs::read(format!("{CORPUS}/images/baseline-rgb.jpg"))?);
+    part.page(&PageOptions::default())?.draw_image(
+        &Source::from_bytes(&image)?,
+        None,
+        None,
+        &DrawImageOptions::default(),
+    )?;
+    let expected = SOURCE_PAGES.get(..2).unwrap_or_default();
+    same(&every(&part)?, expected)?;
+    same(&every(&saved(&part)?)?, expected)?;
+    Ok(())
+}
+
+/// A structure tree and an attachments tree that refer to null are absent: the split is not
+/// refused and its part keeps `MarkInfo` (ISO 32000-2:2020, 7.3.10, 7.7.4, 14.7.1).
+#[test]
+fn catalog_entries_referring_to_null_are_absent() -> Result<(), Box<dyn Error>> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 4 0 R \
+         /Names << /EmbeddedFiles 4 0 R >> >>",
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        "null",
+    ]
+    .map(String::from);
+    let part = open_counted(&Arc::new(Counted::new(&objects, 0..0)))?
+        .split(&by_pages(1))?
+        .next()?
+        .ok_or("no part")?;
+    if !text(&part, part.catalog()?)?.contains("/MarkInfo") {
+        return Err("a part left out MarkInfo".into());
+    }
+    Ok(())
+}
+
 /// A part refused for a link that would be lost is refused again, not skipped (ISO 32000-2:2020,
 /// 12.3.2.2).
 #[test]

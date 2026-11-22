@@ -150,3 +150,6 @@ object_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	id=7 0	42
 # 7.4.10, 7.6: a stream saved decrypted loses its own Crypt filter and its parameters; it is the page's second content stream
 object_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
 object_file	tests/corpus/encryption/r4-aes-128-crypt-filter.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
+# 7.3.10, 7.4.10, 7.6: so does one whose Filter and DecodeParms are indirect
+object_bytes	tests/corpus/encryption/r4-aes-128-crypt-filter-indirect.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
+object_file	tests/corpus/encryption/r4-aes-128-crypt-filter-indirect.pdf	password=user	saved	cipher=Unencrypted	path=Pages/Kids/0/Contents/1	<< /Length 44 >>
