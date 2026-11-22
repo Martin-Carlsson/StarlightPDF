@@ -132,3 +132,10 @@ split_file	tests/corpus/split/labels-shared-leaf.pdf	by=Pages	count=3	Malformed
 # 7.3.10, 7.9.6: a Dests name tree leaf reached by two reference chains
 split_bytes	tests/corpus/split/name-tree-shared-leaf.pdf	by=Pages	count=1	Malformed
 split_file	tests/corpus/split/name-tree-shared-leaf.pdf	by=Pages	count=1	Malformed
+# ISO 32000-2:2020, 8.11.4, 14.3.3, 14.11.5: a later part carries the Info dictionary, the output profile and the hidden layer's default OFF
+info_bytes	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	key=title	Carried title
+info_file	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	key=title	Carried title
+object_bytes	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	path=OutputIntents/0/DestOutputProfile	<< /N 3 /Length 132 >>
+object_file	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	path=OutputIntents/0/DestOutputProfile	<< /N 3 /Length 132 >>
+object_bytes	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	path=OCProperties/D/OFF/0	<< /Type /OCG /Name (Hidden) >>
+object_file	tests/corpus/split/info-intents-layers.pdf	by=Pages	count=1	part=1	path=OCProperties/D/OFF/0	<< /Type /OCG /Name (Hidden) >>

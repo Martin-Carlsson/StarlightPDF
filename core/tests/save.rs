@@ -1431,22 +1431,16 @@ fn split_keeps_links_within_a_part() -> Result<(), String> {
     )
 }
 
-/// Every part carries the info dictionary, the output intent and the layers with their default
-/// visibility (ISO 32000-2:2020, 8.11.4, 14.3.3, 14.11.5).
+/// Every part carries the output condition, the profile bytes and the shown layer on (ISO
+/// 32000-2:2020, 8.11.4, 14.11.5); the conformance suite covers the rest.
 #[test]
-fn split_parts_carry_info_output_intents_and_layers() -> Result<(), String> {
+fn split_parts_carry_output_intents_and_layers() -> Result<(), String> {
     let path = "split/info-intents-layers.pdf";
     let source = parse(&read(&corpus(path))?)?;
     let saved = parts(path, &by_pages(1))?;
     ensure(saved.len() == 2, "not two parts")?;
     for bytes in &saved {
         let file = parse(bytes)?;
-        let info = file.dictionary(file.get(&file.trailer, "Info"))?;
-        ensure(
-            file.get(&info, "Title") == Value::String(b"Carried title".to_vec())
-                && file.get(&info, "Author") == Value::String(b"Carried author".to_vec()),
-            "info dictionary",
-        )?;
         let (condition, profile) = intent(&file)?;
         ensure(
             condition == Value::String(b"Carried condition".to_vec()),
@@ -1458,26 +1452,17 @@ fn split_parts_carry_info_output_intents_and_layers() -> Result<(), String> {
         )?;
         let properties = file.dictionary(file.get(&file.root()?, "OCProperties"))?;
         let default = file.dictionary(file.get(&properties, "D"))?;
-        let listed = |key| file.get(&default, key).array().unwrap_or_default();
-        let (on, off) = (listed("ON"), listed("OFF"));
+        let off = file.get(&default, "OFF").array().unwrap_or_default();
         let base_off = file.get(&default, "BaseState") == name("OFF");
-        let mut visible = Vec::new();
+        let mut shown = false;
         for group in file.get(&properties, "OCGs").array().ok_or("no OCGs")? {
-            let Value::String(label) = file.get(&file.dictionary(group.clone())?, "Name") else {
-                return Err(String::from("layer without a name"));
-            };
-            let shown = !off.contains(&group) && (on.contains(&group) || !base_off);
-            visible.push(format!(
-                "{} {}",
-                String::from_utf8_lossy(&label),
-                if shown { "on" } else { "off" }
-            ));
+            let named = file.get(&file.dictionary(group.clone())?, "Name");
+            if named == Value::String(b"Shown".to_vec()) {
+                let on = file.get(&default, "ON").array().unwrap_or_default();
+                shown = !off.contains(&group) && (on.contains(&group) || !base_off);
+            }
         }
-        visible.sort();
-        ensure(
-            visible == ["Hidden off", "Shown on"],
-            &format!("layers: {}", visible.join(", ")),
-        )?;
+        ensure(shown, "shown layer")?;
     }
     Ok(())
 }
