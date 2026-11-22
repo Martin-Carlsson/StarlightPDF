@@ -15,3 +15,6 @@ page_bytes	tests/corpus/pages/tree-faults.pdf	index=0	LimitExceeded
 page_file	tests/corpus/pages/tree-faults.pdf	index=0	LimitExceeded
 page_bytes	tests/corpus/pages/tree-faults.pdf	index=1	Malformed
 page_file	tests/corpus/pages/tree-faults.pdf	index=1	Malformed
+# 7.3.10, 7.7.3.2: the root's second kid is a free object, so null, not a page
+page_bytes	tests/corpus/pages/kid-missing.pdf	index=1	Malformed
+page_file	tests/corpus/pages/kid-missing.pdf	index=1	Malformed

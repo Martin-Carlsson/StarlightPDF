@@ -19,3 +19,25 @@ rotation_bytes	tests/corpus/pages/nested-tree.pdf	index=4	0
 rotation_file	tests/corpus/pages/nested-tree.pdf	index=4	0
 rotation_bytes	tests/corpus/pages/nested-tree.pdf	strict	index=4	Malformed
 rotation_file	tests/corpus/pages/nested-tree.pdf	strict	index=4	Malformed
+# 7.7.3.3: after a save, inherited rotations still apply
+rotation_bytes	tests/corpus/split/pages.pdf	saved	index=1	180
+rotation_file	tests/corpus/split/pages.pdf	saved	index=1	180
+rotation_bytes	tests/corpus/split/pages.pdf	saved	index=4	90
+rotation_file	tests/corpus/split/pages.pdf	saved	index=4	90
+# 7.7.3.3: each part has its pages in order with their rotations, inherited ones included
+rotation_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=0	index=0	180
+rotation_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=0	index=0	180
+rotation_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=0	index=1	270
+rotation_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=0	index=1	270
+rotation_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=1	index=0	0
+rotation_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=1	index=0	0
+rotation_bytes	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=1	index=1	90
+rotation_file	tests/corpus/split/pages.pdf	by=Ranges	starts=1,3	part=1	index=1	90
+rotation_bytes	tests/corpus/split/pages.pdf	by=Pages	count=2	part=0	index=0	90
+rotation_file	tests/corpus/split/pages.pdf	by=Pages	count=2	part=0	index=0	90
+# 7.3.9, 7.7.3.3: a page's own Rotate a reference to null is absent, so the ancestor's applies
+rotation_bytes	tests/corpus/split/inherited-behind-null.pdf	by=Pages	count=1	part=0	index=0	90
+rotation_file	tests/corpus/split/inherited-behind-null.pdf	by=Pages	count=1	part=0	index=0	90
+# 7.3.10, 7.7.3.4: a page's Parent refers to an integer, not a page tree node, so its part is not written
+rotation_bytes	tests/corpus/split/parent-not-dictionary.pdf	by=Pages	count=1	part=0	index=0	Malformed
+rotation_file	tests/corpus/split/parent-not-dictionary.pdf	by=Pages	count=1	part=0	index=0	Malformed

@@ -40,6 +40,7 @@ _Avoid_: {rejected synonyms}
 - **One conformance suite.** Shared cases are data files that every language binding runs.
 - **Never weaken a test.** Don't skip, loosen or delete a test to make it pass; fix the code.
 - **Changed code only.** CI runs a test or check only when the pull request changes code it covers or depends on.
+- **Fast CI.** Every CI job, on every OS, finishes within 10 minutes.
 - **Rules 1 and 2 apply.** Test code follows the same dependency rule and passes the same checks.
 
 # Releases

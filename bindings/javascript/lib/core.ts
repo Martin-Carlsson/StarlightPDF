@@ -1,26 +1,48 @@
 // The core in this thread, its objects held by handle.
-import type { Boundary, Deviation, Encryption, ObjectId, OpenOptions, Rect, ResourcePolicyOptions } from "./index.js";
+import type {
+  Boundary,
+  Deviation,
+  DrawImageOptions,
+  Encryption,
+  InfoDictionary,
+  InsertBlankPageOptions,
+  ObjectId,
+  OpenOptions,
+  Rect,
+  ResourcePolicyOptions,
+  SaveOptions,
+  SaveReport,
+  SplitOptions,
+} from "./index.js";
 import init, {
   Deviations,
   Document,
+  Documents,
   Page,
   ResourcePolicy,
   Sink,
   Source,
   headerVersion,
   libraryVersion,
+  unsupported,
 } from "./wasm/starlightpdf_javascript.js";
-import { add } from "./table.js";
+import { add, appends, type Callback, inputs, updates } from "./table.js";
 
 /** Each operation's argument and result. */
 export interface Signatures {
+  appendSink: [Callback<[Uint8Array]>, number];
   boundary: [{ kind: Boundary; page: number }, Rect];
   catalog: [number, ObjectId];
+  create: [{ options: { readonly version?: readonly [number, number] }; policy: number | null }, number];
+  drawImage: [{ image: number; mask: number | null; options: DrawImageOptions; page: number }, undefined];
   droppedWarnings: [number, number];
   encryption: [number, Encryption];
   free: [number, undefined];
   headerVersion: [Uint8Array, [number, number]];
+  infoDictionary: [number, InfoDictionary];
+  insertBlankPage: [{ document: number; options: InsertBlankPageOptions }, number];
   libraryVersion: [undefined, string];
+  nextPart: [number, number | null];
   nextWarning: [number, Deviation | null];
   object: [{ document: number; id: ObjectId }, string];
   open: [{ options: OpenOptions; policy: number | null; source: number }, number];
@@ -28,10 +50,17 @@ export interface Signatures {
   pageCount: [number, number];
   policy: [ResourcePolicyOptions, number];
   rotation: [number, number];
+  save: [
+    { document: number; options: SaveOptions; progress: Callback<[number, number]> | null; sink: number },
+    SaveReport,
+  ];
+  setInfoDictionary: [{ document: number; options: { readonly [K in keyof InfoDictionary]?: string } }, undefined];
   sink: [undefined, number];
   source: [Blob | Uint8Array, number];
+  split: [{ document: number; options: SplitOptions }, number];
   streamData: [{ decode: boolean; document: number; id: ObjectId; sink: number }, undefined];
   takeBytes: [number, Uint8Array];
+  unsupported: [{ message: string; operation: string }, never];
   warnings: [number, number];
 }
 
@@ -50,7 +79,8 @@ const pages = new Map<number, Page>();
 const policies = new Map<number, ResourcePolicy>();
 const sinks = new Map<number, Sink>();
 const cursors = new Map<number, Deviations>();
-const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors];
+const parts = new Map<number, Documents>();
+const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors, parts];
 let last = 0;
 
 /** Holds `made` in `kind`; its handle. */
@@ -70,11 +100,22 @@ function get<T>(kind: Map<number, T>, handle: number): T {
 }
 
 const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } = {
+  appendSink(callback) {
+    return hold(sinks, Sink.fromAppend(add(appends, callback)));
+  },
   boundary({ kind, page }) {
     return get(pages, page).boundary(kind);
   },
   catalog(document) {
     return get(documents, document).catalog();
+  },
+  create({ options, policy }) {
+    const shared = policy === null ? undefined : get(policies, policy).share();
+    return hold(documents, Document.create(shared, options));
+  },
+  drawImage({ image, mask, options, page }) {
+    const shared = mask === null ? undefined : get(sources, mask).share();
+    get(pages, page).drawImage(get(sources, image), shared, options);
   },
   droppedWarnings(document) {
     return Number(get(documents, document).droppedWarnings());
@@ -92,8 +133,18 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
     const [major = 0, minor = 0] = headerVersion(bytes);
     return [major, minor];
   },
+  infoDictionary(document) {
+    return get(documents, document).infoDictionary();
+  },
+  insertBlankPage({ document, options }) {
+    return hold(pages, get(documents, document).insertBlankPage(options));
+  },
   libraryVersion() {
     return libraryVersion();
+  },
+  nextPart(cursor) {
+    const part = get(parts, cursor).next();
+    return part === undefined ? null : hold(documents, part);
   },
   nextWarning(cursor) {
     const deviation = get(cursors, cursor).next();
@@ -122,18 +173,33 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   rotation(page) {
     return get(pages, page).rotation();
   },
+  save({ document, options, progress, sink }) {
+    const [saved, into] = [get(documents, document), get(sinks, sink)];
+    // Added last, as the core forgets it whatever then fails.
+    const report = saved.save(into, progress === null ? undefined : add(updates, progress), options);
+    return { brokenSignatures: report.brokenSignatures, length: Number(report.length) };
+  },
+  setInfoDictionary({ document, options }) {
+    get(documents, document).setInfoDictionary(options);
+  },
   sink() {
     return hold(sinks, Sink.inMemory());
   },
   source(input) {
     const size = BigInt(input instanceof Blob ? input.size : input.length);
-    return hold(sources, Source.fromTable(add(input), size));
+    return hold(sources, Source.fromTable(add(inputs, input), size));
+  },
+  split({ document, options }) {
+    return hold(parts, get(documents, document).split(options));
   },
   streamData({ decode, document, id, sink }) {
     get(documents, document).streamData(get(sinks, sink), id.number, id.generation, decode);
   },
   takeBytes(sink) {
     return get(sinks, sink).takeBytes();
+  },
+  unsupported({ message, operation }) {
+    throw unsupported(operation, message);
   },
   warnings(document) {
     return hold(cursors, get(documents, document).warnings());

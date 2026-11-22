@@ -1,0 +1,71 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 7.5.6: a rewrite of a plain file; default options and options at their defaults
+save_bytes	tests/corpus/page-count/one-page.pdf	ok
+save_file	tests/corpus/page-count/one-page.pdf	ok
+save_bytes	tests/corpus/page-count/one-page.pdf	mode=Rewrite	ok
+save_file	tests/corpus/page-count/one-page.pdf	mode=Rewrite	ok
+# 7.7.3.2: a document without pages cannot be saved
+save_bytes	tests/corpus/page-count/empty-tree.pdf	InvalidArgument
+save_file	tests/corpus/page-count/empty-tree.pdf	InvalidArgument
+# 7.6: an encrypted source saves decrypted with cipher=Unencrypted
+save_bytes	tests/corpus/encryption/r2-rc4-40.pdf	password=user	cipher=Unencrypted	ok
+save_file	tests/corpus/encryption/r2-rc4-40.pdf	password=user	cipher=Unencrypted	ok
+save_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=user	cipher=Unencrypted	ok
+save_file	tests/corpus/encryption/r6-aes-256.pdf	password=user	cipher=Unencrypted	ok
+# 7.6: keeping the protection means encrypting, which is not implemented
+save_bytes	tests/corpus/encryption/r4-aes-128.pdf	password=user	NotImplemented
+save_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	NotImplemented
+save_bytes	tests/corpus/encryption/r6-aes-256.pdf	password=user	NotImplemented
+save_file	tests/corpus/encryption/r6-aes-256.pdf	password=user	NotImplemented
+# 7.6: cipher=Unencrypted on a plain source has nothing to remove
+save_bytes	tests/corpus/page-count/one-page.pdf	cipher=Unencrypted	ok
+save_file	tests/corpus/page-count/one-page.pdf	cipher=Unencrypted	ok
+# 7.5.6: incremental and in-place saves are not implemented
+save_bytes	tests/corpus/page-count/one-page.pdf	mode=Incremental	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	mode=Incremental	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	mode=InPlace	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	mode=InPlace	NotImplemented
+# 7.6.3, 7.6.4, 7.6.5: encrypting is not implemented
+save_bytes	tests/corpus/page-count/one-page.pdf	cipher=Aes256	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	cipher=Aes256	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	user_password=secret	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	user_password=secret	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	owner_password=secret	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	owner_password=secret	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	restrictions=Print	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	restrictions=Print	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	recipients=00	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	recipients=00	NotImplemented
+# 7.5.2: writing another version is not implemented
+save_bytes	tests/corpus/page-count/one-page.pdf	version=1.4	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	version=1.4	NotImplemented
+# 7.5.7, 7.4: whole-file optimizations, standards, conversion and loss are not implemented
+save_bytes	tests/corpus/page-count/one-page.pdf	optimizations=CompressStreams	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	optimizations=CompressStreams	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	standards=PdfA2B	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	standards=PdfA2B	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	color_space=Gray	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	color_space=Gray	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	image_quality=80	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	image_quality=80	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	image_resolution=150	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	image_resolution=150	NotImplemented
+save_bytes	tests/corpus/page-count/one-page.pdf	allow_loss	NotImplemented
+save_file	tests/corpus/page-count/one-page.pdf	allow_loss	NotImplemented
+# 12.8: a rewrite breaks signatures; signed fields Author and Approvals.Manager (FT inherited, 12.7.4.1), unsigned Witness
+save_bytes	tests/corpus/save/signed.pdf	SignaturesWouldBreak
+save_file	tests/corpus/save/signed.pdf	SignaturesWouldBreak
+save_bytes	tests/corpus/save/signed.pdf	break_signatures	Author,Approvals.Manager
+save_file	tests/corpus/save/signed.pdf	break_signatures	Author,Approvals.Manager
+# 12.8: break_signatures on an unsigned source reports nothing
+save_bytes	tests/corpus/page-count/one-page.pdf	break_signatures	ok
+save_file	tests/corpus/page-count/one-page.pdf	break_signatures	ok
+# a progress callback returning false cancels
+save_bytes	tests/corpus/page-count/one-page.pdf	cancel	Cancelled
+save_file	tests/corpus/page-count/one-page.pdf	cancel	Cancelled
+# 7.5.4, 7.5.5: a trailer Size past the objects the table declares is not trusted and sizes no table
+save_bytes	tests/corpus/save/huge-size.pdf	ok
+save_file	tests/corpus/save/huge-size.pdf	ok
+# 7.5.4: an object number past the policy's objects sizes no table
+save_bytes	tests/corpus/save/huge-number.pdf	LimitExceeded
+save_file	tests/corpus/save/huge-number.pdf	LimitExceeded

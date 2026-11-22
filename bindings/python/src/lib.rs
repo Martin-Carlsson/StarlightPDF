@@ -7,20 +7,30 @@ extern crate alloc;
 use alloc::sync::Arc;
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::PyBytes;
-use starlightpdf::document::{OpenOptions, PageOptions};
+use pyo3::types::{PyBytes, PyDict, PyNone};
+use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
+use starlightpdf::compliance::Standard;
+use starlightpdf::document::{
+    CreateOptions, OpenOptions, Optimization, PageOptions, SaveMode, SaveOptions,
+};
+use starlightpdf::drawing::DrawImageOptions;
+use starlightpdf::images::ImageFormat;
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions};
 use starlightpdf::limits::ResourcePolicyOptions;
+use starlightpdf::metadata::SetInfoDictionaryOptions;
 use starlightpdf::objects::{ObjectOptions, StreamDataOptions};
-use starlightpdf::output::MemorySinkOptions;
+use starlightpdf::output::{Append, AppendSinkOptions, FileSinkOptions, MemorySinkOptions};
 use starlightpdf::page::{Boundary, BoundaryOptions};
+use starlightpdf::progress::Progress;
+use starlightpdf::rendering::ColorSpace;
 use starlightpdf::security::{Cipher, Permission};
-use starlightpdf::{compliance, document, input, limits, objects, output, page};
+use starlightpdf::{Version, compliance, document, input, limits, objects, output, page};
 
 /// Each boundary's name.
 const BOUNDARIES: [(Boundary, &str); 5] = [
@@ -39,6 +49,63 @@ const CIPHERS: [(Cipher, &str); 4] = [
     (Cipher::Unencrypted, "Unencrypted"),
 ];
 
+/// Each color space's name.
+const COLOR_SPACES: [(ColorSpace, &str); 3] = [
+    (ColorSpace::Cmyk, "Cmyk"),
+    (ColorSpace::Gray, "Gray"),
+    (ColorSpace::Rgb, "Rgb"),
+];
+
+/// Each image format's name.
+const IMAGE_FORMATS: [(ImageFormat, &str); 37] = [
+    (ImageFormat::Arw, "Arw"),
+    (ImageFormat::Avif, "Avif"),
+    (ImageFormat::Bmp, "Bmp"),
+    (ImageFormat::Ccitt, "Ccitt"),
+    (ImageFormat::Cr2, "Cr2"),
+    (ImageFormat::Cr3, "Cr3"),
+    (ImageFormat::Dds, "Dds"),
+    (ImageFormat::Dicom, "Dicom"),
+    (ImageFormat::Dng, "Dng"),
+    (ImageFormat::Dpx, "Dpx"),
+    (ImageFormat::Emf, "Emf"),
+    (ImageFormat::Eps, "Eps"),
+    (ImageFormat::Gif, "Gif"),
+    (ImageFormat::Hdr, "Hdr"),
+    (ImageFormat::Heif, "Heif"),
+    (ImageFormat::Ico, "Ico"),
+    (ImageFormat::Jbig2, "Jbig2"),
+    (ImageFormat::Jpeg, "Jpeg"),
+    (ImageFormat::Jpeg2000, "Jpeg2000"),
+    (ImageFormat::JpegXl, "JpegXl"),
+    (ImageFormat::Nef, "Nef"),
+    (ImageFormat::OpenExr, "OpenExr"),
+    (ImageFormat::Orf, "Orf"),
+    (ImageFormat::Pcx, "Pcx"),
+    (ImageFormat::Png, "Png"),
+    (ImageFormat::Pnm, "Pnm"),
+    (ImageFormat::Psd, "Psd"),
+    (ImageFormat::Qoi, "Qoi"),
+    (ImageFormat::Raf, "Raf"),
+    (ImageFormat::Rw2, "Rw2"),
+    (ImageFormat::Svg, "Svg"),
+    (ImageFormat::Tga, "Tga"),
+    (ImageFormat::Tiff, "Tiff"),
+    (ImageFormat::WebP, "WebP"),
+    (ImageFormat::Wmf, "Wmf"),
+    (ImageFormat::Xbm, "Xbm"),
+    (ImageFormat::Xpm, "Xpm"),
+];
+
+/// Each optimization's name.
+const OPTIMIZATIONS: [(Optimization, &str); 5] = [
+    (Optimization::CompressStreams, "CompressStreams"),
+    (Optimization::Deduplicate, "Deduplicate"),
+    (Optimization::Linearize, "Linearize"),
+    (Optimization::ObjectStreams, "ObjectStreams"),
+    (Optimization::SubsetFonts, "SubsetFonts"),
+];
+
 /// Each permission's name.
 const PERMISSIONS: [(Permission, &str); 7] = [
     (Permission::Annotate, "Annotate"),
@@ -48,6 +115,46 @@ const PERMISSIONS: [(Permission, &str); 7] = [
     (Permission::FillForms, "FillForms"),
     (Permission::Print, "Print"),
     (Permission::PrintHighQuality, "PrintHighQuality"),
+];
+
+/// Each save mode's name.
+const SAVE_MODES: [(SaveMode, &str); 3] = [
+    (SaveMode::InPlace, "InPlace"),
+    (SaveMode::Incremental, "Incremental"),
+    (SaveMode::Rewrite, "Rewrite"),
+];
+
+/// Each split's name.
+const SPLITS: [(SplitBy, &str); 4] = [
+    (SplitBy::Bookmarks, "Bookmarks"),
+    (SplitBy::Pages, "Pages"),
+    (SplitBy::Ranges, "Ranges"),
+    (SplitBy::Size, "Size"),
+];
+
+/// Each standard's name.
+const STANDARDS: [(Standard, &str); 21] = [
+    (Standard::FacturX, "FacturX"),
+    (Standard::Pdf, "Pdf"),
+    (Standard::PdfA1A, "PdfA1A"),
+    (Standard::PdfA1B, "PdfA1B"),
+    (Standard::PdfA2A, "PdfA2A"),
+    (Standard::PdfA2B, "PdfA2B"),
+    (Standard::PdfA2U, "PdfA2U"),
+    (Standard::PdfA3A, "PdfA3A"),
+    (Standard::PdfA3B, "PdfA3B"),
+    (Standard::PdfA3U, "PdfA3U"),
+    (Standard::PdfA4, "PdfA4"),
+    (Standard::PdfA4E, "PdfA4E"),
+    (Standard::PdfA4F, "PdfA4F"),
+    (Standard::PdfE1, "PdfE1"),
+    (Standard::PdfUa1, "PdfUa1"),
+    (Standard::PdfUa2, "PdfUa2"),
+    (Standard::PdfVt, "PdfVt"),
+    (Standard::PdfX1A, "PdfX1A"),
+    (Standard::PdfX3, "PdfX3"),
+    (Standard::PdfX4, "PdfX4"),
+    (Standard::PdfX6, "PdfX6"),
 ];
 
 create_exception!(
@@ -79,6 +186,92 @@ impl ReadAt for Bytes {
     }
 }
 
+/// A caller's callable, and what it raised.
+struct Callback {
+    /// The callable.
+    callable: Py<PyAny>,
+    /// What it raised, for the operation that called it to raise instead.
+    raised: Mutex<Option<PyErr>>,
+}
+
+impl Append for Callback {
+    fn append(&self, bytes: &[u8]) -> io::Result<()> {
+        Python::attach(|py| {
+            self.callable
+                .call1(py, (PyBytes::new(py, bytes),))
+                .map(drop)
+        })
+        .map_err(|error| {
+            self.keep(error);
+            io::Error::other("the callable raised")
+        })
+    }
+}
+
+impl Callback {
+    /// Keeps `error` for [`Self::take`].
+    fn keep(&self, error: PyErr) {
+        *self.raised.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
+    }
+
+    /// A callback over `callable`.
+    const fn new(callable: Py<PyAny>) -> Self {
+        Self {
+            callable,
+            raised: Mutex::new(None),
+        }
+    }
+
+    /// Takes what it raised.
+    fn take(&self) -> Option<PyErr> {
+        self.raised
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}
+
+impl Progress for Callback {
+    fn update(&self, done: u64, total: u64) -> bool {
+        Python::attach(|py| self.callable.call1(py, (done, total))?.extract::<bool>(py))
+            .unwrap_or_else(|error| {
+                self.keep(error);
+                false
+            })
+    }
+}
+
+/// Keyword arguments a method takes as `**options`.
+struct Keywords<'py>(Option<Bound<'py, PyDict>>);
+
+impl<'py> Keywords<'py> {
+    /// The value of `key`, or `default` when not given.
+    fn get<T>(&self, key: &str, default: T) -> PyResult<T>
+    where
+        T: FromPyObjectOwned<'py>,
+    {
+        self.0
+            .as_ref()
+            .map(|given| given.get_item(key))
+            .transpose()?
+            .flatten()
+            .map_or(Ok(default), |found| found.extract().map_err(Into::into))
+    }
+
+    /// `given`, failing with `TypeError` on a key not in `known`.
+    fn new(given: Option<Bound<'py, PyDict>>, known: &[&str]) -> PyResult<Self> {
+        for key in given.iter().flat_map(PyDictMethods::keys) {
+            let name: String = key.extract()?;
+            if !known.contains(&name.as_str()) {
+                return Err(PyTypeError::new_err(format!(
+                    "unexpected keyword argument '{name}'"
+                )));
+            }
+        }
+        Ok(Self(given))
+    }
+}
+
 /// Input with a size and reads at an offset.
 #[pyclass(frozen, module = "starlightpdf")]
 struct Source(input::Source);
@@ -107,21 +300,55 @@ impl Source {
 
 /// Output that only appends.
 #[pyclass(frozen, module = "starlightpdf")]
-struct Sink(output::Sink);
+struct Sink {
+    /// The caller's callable, when it has one.
+    callback: Option<Arc<Callback>>,
+    /// The sink.
+    sink: output::Sink,
+}
 
 #[pymethods]
 impl Sink {
+    /// A sink that calls `append` with each write's bytes.
+    #[staticmethod]
+    fn from_append(append: Py<PyAny>) -> PyResult<Self> {
+        let callback = Arc::new(Callback::new(append));
+        let shared: Arc<dyn Append> = Arc::<Callback>::clone(&callback);
+        output::Sink::from_append(&shared, &AppendSinkOptions::default())
+            .map(|sink| Self {
+                callback: Some(callback),
+                sink,
+            })
+            .map_err(|error| to_py(&error))
+    }
+
+    /// A sink over a file, replaced only when a save succeeds.
+    #[staticmethod]
+    fn from_file(file: PathBuf) -> PyResult<Self> {
+        let mut options = FileSinkOptions::default();
+        options.file = file;
+        output::Sink::from_file(&options)
+            .map(|sink| Self {
+                callback: None,
+                sink,
+            })
+            .map_err(|error| to_py(&error))
+    }
+
     /// A sink that holds its bytes in memory, for `take_bytes`.
     #[staticmethod]
     fn in_memory() -> PyResult<Self> {
         output::Sink::in_memory(&MemorySinkOptions::default())
-            .map(Self)
+            .map(|sink| Self {
+                callback: None,
+                sink,
+            })
             .map_err(|error| to_py(&error))
     }
 
     /// Takes the bytes appended so far, copied into `bytes`, leaving the sink empty.
     fn take_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        self.0
+        self.sink
             .take_bytes()
             .map(|bytes| PyBytes::new(py, &bytes))
             .map_err(|error| to_py(&error))
@@ -207,11 +434,7 @@ impl Page {
     #[pyo3(signature = (*, kind = "Crop"))]
     fn boundary(&self, kind: &str) -> PyResult<Rect> {
         let mut options = BoundaryOptions::default();
-        options.kind = BOUNDARIES
-            .iter()
-            .find(|entry| entry.1 == kind)
-            .map(|entry| entry.0)
-            .ok_or_else(|| PyValueError::new_err(format!("unknown boundary '{kind}'")))?;
+        options.kind = value(&BOUNDARIES, kind)?;
         self.0
             .boundary(&options)
             .map(|rect| Rect {
@@ -220,6 +443,47 @@ impl Page {
                 x: rect.x,
                 y: rect.y,
             })
+            .map_err(|error| to_py(&error))
+    }
+
+    /// Draws `image`, `mask` its soft mask, in `layer`, of which none can exist yet; `x`, `y` in points from the
+    /// top-left.
+    #[pyo3(signature = (image, mask = None, layer = None, **keywords))]
+    fn draw_image(
+        &self,
+        image: &Source,
+        mask: Option<&Source>,
+        layer: Option<&Bound<'_, PyNone>>,
+        keywords: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let _: Option<&Bound<'_, PyNone>> = layer;
+        let given = Keywords::new(
+            keywords,
+            &[
+                "format",
+                "frame",
+                "height",
+                "ignore_orientation",
+                "opacity",
+                "width",
+                "x",
+                "y",
+            ],
+        )?;
+        let mut options = DrawImageOptions::default();
+        options.format = given
+            .get::<Option<String>>("format", None)?
+            .map(|format| value(&IMAGE_FORMATS, &format))
+            .transpose()?;
+        options.frame = given.get("frame", 0)?;
+        options.height = given.get("height", None)?;
+        options.ignore_orientation = given.get("ignore_orientation", false)?;
+        options.opacity = given.get("opacity", None)?;
+        options.width = given.get("width", None)?;
+        options.x = given.get("x", 0.0_f64)?;
+        options.y = given.get("y", 0.0_f64)?;
+        self.0
+            .draw_image(&image.0, mask.map(|each| &each.0), None, &options)
             .map_err(|error| to_py(&error))
     }
 
@@ -292,6 +556,66 @@ impl Deviations {
     }
 }
 
+/// The document information dictionary; an absent entry is empty.
+#[pyclass(frozen, module = "starlightpdf")]
+struct InfoDictionary {
+    /// The author.
+    #[pyo3(get)]
+    author: String,
+    /// The creation date, ISO 8601.
+    #[pyo3(get)]
+    created: String,
+    /// The application that created the original.
+    #[pyo3(get)]
+    creator: String,
+    /// Keywords.
+    #[pyo3(get)]
+    keywords: String,
+    /// The last modification date, ISO 8601.
+    #[pyo3(get)]
+    modified: String,
+    /// The application that wrote the PDF.
+    #[pyo3(get)]
+    producer: String,
+    /// The subject.
+    #[pyo3(get)]
+    subject: String,
+    /// The title.
+    #[pyo3(get)]
+    title: String,
+}
+
+/// What a save did.
+#[pyclass(frozen, module = "starlightpdf")]
+struct SaveReport {
+    /// Fields of signatures the save invalidated.
+    #[pyo3(get)]
+    broken_signatures: Vec<String>,
+    /// Bytes written.
+    #[pyo3(get)]
+    length: u64,
+}
+
+/// Documents, iterated.
+#[pyclass(frozen, module = "starlightpdf")]
+struct Documents(document::Documents);
+
+#[pymethods]
+impl Documents {
+    /// Itself.
+    const fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    /// The next document.
+    fn __next__(&self) -> PyResult<Option<Document>> {
+        self.0
+            .next()
+            .map(|found| found.map(|document| Document { document }))
+            .map_err(|error| to_py(&error))
+    }
+}
+
 /// An open PDF.
 #[pyclass(frozen, module = "starlightpdf")]
 struct Document {
@@ -307,6 +631,17 @@ impl Document {
         self.document
             .catalog()
             .map(ObjectId)
+            .map_err(|error| to_py(&error))
+    }
+
+    /// An empty document; `version` is `(major, minor)`, `None` 2.0.
+    #[staticmethod]
+    #[pyo3(signature = (policy = None, *, version = None))]
+    fn create(policy: Option<&ResourcePolicy>, version: Option<(u8, u8)>) -> PyResult<Self> {
+        let mut options = CreateOptions::default();
+        options.version = version.map(to_version);
+        document::Document::create(policy.map(|given| &given.0), &options)
+            .map(|document| Self { document })
             .map_err(|error| to_py(&error))
     }
 
@@ -331,6 +666,42 @@ impl Document {
                 .map(|&permission| name(&PERMISSIONS, permission))
                 .collect::<PyResult<_>>()?,
         })
+    }
+
+    /// The document information dictionary.
+    #[getter]
+    fn info_dictionary(&self) -> PyResult<InfoDictionary> {
+        self.document
+            .info_dictionary()
+            .map(|found| InfoDictionary {
+                author: found.author,
+                created: found.created,
+                creator: found.creator,
+                keywords: found.keywords,
+                modified: found.modified,
+                producer: found.producer,
+                subject: found.subject,
+                title: found.title,
+            })
+            .map_err(|error| to_py(&error))
+    }
+
+    /// Inserts a page of `width` by `height` points, `None` A4, at `index`, `None` the end.
+    #[pyo3(signature = (*, width = None, height = None, index = None))]
+    fn insert_blank_page(
+        &self,
+        width: Option<f64>,
+        height: Option<f64>,
+        index: Option<u32>,
+    ) -> PyResult<Page> {
+        let mut options = InsertBlankPageOptions::default();
+        options.height = height;
+        options.index = index;
+        options.width = width;
+        self.document
+            .insert_blank_page(&options)
+            .map(Page)
+            .map_err(|error| to_py(&error))
     }
 
     /// The object `object_id` as PDF syntax; a stream's dictionary only.
@@ -377,15 +748,123 @@ impl Document {
         self.document.page_count().map_err(|error| to_py(&error))
     }
 
+    /// Writes the document to `sink`; `progress(done, total)` returns false to cancel.
+    #[pyo3(signature = (sink, progress = None, **keywords))]
+    fn save(
+        &self,
+        sink: &Sink,
+        progress: Option<Py<PyAny>>,
+        keywords: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<SaveReport> {
+        let given = Keywords::new(
+            keywords,
+            &[
+                "allow_loss",
+                "break_signatures",
+                "cipher",
+                "color_space",
+                "image_quality",
+                "image_resolution",
+                "mode",
+                "optimizations",
+                "owner_password",
+                "recipients",
+                "restrictions",
+                "standards",
+                "user_password",
+                "version",
+            ],
+        )?;
+        let mut options = SaveOptions::default();
+        options.allow_loss = given.get("allow_loss", false)?;
+        options.break_signatures = given.get("break_signatures", false)?;
+        options.cipher = given
+            .get::<Option<String>>("cipher", None)?
+            .map(|cipher| value(&CIPHERS, &cipher))
+            .transpose()?;
+        options.color_space = given
+            .get::<Option<String>>("color_space", None)?
+            .map(|space| value(&COLOR_SPACES, &space))
+            .transpose()?;
+        options.image_quality = given.get("image_quality", None)?;
+        options.image_resolution = given.get("image_resolution", None)?;
+        options.mode = value(&SAVE_MODES, &given.get("mode", String::from("Rewrite"))?)?;
+        options.optimizations = values(&OPTIMIZATIONS, &given.get("optimizations", Vec::new())?)?;
+        options.owner_password = given.get("owner_password", String::new())?;
+        options.recipients = given.get("recipients", Vec::new())?;
+        options.restrictions = values(&PERMISSIONS, &given.get("restrictions", Vec::new())?)?;
+        options.standards = values(&STANDARDS, &given.get("standards", Vec::new())?)?;
+        options.user_password = given.get("user_password", String::new())?;
+        options.version = given
+            .get::<Option<(u8, u8)>>("version", None)?
+            .map(to_version);
+        let callback = progress.map(Callback::new);
+        let result = self.document.save(
+            &sink.sink,
+            callback.as_ref().map::<&dyn Progress, _>(|each| each),
+            &options,
+        );
+        checked(result, &[callback.as_ref(), sink.callback.as_deref()]).map(|report| SaveReport {
+            broken_signatures: report.broken_signatures,
+            length: report.length,
+        })
+    }
+
+    /// Sets the entries given; `None` keeps an entry, empty removes it.
+    #[pyo3(signature = (**entries))]
+    fn set_info_dictionary(&self, entries: Option<Bound<'_, PyDict>>) -> PyResult<()> {
+        let given = Keywords::new(
+            entries,
+            &[
+                "author", "created", "creator", "keywords", "modified", "producer", "subject",
+                "title",
+            ],
+        )?;
+        let mut options = SetInfoDictionaryOptions::default();
+        options.author = given.get("author", None)?;
+        options.created = given.get("created", None)?;
+        options.creator = given.get("creator", None)?;
+        options.keywords = given.get("keywords", None)?;
+        options.modified = given.get("modified", None)?;
+        options.producer = given.get("producer", None)?;
+        options.subject = given.get("subject", None)?;
+        options.title = given.get("title", None)?;
+        self.document
+            .set_info_dictionary(&options)
+            .map_err(|error| to_py(&error))
+    }
+
+    /// The parts: `by` `"Pages"`, `count` each, or `"Ranges"`, one from each of `starts`; after
+    /// this document's next edit, they and the iterator fail `StaleHandle`.
+    #[pyo3(signature = (*, by = "Pages", count = 0, starts = Vec::new(), allow_loss = false))]
+    fn split(
+        &self,
+        by: &str,
+        count: u32,
+        starts: Vec<u32>,
+        allow_loss: bool,
+    ) -> PyResult<Documents> {
+        let mut options = SplitOptions::default();
+        options.allow_loss = allow_loss;
+        options.by = value(&SPLITS, by)?;
+        options.count = count;
+        options.starts = starts;
+        self.document
+            .split(&options)
+            .map(Documents)
+            .map_err(|error| to_py(&error))
+    }
+
     /// Writes stream `object_id`'s stored bytes to `sink`, or with `decode` its decoded data.
     #[pyo3(signature = (sink, object_id, /, *, decode = false))]
     fn stream_data(&self, sink: &Sink, object_id: &ObjectId, decode: bool) -> PyResult<()> {
         let mut options = StreamDataOptions::default();
         options.decode = decode;
         options.id = object_id.0;
-        self.document
-            .stream_data(&sink.0, &options)
-            .map_err(|error| to_py(&error))
+        checked(
+            self.document.stream_data(&sink.sink, &options),
+            &[sink.callback.as_deref()],
+        )
     }
 
     /// The warnings kept, at most the policy's limit.
@@ -396,6 +875,21 @@ impl Document {
             .map(Deviations)
             .map_err(|error| to_py(&error))
     }
+}
+
+/// `result`, unless a callback raised; then the first exception raised.
+fn checked<T>(
+    result: Result<T, starlightpdf::PdfError>,
+    callbacks: &[Option<&Callback>],
+) -> PyResult<T> {
+    callbacks
+        .iter()
+        .flatten()
+        .fold(None, |first: Option<PyErr>, callback| {
+            let taken = callback.take();
+            first.or(taken)
+        })
+        .map_or_else(|| result.map_err(|error| to_py(&error)), Err)
 }
 
 /// Calls `starlightpdf::header_version`.
@@ -445,6 +939,34 @@ fn to_py(error: &starlightpdf::PdfError) -> PyErr {
     })
 }
 
+/// `(major, minor)` as a version.
+fn to_version(given: (u8, u8)) -> Version {
+    let mut version = Version::default();
+    version.major = given.0;
+    version.minor = given.1;
+    version
+}
+
+/// The value `given` names in `names`.
+fn value<T>(names: &[(T, &'static str)], given: &str) -> PyResult<T>
+where
+    T: Copy,
+{
+    names
+        .iter()
+        .find(|entry| entry.1 == given)
+        .map(|entry| entry.0)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown name '{given}'")))
+}
+
+/// The values `given` names in `names`.
+fn values<T>(names: &[(T, &'static str)], given: &[String]) -> PyResult<Vec<T>>
+where
+    T: Copy,
+{
+    given.iter().map(|each| value(names, each)).collect()
+}
+
 /// The `starlightpdf` module.
 #[pymodule(name = "starlightpdf")]
 fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -452,11 +974,14 @@ fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Deviation>()?;
     module.add_class::<Deviations>()?;
     module.add_class::<Document>()?;
+    module.add_class::<Documents>()?;
     module.add_class::<Encryption>()?;
+    module.add_class::<InfoDictionary>()?;
     module.add_class::<ObjectId>()?;
     module.add_class::<Page>()?;
     module.add_class::<Rect>()?;
     module.add_class::<ResourcePolicy>()?;
+    module.add_class::<SaveReport>()?;
     module.add_class::<Sink>()?;
     module.add_class::<Source>()?;
     module.add_function(wrap_pyfunction!(header_version, module)?)?;

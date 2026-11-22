@@ -3,11 +3,13 @@
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use crate::analysis::{CompareOptions, Differences};
 use crate::annotations::GenerateAppearancesOptions;
 use crate::arrange::{
-    ImposeOptions, InsertBlankPageOptions, InsertPagesOptions, InsertTocOptions, SplitOptions,
+    ImposeOptions, InsertBlankPageOptions, InsertPagesOptions, InsertTocOptions, SplitBy,
+    SplitOptions,
 };
 use crate::attachments::{
     AddAttachmentOptions, Attachment, Attachments, Collection, SetCollectionOptions,
@@ -23,7 +25,9 @@ use crate::forms::{ExportDataOptions, Fields, ImportDataOptions, SetXfaOptions, 
 use crate::input::Source;
 use crate::layers::{AddLayerOptions, Layer, Layers};
 use crate::limits::ResourcePolicy;
-use crate::metadata::{InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions};
+use crate::metadata::{
+    InfoDictionary, SetInfoDictionaryOptions, SetXmpOptions, iso_date, pdf_date, text, text_string,
+};
 use crate::navigation::{
     AddArticleOptions, AddBookmarkOptions, Articles, Bookmark, Bookmarks, DeleteLabelRangeOptions,
     Destinations, LabelRanges, Scripts, SetDestinationOptions, SetLabelRangeOptions,
@@ -34,7 +38,9 @@ use crate::objects::{
     StreamDataOptions, XrefEntries,
 };
 use crate::output::Sink;
+use crate::overlay::{Dictionary, Object, Overlay, Reading};
 use crate::page::{self, Page};
+use crate::part::{self, Pages, Part};
 use crate::progress::Progress;
 use crate::rendering::{ColorSpace, PrintOptions};
 use crate::security::{Cipher, Encryption, Permission, SanitizeOptions};
@@ -42,10 +48,31 @@ use crate::signatures::{
     AddVerificationDataOptions, PendingSignature, PrepareSignatureOptions, Signatures,
     VerificationItems,
 };
-use crate::store::Store;
+use crate::store::{Objects, Store};
 use crate::stream;
 use crate::syntax::Value;
+use crate::writer::{self, Rewrite};
 use crate::{ErrorCode, PdfError, Version};
+
+/// A4, 210 × 297 mm, in points to 4 decimals (ISO 216; ISO 32000-2:2020, 8.3.2.3).
+const A4: [f64; 2] = [595.2756, 841.8898];
+
+/// A part of fewer than one in this many of the source's pages is saved with a table of only the
+/// objects it reaches.
+const SPARSE: u64 = 8;
+
+/// The information dictionary's keys, as [`InfoDictionary`]'s fields are ordered, and whether
+/// each holds a date (ISO 32000-2:2020, 14.3.3).
+const INFO_KEYS: [(&[u8], bool); 8] = [
+    (b"Author", false),
+    (b"CreationDate", true),
+    (b"Creator", false),
+    (b"Keywords", false),
+    (b"ModDate", true),
+    (b"Producer", false),
+    (b"Subject", false),
+    (b"Title", false),
+];
 
 /// Options for [`Document::close`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -87,6 +114,14 @@ pub struct CreateOptions {
 /// An open PDF: its source plus an overlay of changes.
 #[derive(Clone, Debug)]
 pub struct Document {
+    /// The changes.
+    overlay: Arc<Overlay>,
+    /// Whether a part of a split: a new file, whose saves write the source decrypted and a new
+    /// file identifier (ISO 32000-2:2020, 7.6, 14.4).
+    part: bool,
+    /// Whether a part of few of the source's pages, whose saves keep a table of only the objects
+    /// they reach.
+    sparse: bool,
     /// The shared state.
     store: Arc<Store>,
 }
@@ -94,8 +129,8 @@ pub struct Document {
 /// Documents, one at a time.
 #[derive(Clone, Debug)]
 pub struct Documents {
-    /// Reference to the shared state.
-    _shared: Arc<()>,
+    /// The split giving them.
+    parts: Arc<Mutex<Parts>>,
 }
 
 /// The format [`Document::convert_from`] reads.
@@ -157,6 +192,25 @@ pub enum Optimization {
 pub struct PageOptions {
     /// The page index.
     pub index: u32,
+}
+
+/// A split's state: its document, pages, where parts start and the next part.
+#[derive(Debug)]
+struct Parts {
+    /// Leave out what a part cannot keep.
+    allow_loss: bool,
+    /// Pages per part; 0 for parts at `starts`.
+    count: u32,
+    /// The next part's index.
+    next: u32,
+    /// The document's pages.
+    pages: Arc<Pages>,
+    /// The document split, as when split.
+    reading: Reading,
+    /// The document split.
+    source: Document,
+    /// The first pages of the parts, when not `count` pages each.
+    starts: Vec<u32>,
 }
 
 /// Options for [`Document::revert`].
@@ -248,7 +302,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_article(&self, options: &AddArticleOptions) -> Result<(), PdfError> {
         let _: &AddArticleOptions = options;
         Err(PdfError::new(
@@ -263,7 +317,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn add_attachment(
         &self,
         source: &Source,
@@ -283,7 +337,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn add_bookmark(
         &self,
         parent: Option<&Bookmark>,
@@ -303,7 +357,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn add_font(&self, source: &Source, options: &AddFontOptions) -> Result<Font, PdfError> {
         let _: &Source = source;
         let _: &AddFontOptions = options;
@@ -319,7 +373,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_layer(&self, options: &AddLayerOptions) -> Result<Layer, PdfError> {
         let _: &AddLayerOptions = options;
         Err(PdfError::new(
@@ -334,7 +388,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_object(&self, options: &AddObjectOptions) -> Result<ObjectId, PdfError> {
         let _: &AddObjectOptions = options;
         Err(PdfError::new(
@@ -349,7 +403,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn add_verification_data(
         &self,
         options: &AddVerificationDataOptions,
@@ -367,7 +421,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn apply_redactions(
         &self,
         progress: Option<&dyn Progress>,
@@ -427,9 +481,20 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn catalog(&self) -> Result<ObjectId, PdfError> {
-        self.store.objects("Document::catalog").catalog()
+        let objects = self.store.objects("Document::catalog");
+        if !self.overlay.is_changed() {
+            return objects.catalog();
+        }
+        match Object::Dictionary(self.overlay.trailer(objects)?).take(b"Root") {
+            Some(Object::Reference(root))
+                if matches!(self.overlay.resolve(objects, root)?, Object::Dictionary(_)) =>
+            {
+                Ok(root)
+            }
+            Some(_) | None => Err(objects.malformed()),
+        }
     }
 
     /// Discards unsaved changes, releases the source and invalidates handles; never writes.
@@ -438,7 +503,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`].
+    /// [`ErrorCode::NotImplemented`].
     pub fn close(&self, options: &CloseOptions) -> Result<(), PdfError> {
         let _: &CloseOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::close"))
@@ -536,9 +601,29 @@ impl Document {
         policy: Option<&ResourcePolicy>,
         options: &CreateOptions,
     ) -> Result<Self, PdfError> {
-        let _: Option<&ResourcePolicy> = policy;
-        let _: &CreateOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::create"))
+        /// The operation.
+        const CREATE: &str = "Document::create";
+        let version = options.version.unwrap_or(Version { major: 2, minor: 0 });
+        if !matches!((version.major, version.minor), (1, 0..=7) | (2, 0)) {
+            return Err(PdfError::new(ErrorCode::InvalidArgument, CREATE));
+        }
+        let overlay = Overlay::new(1);
+        let pages = overlay.add(Object::Dictionary(vec![
+            (b"Type".to_vec(), Object::Name(b"Pages".to_vec())),
+            (b"Kids".to_vec(), Object::Array(Vec::new())),
+            (b"Count".to_vec(), Object::Integer(0)),
+        ]))?;
+        let catalog = overlay.add(Object::Dictionary(vec![
+            (b"Type".to_vec(), Object::Name(b"Catalog".to_vec())),
+            (b"Pages".to_vec(), Object::Reference(pages)),
+        ]))?;
+        overlay.set_trailer(vec![(b"Root".to_vec(), Object::Reference(catalog))]);
+        Ok(Self {
+            overlay: Arc::new(overlay),
+            part: false,
+            sparse: false,
+            store: Arc::new(Store::create(policy, version)?),
+        })
     }
 
     /// Removes the label range that begins at `start`; its pages join the range before.
@@ -547,7 +632,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn delete_label_range(&self, options: &DeleteLabelRangeOptions) -> Result<(), PdfError> {
         let _: &DeleteLabelRangeOptions = options;
         Err(PdfError::new(
@@ -636,7 +721,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn flatten(
         &self,
         progress: Option<&dyn Progress>,
@@ -667,7 +752,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn generate_appearances(
         &self,
         progress: Option<&dyn Progress>,
@@ -701,7 +786,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn import_data(
         &self,
         source: &Source,
@@ -732,33 +817,153 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::impose"))
     }
 
-    /// The document information dictionary (ISO 32000-2:2020, 14.3.3).
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
-    pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::info_dictionary",
-        ))
+    /// The trailer, the information dictionary's id when indirect, and the dictionary, empty
+    /// when there is none (ISO 32000-2:2020, 14.3.3).
+    fn info(
+        &self,
+        objects: Objects<'_>,
+    ) -> Result<(Dictionary, Option<ObjectId>, Object), PdfError> {
+        let trailer = self.overlay.trailer(objects)?;
+        let entry = Object::Dictionary(trailer.clone())
+            .take(b"Info")
+            .unwrap_or(Object::Null);
+        let id = if let Object::Reference(found) = entry {
+            Some(found)
+        } else {
+            None
+        };
+        let info = match self.overlay.direct(objects, entry)? {
+            found @ Object::Dictionary(_) => found,
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => Object::Dictionary(Vec::new()),
+        };
+        Ok((trailer, id, info))
     }
 
-    /// Inserts a blank page.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The document information dictionary: text strings as text, dates as ISO 8601, a date that
+    /// is not one empty (ISO 32000-2:2020, 7.9.2.2, 7.9.4, 14.3.3).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    pub fn info_dictionary(&self) -> Result<InfoDictionary, PdfError> {
+        let objects = self.store.objects("Document::info_dictionary");
+        let info = self.info(objects)?.2;
+        let mut values = Vec::new();
+        for (key, date) in INFO_KEYS {
+            values.push(match self.overlay.entry(objects, &info, key)? {
+                Object::String(bytes) if date => iso_date(&text(&bytes)).unwrap_or_default(),
+                Object::String(bytes) => text(&bytes),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..) => String::new(),
+            });
+        }
+        let mut fields = values.into_iter();
+        let mut next = || fields.next().unwrap_or_default();
+        Ok(InfoDictionary {
+            author: next(),
+            created: next(),
+            creator: next(),
+            keywords: next(),
+            modified: next(),
+            producer: next(),
+            subject: next(),
+            title: next(),
+        })
+    }
+
+    /// Inserts a blank page of `width` × `height` points, A4 for one not given, before the page at
+    /// `index` or after the last (ISO 32000-2:2020, 7.7.3).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn insert_blank_page(&self, options: &InsertBlankPageOptions) -> Result<Page, PdfError> {
-        let _: &InsertBlankPageOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::insert_blank_page",
-        ))
+        /// The operation.
+        const INSERT: &str = "Document::insert_blank_page";
+        let invalid = || PdfError::new(ErrorCode::InvalidArgument, INSERT);
+        let [width, height] = [(options.width, A4[0]), (options.height, A4[1])]
+            .map(|(given, default)| given.unwrap_or(default));
+        if ![width, height]
+            .iter()
+            .all(|side| side.is_finite() && *side > 0.0_f64)
+        {
+            return Err(invalid());
+        }
+        let objects = self.store.objects(INSERT);
+        let overlay = &*self.overlay;
+        let trailer = Object::Dictionary(overlay.trailer(objects)?);
+        let Some(Object::Reference(root)) = trailer.take(b"Root") else {
+            return Err(objects.malformed());
+        };
+        let Some(Object::Reference(top)) = overlay.resolve(objects, root)?.take(b"Pages") else {
+            return Err(objects.malformed());
+        };
+        let node = overlay.resolve(objects, top)?;
+        let pages = page::count(objects, overlay, &node)?;
+        let index = options.index.map_or(pages, u64::from);
+        if index > pages {
+            return Err(invalid());
+        }
+        let (mut path, position) = place(objects, overlay, (top, node), index)?;
+        let parent = path.last().ok_or_else(|| objects.malformed())?.0;
+        let media = Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(width),
+            Object::Real(height),
+        ]);
+        let mut entries = vec![
+            (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
+            (b"Parent".to_vec(), Object::Reference(parent)),
+            (b"Resources".to_vec(), Object::Dictionary(Vec::new())),
+            (b"MediaBox".to_vec(), media.clone()),
+        ];
+        // Its own values where an ancestor would give others (7.7.3.4).
+        for (key, own) in [
+            (b"CropBox".as_slice(), media),
+            (b"Rotate", Object::Integer(0)),
+        ] {
+            if path.iter().any(|ancestor| {
+                ancestor
+                    .1
+                    .get(key)
+                    .is_some_and(|found| !matches!(found, Object::Null))
+            }) {
+                entries.push((key.to_vec(), own));
+            }
+        }
+        let page = overlay.add(Object::Dictionary(entries))?;
+        if let Some(last) = path.last_mut() {
+            let Object::Array(mut kids) = overlay.entry(objects, &last.1, b"Kids")? else {
+                return Err(objects.malformed());
+            };
+            kids.insert(position.min(kids.len()), Object::Reference(page));
+            last.1.set(b"Kids", Some(Object::Array(kids)));
+        }
+        for (id, mut changed) in path {
+            let total = page::count(objects, overlay, &changed)?
+                .checked_add(1)
+                .and_then(|total| i64::try_from(total).ok())
+                .ok_or_else(|| objects.malformed())?;
+            changed.set(b"Count", Some(Object::Integer(total)));
+            overlay.set(id, changed);
+        }
+        Ok(Page::new(page, &self.store, &self.overlay))
     }
 
     /// Inserts pages of `from`, which may be this document.
@@ -767,7 +972,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn insert_pages(&self, from: &Self, options: &InsertPagesOptions) -> Result<(), PdfError> {
         let _: &Self = from;
         let _: &InsertPagesOptions = options;
@@ -783,7 +988,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn insert_toc(&self, options: &InsertTocOptions) -> Result<(), PdfError> {
         let _: &InsertTocOptions = options;
         Err(PdfError::new(
@@ -831,14 +1036,44 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::layers"))
     }
 
-    /// An object as PDF syntax, from the body, an object stream or a later update; a stream gives
-    /// its dictionary; a free or missing object is `null` (ISO 32000-2:2020, 7.3, 7.5.6, 7.5.7).
+    /// An object as PDF syntax, as changed, from the body, an object stream or a later update; a
+    /// stream gives its dictionary, with the `Length` a save writes when changed; a free or
+    /// missing object is `null`, and in a part so are the source's page tree nodes and other
+    /// parts' pages (ISO 32000-2:2020, 7.3, 7.5.6, 7.5.7).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn object(&self, options: &ObjectOptions) -> Result<String, PdfError> {
-        self.store.objects("Document::object").object(options.id)
+        let objects = self.store.objects("Document::object");
+        let id = options.id;
+        let Some((generation, found)) = self.overlay.get(id.number)? else {
+            return objects.object(id);
+        };
+        if generation != id.generation {
+            return Ok(String::from("null"));
+        }
+        let object = match found {
+            Object::Stream(mut entries, data) => {
+                let length = i64::try_from(stream::length(objects, data)?)
+                    .map_err(|_error| objects.malformed())?;
+                entries.retain(|entry| entry.0 != b"Length");
+                entries.push((b"Length".to_vec(), Object::Integer(length)));
+                Object::Dictionary(entries)
+            }
+            other @ (Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::String(_)) => other,
+        };
+        let mut text = String::new();
+        object.syntax(&mut text);
+        Ok(text)
     }
 
     /// Opens `source`, reading its header and cross-reference data (ISO 32000-2:2020, 7.5); a
@@ -859,7 +1094,12 @@ impl Document {
         if source.forward_only() {
             return Err(PdfError::new(ErrorCode::NotSeekable, "Document::open"));
         }
-        Store::open(source, policy, options.strict, &options.password).map(|store| Self {
+        let store = Store::open(source, policy, options.strict, &options.password)?;
+        let next = store.objects("Document::open").size();
+        Ok(Self {
+            overlay: Arc::new(Overlay::new(next)),
+            part: false,
+            sparse: false,
             store: Arc::new(store),
         })
     }
@@ -883,26 +1123,47 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn page(&self, options: &PageOptions) -> Result<Page, PdfError> {
-        page::find(&self.store, options.index)
+        page::find(&self.store, &self.overlay, options.index)
     }
 
     /// The number of pages: the root page tree node's `Count` (ISO 32000-2:2020, 7.7.3.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn page_count(&self) -> Result<u32, PdfError> {
         let objects = self.store.objects("Document::page_count");
-        let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
-        let pages = objects.dictionary(objects.get(catalog, b"Pages")?)?;
-        match objects.get(pages, b"Count")? {
-            Some(Value::Reference(id)) => objects.resolve(id)?.integer(),
-            found => found.as_ref().and_then(Value::integer),
-        }
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| objects.malformed())
+        let overlay = &*self.overlay;
+        let count = if overlay.is_changed() {
+            let trailer = Object::Dictionary(overlay.trailer(objects)?);
+            let catalog = overlay.entry(objects, &trailer, b"Root")?;
+            let pages = overlay.entry(objects, &catalog, b"Pages")?;
+            match overlay.entry(objects, &pages, b"Count")? {
+                Object::Integer(found) => Some(found),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => None,
+            }
+        } else {
+            // Read in place: a catalog or root node can be too large to hold.
+            let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
+            let pages = objects.dictionary(objects.get(catalog, b"Pages")?)?;
+            match objects.get(pages, b"Count")? {
+                Some(Value::Reference(id)) => objects.resolve(id)?.integer(),
+                found => found.as_ref().and_then(Value::integer),
+            }
+        };
+        count
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| objects.malformed())
     }
 
     /// Saves incrementally with room for a signature, for the caller to sign.
@@ -911,7 +1172,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn prepare_signature(
         &self,
         sink: &Sink,
@@ -950,7 +1211,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn recognize(
         &self,
         progress: Option<&dyn Progress>,
@@ -970,7 +1231,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn replace_text(
         &self,
         progress: Option<&dyn Progress>,
@@ -990,7 +1251,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::DocumentClosed`].
     pub fn revert(&self, options: &RevertOptions) -> Result<(), PdfError> {
         let _: &RevertOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::revert"))
@@ -1002,7 +1263,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn sanitize(
         &self,
         progress: Option<&dyn Progress>,
@@ -1016,25 +1277,65 @@ impl Document {
         ))
     }
 
-    /// Writes the document; the session stays open.
+    /// Writes the document; the session stays open. [`SaveMode::Rewrite`] writes only the objects
+    /// reachable from the trailer, renumbered, unchanged streams byte for byte, with a file
+    /// identifier from the content (ISO 32000-2:2020, 7.5, 14.4); an encrypted source is written
+    /// decrypted with [`Cipher::Unencrypted`]. Other modes and options not at their defaults fail
+    /// with [`ErrorCode::NotImplemented`], no pages with [`ErrorCode::InvalidArgument`].
     ///
     /// A failed save to a file leaves the previous file intact.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::SignaturesWouldBreak`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::IncrementalRefused`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::SignaturesWouldBreak`], [`ErrorCode::StaleHandle`].
     pub fn save(
         &self,
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &SaveOptions,
     ) -> Result<SaveReport, PdfError> {
-        let _: &Sink = sink;
-        let _: Option<&dyn Progress> = progress;
-        let _: &SaveOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::save"))
+        /// The operation.
+        const SAVE: &str = "Document::save";
+        let objects = self.store.objects(SAVE);
+        let encrypted = objects.security().is_some() && !self.part;
+        let defaults = !options.allow_loss
+            && options.color_space.is_none()
+            && options.image_quality.is_none()
+            && options.image_resolution.is_none()
+            && options.mode == SaveMode::Rewrite
+            && options.optimizations.is_empty()
+            && options.owner_password.is_empty()
+            && options.recipients.is_empty()
+            && options.restrictions.is_empty()
+            && options.standards.is_empty()
+            && options.user_password.is_empty()
+            && options.version.is_none()
+            && options
+                .cipher
+                .map_or(!encrypted, |cipher| cipher == Cipher::Unencrypted);
+        let result = if defaults {
+            self.version().and_then(|version| {
+                writer::rewrite(
+                    &Rewrite {
+                        break_signatures: options.break_signatures,
+                        objects,
+                        overlay: &self.overlay,
+                        part: self.part,
+                        progress,
+                        sparse: self.sparse,
+                        version,
+                    },
+                    sink,
+                )
+            })
+        } else {
+            Err(PdfError::new(ErrorCode::NotImplemented, SAVE))
+        };
+        let (broken_signatures, length) = sink.finish(result, SAVE)?;
+        Ok(SaveReport {
+            broken_signatures,
+            length,
+        })
     }
 
     /// The document-level JavaScript; never run.
@@ -1069,7 +1370,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_collection(&self, options: &SetCollectionOptions) -> Result<(), PdfError> {
         let _: &SetCollectionOptions = options;
         Err(PdfError::new(
@@ -1084,7 +1385,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_destination(&self, options: &SetDestinationOptions) -> Result<(), PdfError> {
         let _: &SetDestinationOptions = options;
         Err(PdfError::new(
@@ -1095,17 +1396,57 @@ impl Document {
 
     /// Sets the document information dictionary (ISO 32000-2:2020, 14.3.3).
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_info_dictionary(&self, options: &SetInfoDictionaryOptions) -> Result<(), PdfError> {
-        let _: &SetInfoDictionaryOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::set_info_dictionary",
-        ))
+        /// The operation.
+        const SET: &str = "Document::set_info_dictionary";
+        let given = [
+            &options.author,
+            &options.created,
+            &options.creator,
+            &options.keywords,
+            &options.modified,
+            &options.producer,
+            &options.subject,
+            &options.title,
+        ];
+        let mut changes = Vec::new();
+        for (&(key, date), value) in INFO_KEYS.iter().zip(given) {
+            let Some(found) = value.as_deref() else {
+                continue;
+            };
+            let bytes = match (found.is_empty(), date) {
+                (true, _) => None,
+                (false, true) => Some(
+                    pdf_date(found)
+                        .ok_or_else(|| PdfError::new(ErrorCode::InvalidArgument, SET))?
+                        .into_bytes(),
+                ),
+                (false, false) => Some(text_string(found)),
+            };
+            changes.push((key, bytes.map(Object::String)));
+        }
+        let objects = self.store.objects(SET);
+        let (mut trailer, id, mut info) = self.info(objects)?;
+        for (key, value) in changes {
+            info.set(key, value);
+        }
+        let empty = matches!(&info, Object::Dictionary(entries) if entries.is_empty());
+        match id {
+            Some(found) if !empty => self.overlay.set(found, info),
+            _ if empty && trailer.iter().all(|entry| entry.0 != b"Info") => {}
+            _ => {
+                trailer.retain(|entry| entry.0 != b"Info");
+                if !empty {
+                    let added = self.overlay.add(info)?;
+                    trailer.push((b"Info".to_vec(), Object::Reference(added)));
+                }
+                self.overlay.set_trailer(trailer);
+            }
+        }
+        Ok(())
     }
 
     /// Labels pages from `start` up to the next label range.
@@ -1114,7 +1455,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_label_range(&self, options: &SetLabelRangeOptions) -> Result<(), PdfError> {
         let _: &SetLabelRangeOptions = options;
         Err(PdfError::new(
@@ -1129,7 +1470,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_language(&self, options: &SetLanguageOptions) -> Result<(), PdfError> {
         let _: &SetLanguageOptions = options;
         Err(PdfError::new(
@@ -1144,7 +1485,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_object(&self, options: &SetObjectOptions) -> Result<(), PdfError> {
         let _: &SetObjectOptions = options;
         Err(PdfError::new(
@@ -1159,7 +1500,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn set_output_intent(
         &self,
         profile: &Source,
@@ -1179,7 +1520,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_script(&self, options: &SetScriptOptions) -> Result<(), PdfError> {
         let _: &SetScriptOptions = options;
         Err(PdfError::new(
@@ -1194,7 +1535,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn set_stream_data(
         &self,
         source: &Source,
@@ -1214,7 +1555,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_viewer_settings(&self, options: &SetViewerSettingsOptions) -> Result<(), PdfError> {
         let _: &SetViewerSettingsOptions = options;
         Err(PdfError::new(
@@ -1229,7 +1570,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`].
     pub fn set_xfa(
         &self,
         source: Option<&Source>,
@@ -1249,7 +1590,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
     pub fn set_xmp(&self, options: &SetXmpOptions) -> Result<(), PdfError> {
         let _: &SetXmpOptions = options;
         Err(PdfError::new(
@@ -1272,16 +1613,71 @@ impl Document {
         ))
     }
 
-    /// Splits the pages into new documents.
+    /// Splits the pages into parts of `count` pages, or from each of `starts` to the next, the
+    /// last to the end; pages before the first start are in no part. A part holds only its pages,
+    /// their inherited attributes made their own, under a page tree of its own, with the info
+    /// dictionary, output intents and layers; links between its pages lead to them
+    /// (ISO 32000-2:2020, 7.7.3, 8.11.4, 12.3.2, 14.3.3, 14.11.5).
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Encryption, form fields, a structure tree, bookmarks, attachments, document scripts,
+    /// threads, associated files, any other catalog entry a part neither keeps nor rewrites, and
+    /// a link or a page's or annotation's `GoTo` action to a page in another part fail with
+    /// [`ErrorCode::LossRefused`] unless `allow_loss`, which leaves them out, the action's
+    /// destination only; such a link keeps its appearance. So does an open
+    /// action other than a destination or a `GoTo` action without a next one; one to a page in
+    /// another part is view state, left out. A `count` of 0 and `starts` empty, not
+    /// ascending or past the last page fail with [`ErrorCode::InvalidArgument`];
+    /// [`SplitBy::Bookmarks`] and [`SplitBy::Size`] with [`ErrorCode::NotImplemented`].
+    /// The parts read this document: after its next edit, they and the returned [`Documents`]
+    /// fail with [`ErrorCode::StaleHandle`].
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn split(&self, options: &SplitOptions) -> Result<Documents, PdfError> {
-        let _: &SplitOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Document::split"))
+        /// The operation.
+        const SPLIT: &str = "Document::split";
+        let invalid = || PdfError::new(ErrorCode::InvalidArgument, SPLIT);
+        let (count, starts) = match options.by {
+            SplitBy::Pages if options.count == 0 => return Err(invalid()),
+            SplitBy::Pages => (options.count, Vec::new()),
+            SplitBy::Ranges => (0, options.starts.clone()),
+            SplitBy::Bookmarks | SplitBy::Size => {
+                return Err(PdfError::new(ErrorCode::NotImplemented, SPLIT));
+            }
+        };
+        let total = self.page_count()?;
+        if count == 0
+            && (!starts.is_sorted_by(|before, after| before < after)
+                || starts.last().is_none_or(|&last| last >= total))
+        {
+            return Err(invalid());
+        }
+        let objects = self.store.objects(SPLIT);
+        let reading = Reading::new(&self.overlay);
+        if !options.allow_loss {
+            part::refuse(
+                objects,
+                &self.overlay,
+                objects.security().is_some() && !self.part,
+            )?;
+        }
+        let pages = Pages::read(objects, &self.overlay)?;
+        reading.fresh(SPLIT)?;
+        if pages.count() != total {
+            return Err(objects.malformed());
+        }
+        Ok(Documents {
+            parts: Arc::new(Mutex::new(Parts {
+                allow_loss: options.allow_loss,
+                count,
+                next: 0,
+                pages: Arc::new(pages),
+                reading,
+                source: self.clone(),
+                starts,
+            })),
+        })
     }
 
     /// Stamps text or `image` on pages: watermarks, headers, footers, page and Bates numbers.
@@ -1290,7 +1686,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::Unsupported`].
     pub fn stamp(
         &self,
         image: Option<&Source>,
@@ -1303,20 +1699,35 @@ impl Document {
         Err(PdfError::new(ErrorCode::NotImplemented, "Document::stamp"))
     }
 
-    /// Writes a stream's stored bytes, or with `decode` its data with its filters undone
-    /// (ISO 32000-2:2020, 7.4); [`ErrorCode::InvalidArgument`] when `id` is missing or not a
-    /// stream, [`ErrorCode::Unsupported`] for an image filter.
+    /// Writes a stream's stored bytes, as a save writes them when changed, or with `decode` its
+    /// data with its filters undone (ISO 32000-2:2020, 7.4); [`ErrorCode::InvalidArgument`] when
+    /// `id` is missing or not a stream, [`ErrorCode::Unsupported`] for an image filter.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn stream_data(&self, sink: &Sink, options: &StreamDataOptions) -> Result<(), PdfError> {
-        stream::write(
-            self.store.objects("Document::stream_data"),
-            options.id,
-            options.decode,
-            sink,
-        )
+        /// The operation.
+        const STREAM_DATA: &str = "Document::stream_data";
+        let objects = self.store.objects(STREAM_DATA);
+        let id = options.id;
+        let written = match self.overlay.get(id.number) {
+            Err(error) => Err(error),
+            Ok(None) => stream::write(objects, id, options.decode, sink),
+            Ok(Some((generation, Object::Stream(entries, data))))
+                if generation == id.generation =>
+            {
+                stream::held(
+                    objects,
+                    &self.overlay,
+                    (entries, data),
+                    options.decode,
+                    sink,
+                )
+            }
+            Ok(Some(_)) => Err(PdfError::new(ErrorCode::InvalidArgument, STREAM_DATA)),
+        };
+        sink.finish(written, STREAM_DATA)
     }
 
     /// Builds a structure tree with reading order from the layout.
@@ -1325,7 +1736,7 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`].
     pub fn tag(
         &self,
         progress: Option<&dyn Progress>,
@@ -1365,18 +1776,41 @@ impl Document {
         ))
     }
 
-    /// The effective version: the header's, or the catalog's when later.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The effective version: the header's, or the catalog's `Version` when later
+    /// (ISO 32000-2:2020, 7.5.2, 7.7.2).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn version(&self) -> Result<Version, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::version",
-        ))
+        let objects = self.store.objects("Document::version");
+        let header = objects.version();
+        let trailer = Object::Dictionary(self.overlay.trailer(objects)?);
+        let Some(Object::Reference(root)) = trailer.take(b"Root") else {
+            return Ok(header);
+        };
+        let catalog = self.overlay.resolve(objects, root)?;
+        let named = match self.overlay.entry(objects, &catalog, b"Version")? {
+            Object::Name(name) => match *name.as_slice() {
+                [major @ (b'1' | b'2'), b'.', minor @ b'0'..=b'9'] => Some(Version {
+                    major: major.wrapping_sub(b'0'),
+                    minor: minor.wrapping_sub(b'0'),
+                }),
+                _ => None,
+            },
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        };
+        Ok(named
+            .filter(|found| (found.major, found.minor) > (header.major, header.minor))
+            .unwrap_or(header))
     }
 
     /// How viewers open the document.
@@ -1442,14 +1876,139 @@ impl Document {
 }
 
 impl Documents {
-    /// The next document, or `None` after the last.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// The next document, or `None` after the last; a part is made only when asked for, and
+    /// unsaved, never encrypted.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn next(&self) -> Result<Option<Document>, PdfError> {
-        Err(PdfError::new(ErrorCode::NotImplemented, "Documents::next"))
+        // Held until the part is made, so a failed part is not skipped.
+        let mut parts = self.parts.lock().unwrap_or_else(PoisonError::into_inner);
+        parts.reading.fresh("Documents::next")?;
+        let Some(range) = parts.range() else {
+            return Ok(None);
+        };
+        let source = parts.source.clone();
+        let mut part = Part::new((&parts.reading, &source.store), &parts.pages, range)?;
+        part.prepare(parts.allow_loss)?;
+        let (catalog, next) = (part.catalog()?, part.next());
+        parts.next = parts.next.saturating_add(1);
+        let sparse = u64::from(range.1.saturating_sub(range.0)).saturating_mul(SPARSE)
+            < u64::from(parts.pages.count());
+        drop(parts);
+        let objects = source.store.objects("Documents::next");
+        let info = Object::Dictionary(source.overlay.trailer(objects)?).take(b"Info");
+        let overlay = Overlay::with_view(Box::new(part), next);
+        let root = overlay.add(Object::Dictionary(catalog))?;
+        let mut trailer = vec![(b"Root".to_vec(), Object::Reference(root))];
+        trailer.extend(info.map(|found| (b"Info".to_vec(), found)));
+        overlay.set_trailer(trailer);
+        Ok(Some(Document {
+            overlay: Arc::new(overlay),
+            part: true,
+            sparse,
+            store: Arc::clone(&source.store),
+        }))
+    }
+}
+
+impl Parts {
+    /// The pages of the next part, first and one past the last; `None` after the last.
+    fn range(&self) -> Option<(u32, u32)> {
+        let total = self.pages.count();
+        if self.count > 0 {
+            let first = self.next.checked_mul(self.count)?;
+            return (first < total).then(|| (first, first.saturating_add(self.count).min(total)));
+        }
+        let at = usize::try_from(self.next).ok()?;
+        let first = *self.starts.get(at)?;
+        let end = self
+            .starts
+            .get(at.saturating_add(1))
+            .copied()
+            .unwrap_or(total);
+        Some((first, end))
+    }
+}
+
+/// The page tree nodes from `top` down to the one a page inserted before the page at `index`, or
+/// after the last, goes into, and its place among that node's kids (ISO 32000-2:2020, 7.7.3.2).
+fn place(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    top: (ObjectId, Object),
+    index: u64,
+) -> Result<(Vec<(ObjectId, Object)>, usize), PdfError> {
+    if index == page::count(objects, overlay, &top.1)? {
+        return last(objects, overlay, vec![top]);
+    }
+    let mut path = vec![top];
+    let mut left = index;
+    'descend: loop {
+        if path.len() > usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+        }
+        let node = path.last().map_or(Object::Null, |entry| entry.1.clone());
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let length = kids.len();
+        for (position, kid) in kids.into_iter().enumerate() {
+            let Object::Reference(id) = kid else {
+                return Err(objects.malformed());
+            };
+            let child = overlay.resolve(objects, id)?;
+            let pages = page::count(objects, overlay, &child)?;
+            if left < pages {
+                if child.get(b"Kids").is_none() {
+                    return Ok((path, position));
+                }
+                if path.iter().any(|entry| entry.0 == id) {
+                    return Err(objects.malformed());
+                }
+                path.push((id, child));
+                continue 'descend;
+            }
+            left = left.saturating_sub(pages);
+        }
+        if left > 0 {
+            return Err(objects.malformed());
+        }
+        return Ok((path, length));
+    }
+}
+
+/// The page tree nodes from the last of `path` down along last kids to the one a page appended
+/// goes into, and its place after that node's kids, reading only last kids (ISO 32000-2:2020,
+/// 7.7.3.2).
+fn last(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    mut path: Vec<(ObjectId, Object)>,
+) -> Result<(Vec<(ObjectId, Object)>, usize), PdfError> {
+    loop {
+        if path.len() > usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX) {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+        }
+        let node = path.last().map_or(Object::Null, |entry| entry.1.clone());
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let length = kids.len();
+        let Some(kid) = kids.into_iter().next_back() else {
+            return Ok((path, length));
+        };
+        let Object::Reference(id) = kid else {
+            return Err(objects.malformed());
+        };
+        let child = overlay.resolve(objects, id)?;
+        if child.get(b"Kids").is_none() {
+            return Ok((path, length));
+        }
+        if path.iter().any(|entry| entry.0 == id) {
+            return Err(objects.malformed());
+        }
+        path.push((id, child));
     }
 }

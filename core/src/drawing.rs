@@ -155,8 +155,7 @@ pub struct DrawChartOptions {
 
 /// Options for [`Page::draw_image`](crate::page::Page::draw_image).
 ///
-/// EXIF orientation applies, ICC profiles are kept, HDR and more than 8 bits per component convert to standard
-/// range, and a Live Photo's still is its HEIC image.
+/// EXIF orientation applies, ICC profiles are kept, and a Live Photo's still is its HEIC image.
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct DrawImageOptions {

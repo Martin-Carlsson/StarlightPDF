@@ -6,6 +6,8 @@
 //! [`Page::user_space_matrix`] maps them to user space. Page boundaries are in default user space
 //! (ISO 32000-2:2020, 14.11.2).
 
+mod image;
+
 use alloc::sync::Arc;
 
 use crate::annotations::{AddAnnotationOptions, Annotation, Annotations};
@@ -19,6 +21,7 @@ use crate::input::Source;
 use crate::layers::Layer;
 use crate::objects::ObjectId;
 use crate::output::Sink;
+use crate::overlay::{Object, Overlay};
 use crate::progress::Progress;
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
@@ -82,6 +85,8 @@ pub struct Matrix {
 pub struct Page {
     /// The page object.
     id: ObjectId,
+    /// The document's changes.
+    overlay: Arc<Overlay>,
     /// The document's shared state.
     store: Arc<Store>,
 }
@@ -93,7 +98,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn add_annotation(
         &self,
         data: Option<&Source>,
@@ -113,7 +118,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn add_field(&self, options: &AddFieldOptions) -> Result<Field, PdfError> {
         let _: &AddFieldOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::add_field"))
@@ -155,16 +160,15 @@ impl Page {
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn boundary(&self, options: &BoundaryOptions) -> Result<Rect, PdfError> {
         let objects = self.store.objects("Page::boundary");
-        let media = if let Some(found) = inherited(objects, self.id, b"MediaBox")? {
-            rectangle(objects, &found)?
+        let media = if let Some(found) = self.rectangle(objects, b"MediaBox", true)? {
+            found
         } else {
             objects.deviation("7.7.3.3", "MediaBox missing", None)?;
             LETTER
         };
-        let crop = match inherited(objects, self.id, b"CropBox")? {
-            Some(found) => clip(rectangle(objects, &found)?, media),
-            None => media,
-        };
+        let crop = self
+            .rectangle(objects, b"CropBox", true)?
+            .map_or(media, |found| clip(found, media));
         let key: &[u8] = match options.kind {
             Boundary::Art => b"ArtBox",
             Boundary::Bleed => b"BleedBox",
@@ -172,11 +176,10 @@ impl Page {
             Boundary::Media => return Ok(rect(media)),
             Boundary::Trim => b"TrimBox",
         };
-        let page = objects.dictionary(Some(Value::Reference(self.id)))?;
-        Ok(rect(match own(objects, page, key)? {
-            Some(found) => clip(rectangle(objects, &found)?, media),
-            None => crop,
-        }))
+        Ok(rect(
+            self.rectangle(objects, key, false)?
+                .map_or(crop, |found| clip(found, media)),
+        ))
     }
 
     /// Deletes the page.
@@ -185,7 +188,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn delete(&self, options: &DeletePageOptions) -> Result<(), PdfError> {
         let _: &DeletePageOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::delete"))
@@ -197,7 +200,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn draw_barcode(
         &self,
         layer: Option<&Layer>,
@@ -217,7 +220,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn draw_chart(
         &self,
         layer: Option<&Layer>,
@@ -228,13 +231,14 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_chart"))
     }
 
-    /// Draws an image; `mask` is a soft mask.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Draws a JPEG or PNG image with its top-left corner at `x`, `y`, at `width` × `height`
+    /// points, one given keeping the ratio, none at 72 DPI, as its Exif orientation shows it
+    /// unless ignored; the file is read again at save (ISO 32000-2:2020, 8.9). `mask`, `layer`
+    /// and `opacity` are not implemented; a `frame` other than 0 is invalid.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn draw_image(
         &self,
         image: &Source,
@@ -242,11 +246,10 @@ impl Page {
         layer: Option<&Layer>,
         options: &DrawImageOptions,
     ) -> Result<(), PdfError> {
-        let _: &Source = image;
-        let _: Option<&Source> = mask;
-        let _: Option<&Layer> = layer;
-        let _: &DrawImageOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_image"))
+        if mask.is_some() || layer.is_some() || options.opacity.is_some() {
+            return Err(PdfError::new(ErrorCode::NotImplemented, "Page::draw_image"));
+        }
+        image::draw(self, image, options)
     }
 
     /// Draws lines, shapes and curves.
@@ -255,7 +258,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn draw_path(
         &self,
         layer: Option<&Layer>,
@@ -272,7 +275,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn draw_text(
         &self,
         layer: Option<&Layer>,
@@ -349,6 +352,40 @@ impl Page {
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::label"))
     }
 
+    /// The page object `id` of the document of `store` and `overlay`.
+    pub(crate) fn new(id: ObjectId, store: &Arc<Store>, overlay: &Arc<Overlay>) -> Self {
+        Self {
+            id,
+            overlay: Arc::clone(overlay),
+            store: Arc::clone(store),
+        }
+    }
+
+    /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay
+    /// when it holds changes (ISO 32000-2:2020, 7.7.3.4, 7.9.5).
+    fn rectangle(
+        &self,
+        objects: Objects<'_>,
+        key: &[u8],
+        inherit: bool,
+    ) -> Result<Option<[f64; 4]>, PdfError> {
+        if self.overlay.is_changed() {
+            return held(objects, &self.overlay, self.id, key, inherit)?
+                .map(|found| held_rectangle(objects, &self.overlay, found))
+                .transpose();
+        }
+        let found = if inherit {
+            inherited(objects, self.id, key)?
+        } else {
+            own(
+                objects,
+                objects.dictionary(Some(Value::Reference(self.id)))?,
+                key,
+            )?
+        };
+        found.map(|value| rectangle(objects, &value)).transpose()
+    }
+
     /// Rasterizes the page with its annotations and fields.
     ///
     /// Not implemented: fails with [`ErrorCode::NotImplemented`].
@@ -374,7 +411,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn rotate_by(&self, options: &RotateByOptions) -> Result<(), PdfError> {
         let _: &RotateByOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::rotate_by"))
@@ -388,9 +425,24 @@ impl Page {
     /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn rotation(&self) -> Result<u16, PdfError> {
         let objects = self.store.objects("Page::rotation");
-        let degrees = inherited(objects, self.id, b"Rotate")?.map_or(Some(0), |found| {
+        let rotate = if self.overlay.is_changed() {
+            held(objects, &self.overlay, self.id, b"Rotate", true)?.map(|found| match found {
+                Object::Integer(value) => Some(value),
+                Object::Array(_)
+                | Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => None,
+            })
+        } else {
+            inherited(objects, self.id, b"Rotate")?.map(|found| found.integer())
+        };
+        let degrees = rotate.map_or(Some(0), |found| {
             found
-                .integer()
                 .filter(|value| value.checked_rem(90) == Some(0))?
                 .checked_rem_euclid(360)
         });
@@ -407,7 +459,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn scale_by(&self, options: &ScaleByOptions) -> Result<(), PdfError> {
         let _: &ScaleByOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::scale_by"))
@@ -419,7 +471,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_boundary(&self, options: &SetBoundaryOptions) -> Result<(), PdfError> {
         let _: &SetBoundaryOptions = options;
         Err(PdfError::new(
@@ -434,7 +486,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_index(&self, options: &SetIndexOptions) -> Result<(), PdfError> {
         let _: &SetIndexOptions = options;
         Err(PdfError::new(ErrorCode::NotImplemented, "Page::set_index"))
@@ -446,7 +498,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_rotation(&self, options: &SetRotationOptions) -> Result<(), PdfError> {
         let _: &SetRotationOptions = options;
         Err(PdfError::new(
@@ -461,7 +513,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn set_transition(&self, options: &SetTransitionOptions) -> Result<(), PdfError> {
         let _: &SetTransitionOptions = options;
         Err(PdfError::new(
@@ -487,7 +539,7 @@ impl Page {
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Busy`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::LossRefused`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn superimpose(&self, other: &Self, options: &SuperimposeOptions) -> Result<(), PdfError> {
         let _: &Self = other;
         let _: &SuperimposeOptions = options;
@@ -711,8 +763,15 @@ fn difference(left: &[u8], right: &[u8]) -> Vec<u8> {
 
 /// The page at `index` of the page tree, found by descending through each node's `Count`; past
 /// the last page is [`ErrorCode::InvalidArgument`] (ISO 32000-2:2020, 7.7.3).
-pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
+pub(crate) fn find(
+    store: &Arc<Store>,
+    overlay: &Arc<Overlay>,
+    index: u32,
+) -> Result<Page, PdfError> {
     let objects = store.objects("Document::page");
+    if overlay.is_changed() {
+        return find_held(objects, (store, overlay), index);
+    }
     let catalog = objects.dictionary(objects.get(objects.trailer()?, b"Root")?)?;
     let root = objects.get(catalog, b"Pages")?;
     // The nodes descended through, by id; the root, when direct, has none.
@@ -763,10 +822,7 @@ pub(crate) fn find(store: &Arc<Store>, index: u32) -> Result<Page, PdfError> {
                 }
                 .ok_or_else(|| objects.malformed())?
             } else if left == 0 {
-                return Ok(Page {
-                    id: kid,
-                    store: Arc::clone(store),
-                });
+                return Ok(Page::new(kid, store, overlay));
             } else {
                 1
             };
@@ -801,6 +857,145 @@ fn fixed(text: &str, scale: usize, width: usize) -> Vec<u8> {
     } else {
         digits
     }
+}
+
+/// The pages under the page tree node `node`: its `Count`, 1 for a page (ISO 32000-2:2020, 7.7.3).
+pub(crate) fn count(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    node: &Object,
+) -> Result<u64, PdfError> {
+    if node.get(b"Kids").is_none() {
+        return Ok(1);
+    }
+    match overlay.entry(objects, node, b"Count")? {
+        Object::Integer(found) => u64::try_from(found).map_err(|_error| objects.malformed()),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => Err(objects.malformed()),
+    }
+}
+
+/// [`find`] through `overlay`.
+fn find_held(
+    objects: Objects<'_>,
+    (store, overlay): (&Arc<Store>, &Arc<Overlay>),
+    index: u32,
+) -> Result<Page, PdfError> {
+    let trailer = Object::Dictionary(overlay.trailer(objects)?);
+    let catalog = overlay.entry(objects, &trailer, b"Root")?;
+    let mut path: Vec<u32> = match catalog.get(b"Pages") {
+        Some(Object::Reference(id)) => vec![id.number],
+        Some(_) | None => Vec::new(),
+    };
+    let mut node = overlay.entry(objects, &catalog, b"Pages")?;
+    let mut left = u64::from(index);
+    for depth in 0..objects.depth_limit() {
+        let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
+            return Err(objects.malformed());
+        };
+        let mut below = None;
+        for kid in kids {
+            let Object::Reference(id) = kid else {
+                return Err(objects.malformed());
+            };
+            let child = overlay.resolve(objects, id)?;
+            if !matches!(child, Object::Dictionary(_)) {
+                return Err(objects.malformed());
+            }
+            let pages = count(objects, overlay, &child)?;
+            if child.get(b"Kids").is_none() && left == 0 {
+                return Ok(Page::new(id, store, overlay));
+            }
+            if left < pages {
+                if path.contains(&id.number) {
+                    return Err(objects.malformed());
+                }
+                path.push(id.number);
+                below = Some(child);
+                break;
+            }
+            left = left.saturating_sub(pages);
+        }
+        node = match below {
+            Some(found) => found,
+            None if depth == 0 => {
+                return Err(PdfError::new(
+                    ErrorCode::InvalidArgument,
+                    objects.operation(),
+                ));
+            }
+            None => return Err(objects.malformed()),
+        };
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+}
+
+/// The value of `key` in page `id`, or with `inherit` in the nearest ancestor that has it,
+/// through `overlay`; null is none, a node not a dictionary malformed (ISO 32000-2:2020, 7.3.10,
+/// 7.7.3.4).
+fn held(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    id: ObjectId,
+    key: &[u8],
+    inherit: bool,
+) -> Result<Option<Object>, PdfError> {
+    let mut node = Object::Reference(id);
+    for _ in 0..=objects.depth_limit() {
+        node = overlay.direct(objects, node)?;
+        if !matches!(node, Object::Dictionary(_)) {
+            return Err(objects.malformed());
+        }
+        let found = overlay.entry(objects, &node, key)?;
+        if !matches!(found, Object::Null) {
+            return Ok(Some(found));
+        }
+        match node.get(b"Parent") {
+            Some(parent @ Object::Reference(_)) if inherit => node = parent,
+            Some(_) | None => return Ok(None),
+        }
+    }
+    Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+}
+
+/// The rectangle array `value`, its elements direct or indirect, through `overlay`, corners
+/// normalized to `[left, bottom, right, top]` (ISO 32000-2:2020, 7.9.5).
+fn held_rectangle(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    value: Object,
+) -> Result<[f64; 4], PdfError> {
+    let Object::Array(items) = value else {
+        return Err(objects.malformed());
+    };
+    if items.len() != 4 {
+        return Err(objects.malformed());
+    }
+    let mut numbers = [0.0_f64; 4];
+    for (number, item) in numbers.iter_mut().zip(items) {
+        *number = match overlay.direct(objects, item)? {
+            Object::Integer(integer) => integer.to_string().parse().ok(),
+            Object::Real(real) => Some(real),
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Reference(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        }
+        .ok_or_else(|| objects.malformed())?;
+    }
+    let [x0, y0, x1, y1] = numbers;
+    Ok([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])
 }
 
 /// The value of `key` in the page tree node `id` or the nearest ancestor that has it

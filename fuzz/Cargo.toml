@@ -29,6 +29,16 @@ path = "fuzz_targets/header_version.rs"
 test = false
 
 [[bin]]
+name = "jpeg"
+path = "fuzz_targets/jpeg.rs"
+test = false
+
+[[bin]]
+name = "png"
+path = "fuzz_targets/png.rs"
+test = false
+
+[[bin]]
 name = "page-count"
 path = "fuzz_targets/page_count.rs"
 test = false
@@ -41,6 +51,11 @@ test = false
 [[bin]]
 name = "rebuild"
 path = "fuzz_targets/rebuild.rs"
+test = false
+
+[[bin]]
+name = "save"
+path = "fuzz_targets/save.rs"
 test = false
 
 [lints]

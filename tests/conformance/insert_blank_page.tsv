@@ -1,0 +1,15 @@
+# operation	arguments	expected: each page's MediaBox in order, ;-separated
+# insert_blank_page - page=[WxH][@I]...: create, insert each page (WxH in points, at index I, A4 and the end when left out), save, reopen
+# ISO 216: A4 is 210 x 297 mm = 595.2756 x 841.8898 pt (1 pt = 1/72 in = 25.4/72 mm, ISO 32000-2:2020, 8.3.2.3)
+insert_blank_page	-	page=	0 0 595.2756 841.8898
+# ISO 32000-2:2020, 7.7.3.3: a given size
+insert_blank_page	-	page=200x100	0 0 200 100
+insert_blank_page	-	page=595.5x842.25	0 0 595.5 842.25
+# 7.7.3.2: at the end by default, at an index before it, at the index of the end
+insert_blank_page	-	page=200x100	page=	0 0 200 100;0 0 595.2756 841.8898
+insert_blank_page	-	page=200x100	page=@0	0 0 595.2756 841.8898;0 0 200 100
+insert_blank_page	-	page=200x100	page=300x400	page=50x60@1	0 0 200 100;0 0 50 60;0 0 300 400
+insert_blank_page	-	page=200x100	page=300x400@1	0 0 200 100;0 0 300 400
+# An index past the end; a document with no pages cannot be saved (7.7.3.2: a page tree holds pages)
+insert_blank_page	-	page=@1	InvalidArgument
+insert_blank_page	-	InvalidArgument

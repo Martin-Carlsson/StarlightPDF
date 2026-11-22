@@ -7,7 +7,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 
-use starlightpdf::document::{Document, OpenOptions};
+use starlightpdf::arrange::InsertBlankPageOptions;
+use starlightpdf::document::{CreateOptions, Document, OpenOptions};
+use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::{ErrorCode, PdfError};
 
@@ -173,5 +175,22 @@ fn open_forward_only_without_policy_fails_not_seekable() {
             .map(|opened| opened.map_err(|(code, _)| code)),
         Ok(Err(ErrorCode::NotSeekable)),
         "open"
+    );
+}
+
+#[test]
+fn draw_image_from_a_forward_only_source_fails_not_seekable() {
+    let read_at: Arc<dyn ReadAt> = Arc::new(Failing);
+    let mut options = ReadAtSourceOptions::default();
+    options.forward_only = true;
+    let drawn = Source::from_read_at(&read_at, &options).and_then(|image| {
+        let document = Document::create(None, &CreateOptions::default())?;
+        let page = document.insert_blank_page(&InsertBlankPageOptions::default())?;
+        page.draw_image(&image, None, None, &DrawImageOptions::default())
+    });
+    assert_eq!(
+        drawn.map_err(|error| error.code()),
+        Err(ErrorCode::NotSeekable),
+        "draw_image"
     );
 }

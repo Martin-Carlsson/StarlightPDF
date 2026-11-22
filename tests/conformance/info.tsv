@@ -1,0 +1,97 @@
+# operation	arguments	expected
+# ISO 32000-2:2020, 14.3.3 (document information dictionary), 7.9.2.2 (text strings): Title in PDFDocEncoding (Annex D:
+#   351 e acute, 204 em dash, 240 euro), Author UTF-16BE with BOM, Subject UTF-8 with BOM, Keywords UTF-16BE with a
+#   surrogate pair, Creator with escapes (7.3.4.2); 7.9.4 dates: the clause's example D:199812231952-08'00, and Z
+info_bytes	tests/corpus/info/full.pdf	key=title	Café — € 5
+info_file	tests/corpus/info/full.pdf	key=title	Café — € 5
+info_bytes	tests/corpus/info/full.pdf	key=author	日本語
+info_file	tests/corpus/info/full.pdf	key=author	日本語
+info_bytes	tests/corpus/info/full.pdf	key=subject	Ελληνικά
+info_file	tests/corpus/info/full.pdf	key=subject	Ελληνικά
+info_bytes	tests/corpus/info/full.pdf	key=keywords	PDF, 😀
+info_file	tests/corpus/info/full.pdf	key=keywords	PDF, 😀
+info_bytes	tests/corpus/info/full.pdf	key=creator	Hand (written)
+info_file	tests/corpus/info/full.pdf	key=creator	Hand (written)
+info_bytes	tests/corpus/info/full.pdf	key=producer	StarlightPDF tests
+info_file	tests/corpus/info/full.pdf	key=producer	StarlightPDF tests
+info_bytes	tests/corpus/info/full.pdf	key=created	1998-12-23T19:52:00-08:00
+info_file	tests/corpus/info/full.pdf	key=created	1998-12-23T19:52:00-08:00
+info_bytes	tests/corpus/info/full.pdf	key=modified	2024-02-29T12:34:56Z
+info_file	tests/corpus/info/full.pdf	key=modified	2024-02-29T12:34:56Z
+# 7.9.4: omitted fields default to 01 for month and day and 0 otherwise; no offset is unknown time zone, so local time;
+#   the PDF 1.7 apostrophe after the offset minutes is accepted
+info_bytes	tests/corpus/info/dates.pdf	key=created	2024-01-01T00:00:00
+info_file	tests/corpus/info/dates.pdf	key=created	2024-01-01T00:00:00
+info_bytes	tests/corpus/info/dates.pdf	key=modified	2024-02-29T12:34:56+05:30
+info_file	tests/corpus/info/dates.pdf	key=modified	2024-02-29T12:34:56+05:30
+# 14.3.3: no Info dictionary, no entry
+info_bytes	tests/corpus/page-count/one-page.pdf	key=title	none
+info_file	tests/corpus/page-count/one-page.pdf	key=title	none
+# 7.6.2: the strings of an encrypted file's Info dictionary are decrypted
+info_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	key=title	Secret title
+info_file	tests/corpus/encryption/r3-empty-user-password.pdf	key=title	Secret title
+# 14.3.3: an entry set reads back; one not given is kept; an empty one is removed
+info_bytes	tests/corpus/info/full.pdf	set_title=New title	key=title	New title
+info_file	tests/corpus/info/full.pdf	set_title=New title	key=title	New title
+info_bytes	tests/corpus/info/full.pdf	set_title=New title	key=author	日本語
+info_file	tests/corpus/info/full.pdf	set_title=New title	key=author	日本語
+info_bytes	tests/corpus/info/full.pdf	set_title=	key=title	none
+info_file	tests/corpus/info/full.pdf	set_title=	key=title	none
+# 7.9.4: a date that is not ISO 8601
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=yesterday	key=created	InvalidArgument
+info_file	tests/corpus/page-count/one-page.pdf	set_created=yesterday	key=created	InvalidArgument
+# 7.9.4: days per month of the Gregorian calendar (ISO 8601): April has 30; February 29 only in a leap year, not in 1900,
+#   in 2000
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=2023-04-31T00:00:00Z	key=created	InvalidArgument
+info_file	tests/corpus/page-count/one-page.pdf	set_created=2023-04-31T00:00:00Z	key=created	InvalidArgument
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=1900-02-29T00:00:00Z	key=created	InvalidArgument
+info_file	tests/corpus/page-count/one-page.pdf	set_created=1900-02-29T00:00:00Z	key=created	InvalidArgument
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=2000-02-29T00:00:00Z	key=created	2000-02-29T00:00:00Z
+info_file	tests/corpus/page-count/one-page.pdf	set_created=2000-02-29T00:00:00Z	key=created	2000-02-29T00:00:00Z
+# 14.3.3, 7.9.2.2, 7.9.4: every entry survives a save
+info_bytes	tests/corpus/info/full.pdf	saved	key=title	Café — € 5
+info_file	tests/corpus/info/full.pdf	saved	key=title	Café — € 5
+info_bytes	tests/corpus/info/full.pdf	saved	key=author	日本語
+info_file	tests/corpus/info/full.pdf	saved	key=author	日本語
+info_bytes	tests/corpus/info/full.pdf	saved	key=subject	Ελληνικά
+info_file	tests/corpus/info/full.pdf	saved	key=subject	Ελληνικά
+info_bytes	tests/corpus/info/full.pdf	saved	key=keywords	PDF, 😀
+info_file	tests/corpus/info/full.pdf	saved	key=keywords	PDF, 😀
+info_bytes	tests/corpus/info/full.pdf	saved	key=creator	Hand (written)
+info_file	tests/corpus/info/full.pdf	saved	key=creator	Hand (written)
+info_bytes	tests/corpus/info/full.pdf	saved	key=producer	StarlightPDF tests
+info_file	tests/corpus/info/full.pdf	saved	key=producer	StarlightPDF tests
+info_bytes	tests/corpus/info/full.pdf	saved	key=created	1998-12-23T19:52:00-08:00
+info_file	tests/corpus/info/full.pdf	saved	key=created	1998-12-23T19:52:00-08:00
+info_bytes	tests/corpus/info/full.pdf	saved	key=modified	2024-02-29T12:34:56Z
+info_file	tests/corpus/info/full.pdf	saved	key=modified	2024-02-29T12:34:56Z
+# 7.9.2.2: text set and saved reads back, whether PDFDocEncoding holds it or UTF-16BE is needed; 7.9.4: dates set and saved
+info_bytes	tests/corpus/page-count/one-page.pdf	set_author=Café — € 5	saved	key=author	Café — € 5
+info_file	tests/corpus/page-count/one-page.pdf	set_author=Café — € 5	saved	key=author	Café — € 5
+info_bytes	tests/corpus/page-count/one-page.pdf	set_title=Ελληνικά 😀 日本語	saved	key=title	Ελληνικά 😀 日本語
+info_file	tests/corpus/page-count/one-page.pdf	set_title=Ελληνικά 😀 日本語	saved	key=title	Ελληνικά 😀 日本語
+info_bytes	tests/corpus/page-count/one-page.pdf	set_created=2026-11-17T10:15:00Z	saved	key=created	2026-11-17T10:15:00Z
+info_file	tests/corpus/page-count/one-page.pdf	set_created=2026-11-17T10:15:00Z	saved	key=created	2026-11-17T10:15:00Z
+info_bytes	tests/corpus/page-count/one-page.pdf	set_modified=2026-11-17T10:15:00+01:00	saved	key=modified	2026-11-17T10:15:00+01:00
+info_file	tests/corpus/page-count/one-page.pdf	set_modified=2026-11-17T10:15:00+01:00	saved	key=modified	2026-11-17T10:15:00+01:00
+# 14.3.3: a set entry kept and an emptied one removed through a save
+info_bytes	tests/corpus/info/full.pdf	set_title=New title	saved	key=author	日本語
+info_file	tests/corpus/info/full.pdf	set_title=New title	saved	key=author	日本語
+info_bytes	tests/corpus/info/full.pdf	set_title=	saved	key=title	none
+info_file	tests/corpus/info/full.pdf	set_title=	saved	key=title	none
+# 7.6.2, 14.3.3: an encrypted source's Info saved decrypted
+info_bytes	tests/corpus/encryption/r3-empty-user-password.pdf	saved	cipher=Unencrypted	key=title	Secret title
+info_file	tests/corpus/encryption/r3-empty-user-password.pdf	saved	cipher=Unencrypted	key=title	Secret title
+# 14.3.3: a save adds no entry the caller did not set and the source did not hold, without Info or beside a Title after
+#   another entry is set
+info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=creator	none
+info_file	tests/corpus/page-count/one-page.pdf	saved	key=creator	none
+info_bytes	tests/corpus/page-count/one-page.pdf	saved	key=producer	none
+info_file	tests/corpus/page-count/one-page.pdf	saved	key=producer	none
+info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
+info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=created	none
+info_bytes	tests/corpus/info/title-only.pdf	set_author=A	saved	key=modified	none
+info_file	tests/corpus/info/title-only.pdf	set_author=A	saved	key=modified	none
+# 7.5.4, 7.5.5, 14.3.3: an Info added under a trailer Size below the objects the table declares takes no number in use
+info_bytes	tests/corpus/save/small-size.pdf	set_title=Small	saved	key=title	Small
+info_file	tests/corpus/save/small-size.pdf	set_title=Small	saved	key=title	Small

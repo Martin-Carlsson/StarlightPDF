@@ -1,0 +1,351 @@
+# operation	arguments	expected
+# create, insert_blank_page (page_width=, page_height=; default A4), or with on= open that PDF and take page index= (default 0),
+#   a kid of its root page tree node; draw_image with the arguments draws= times (default 1); save, reopen, then read= of the
+#   image the page's last Do paints, the XObject its operand names, which must be an image. decoded_limit= and strict apply to
+#   the documents made, opened and reopened:
+# matrix: for each Do on the page in order, ;-separated, the six operands a b c d e f of the CTM in effect at it, relative to the
+#   page's default user space (ISO 32000-2:2020, 8.3.4, 8.4.4 cm); each number rounded to 4 fraction digits, trailing zeros and
+#   point dropped, -0 as 0. The existing content keeps its CTM; a drawn image's CTM holds no cm of the content before it.
+# size: Width Height; bits: BitsPerComponent (8.9.5.1); filter: the Filter names space-separated, or none (7.4).
+# color_space: DeviceGray, DeviceRGB, DeviceCMYK, ICCBased N, or Indexed <base> <hival> <lookup bytes as lowercase hex> (8.6).
+# raw_sha256: of the image stream's stored bytes; samples_sha256: of its bytes decoded through every filter (8.9.3 layout: rows
+#   packed MSB-first, each padded to a byte, 16-bit samples big-endian); mask_samples_sha256: the same of its SMask, or none;
+#   icc_sha256: of the decoded ICCBased profile stream, or none; decode: the Decode numbers space-separated, or none (8.9.5.2).
+#   Hashes are SHA-256 (FIPS 180-4), lowercase hex.
+# ISO 32000-2:2020, 7.4.8: a JPEG (ITU-T T.81 baseline SOF0 or progressive SOF2) is embedded with its bytes unchanged under DCTDecode;
+#   1, 3 or 4 components give DeviceGray, DeviceRGB or DeviceCMYK (8.9.5.1). The CMYK files carry an Adobe APP14 marker, transform 0,
+#   and store inverted values, so their image dictionaries need Decode [1 0 1 0 1 0 1 0] (8.9.5.2).
+draw_image	tests/corpus/images/baseline-grey.jpg	read=raw_sha256	2d73078babeccb8fcb1153fd7212dbdf859e3ecfae42492b5c8984035f96843c
+draw_image	tests/corpus/images/baseline-grey.jpg	read=filter	DCTDecode
+draw_image	tests/corpus/images/baseline-grey.jpg	read=color_space	DeviceGray
+draw_image	tests/corpus/images/baseline-grey.jpg	read=size	13 9
+draw_image	tests/corpus/images/baseline-grey.jpg	read=bits	8
+draw_image	tests/corpus/images/baseline-rgb.jpg	read=raw_sha256	3785109a80cb2a74918f91ac50056f92d3570131bc17c89ef16f450020181238
+draw_image	tests/corpus/images/baseline-rgb.jpg	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/baseline-cmyk.jpg	read=raw_sha256	372fc8bbaaa2a9780e15e599c8ef9f17a737c6d769246ea4346299539eb7c1d7
+draw_image	tests/corpus/images/baseline-cmyk.jpg	read=color_space	DeviceCMYK
+draw_image	tests/corpus/images/progressive-grey.jpg	read=raw_sha256	671c88fce37583e580606d23d725e080f42907af1a46c20e43839ffacc841b21
+draw_image	tests/corpus/images/progressive-grey.jpg	read=color_space	DeviceGray
+draw_image	tests/corpus/images/progressive-rgb.jpg	read=raw_sha256	bf221ce1a08f108036d98686a9b1d1af14e730d874bd0120f2f05c4342a2d508
+draw_image	tests/corpus/images/progressive-rgb.jpg	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/progressive-cmyk.jpg	read=raw_sha256	8fcbf1f1722e6317167b9737d1435dd7d1ef2b20011c46f85f68e4c8630c7433
+draw_image	tests/corpus/images/progressive-cmyk.jpg	read=color_space	DeviceCMYK
+draw_image	tests/corpus/images/baseline-rgb.jpg	read=mask_samples_sha256	none
+draw_image	tests/corpus/images/baseline-rgb.jpg	read=icc_sha256	none
+# A format given is used instead of detection
+draw_image	tests/corpus/images/baseline-rgb.jpg	format=Jpeg	read=raw_sha256	3785109a80cb2a74918f91ac50056f92d3570131bc17c89ef16f450020181238
+draw_image	tests/corpus/images/baseline-cmyk.jpg	read=decode	1 0 1 0 1 0 1 0
+draw_image	tests/corpus/images/progressive-cmyk.jpg	read=decode	1 0 1 0 1 0 1 0
+draw_image	tests/corpus/images/baseline-rgb.jpg	read=decode	none
+# ITU-T T.81, B.1.1.2, B.1.1.3: fill bytes FF may precede a marker; TEM (FF 01) stands alone, without a length
+draw_image	tests/corpus/images/fill-bytes.jpg	read=size	13 9
+draw_image	tests/corpus/images/tem.jpg	read=size	13 9
+# A 6000-byte APP15 segment (B.2.4.6) is skipped whole
+draw_image	tests/corpus/images/large-segment.jpg	read=size	13 9
+# Malformed (T.81, B.1.1, B.2): no SOI first; EOI before the frame; a byte other than FF where a marker belongs; a segment
+#   length cut short; two frame headers; a frame header whose length is not 8 + 3 Nf, or of width 0. The ICC_PROFILE segments
+#   (ICC.1:2010, B.4) are Malformed when their counts differ or a sequence number repeats, and a profile shorter than its
+#   128-byte header (ICC.1:2010, 7.2) is Malformed.
+draw_image	tests/corpus/images/not-soi.jpg	format=Jpeg	read=size	Malformed
+draw_image	tests/corpus/images/eoi-before-frame.jpg	read=size	Malformed
+draw_image	tests/corpus/images/junk-between-segments.jpg	read=size	Malformed
+draw_image	tests/corpus/images/cut-in-length.jpg	read=size	Malformed
+draw_image	tests/corpus/images/two-frames.jpg	read=size	Malformed
+draw_image	tests/corpus/images/frame-length.jpg	read=size	Malformed
+draw_image	tests/corpus/images/width-zero.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-count-mismatch.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-duplicate.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-short.jpg	read=size	Malformed
+# B.2.1: one SOI starts the image; a second is Malformed. ICC.1:2010, B.4: segment 2 of 2 missing is Malformed
+draw_image	tests/corpus/images/soi-twice.jpg	read=size	Malformed
+draw_image	tests/corpus/images/icc-segment-missing.jpg	read=size	Malformed
+# Unsupported (ISO 32000-2:2020, 7.4.8, DCTDecode: 8-bit Huffman baseline or progressive): arithmetic coding (SOF9), 12-bit samples
+draw_image	tests/corpus/images/arithmetic.jpg	read=size	Unsupported
+draw_image	tests/corpus/images/precision-12.jpg	read=size	Unsupported
+# ISO/IEC 15948:2004, 6.1, 11.2.2 (Table 11.1): every colour type and bit depth, non-interlaced and Adam7-interlaced (8.2), with
+#   rows using every filter type (9.2) and IDAT split over chunks (11.2.4), decodes losslessly; 16-bit samples stay 16-bit
+#   (ISO 32000-2:2020, 8.9.5.1). Colour type 3 gives Indexed with hival the PLTE entries less one (8.6.6.3, 11.2.3); colour types
+#   4 and 6 give their alpha channel as an SMask of the image's bit depth (8.9.5.1, 11.6.5.3). Some interlaced images have
+#   empty passes (3x2, 1x1).
+draw_image	tests/corpus/images/c0-b1.png	read=samples_sha256	233269fbc9dd0b51406400de73e2afa244b0dc780cbeaa62fddc8869285f205e
+draw_image	tests/corpus/images/c0-b1.png	read=bits	1
+draw_image	tests/corpus/images/c0-b1.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b1.png	read=size	13 5
+draw_image	tests/corpus/images/c0-b1.png	read=mask_samples_sha256	none
+draw_image	tests/corpus/images/c0-b1-interlaced.png	read=samples_sha256	17ea18c4fe4bbf562e0f9978395b3e7624ac09c6302d671e449b792fe0d7ef41
+draw_image	tests/corpus/images/c0-b1-interlaced.png	read=bits	1
+draw_image	tests/corpus/images/c0-b1-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b1-interlaced.png	read=size	13 11
+draw_image	tests/corpus/images/c0-b2.png	read=samples_sha256	5ace6bc6bea5d302f67b8258835c6b1f9ae83ee2f9c61f96022f9965a76b2165
+draw_image	tests/corpus/images/c0-b2.png	read=bits	2
+draw_image	tests/corpus/images/c0-b2.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b2-interlaced.png	read=samples_sha256	47f95c8ef4e849636bfe32bb483fd521c500a5fdf01a70c59440ea150a08ebb5
+draw_image	tests/corpus/images/c0-b2-interlaced.png	read=bits	2
+draw_image	tests/corpus/images/c0-b2-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b4.png	read=samples_sha256	55dde122ce67e8d7c14e81ea365515bd859f2f6935717c36ee81a0e7c133f29a
+draw_image	tests/corpus/images/c0-b4.png	read=bits	4
+draw_image	tests/corpus/images/c0-b4.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b4-interlaced.png	read=samples_sha256	a3c5b2e897ff9edc93ee54cbfa6572e4e07d5341ac05b85b3e3466a4cc6250dd
+draw_image	tests/corpus/images/c0-b4-interlaced.png	read=bits	4
+draw_image	tests/corpus/images/c0-b4-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b8.png	read=samples_sha256	dd919accfae0af62d574dcfaa7e310ee5505736cf4d22f102f56b2f3e9bd3f37
+draw_image	tests/corpus/images/c0-b8.png	read=bits	8
+draw_image	tests/corpus/images/c0-b8.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b8-interlaced.png	read=samples_sha256	9defb0a9e163278be0e05aa01b312ec78cfa3726869503385e76e3a4b7950648
+draw_image	tests/corpus/images/c0-b8-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c0-b8-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b16.png	read=samples_sha256	24a2628315724e31a62f73fb811c49fbb9655431a8211bb736534506dfa9667f
+draw_image	tests/corpus/images/c0-b16.png	read=bits	16
+draw_image	tests/corpus/images/c0-b16.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b16-interlaced.png	read=samples_sha256	4b54294e07967dbbffed942a74412eb1a5b60a477ca6f7081795be5f7dd9fbd1
+draw_image	tests/corpus/images/c0-b16-interlaced.png	read=bits	16
+draw_image	tests/corpus/images/c0-b16-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c2-b8.png	read=samples_sha256	3e728b34388fecf22866cc9ef1349065e586b9726e16984e8af74bcc4e8b6390
+draw_image	tests/corpus/images/c2-b8.png	read=bits	8
+draw_image	tests/corpus/images/c2-b8.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c2-b8-interlaced.png	read=samples_sha256	1fcd1ce00590a6f3118c31a49c6de2d540cb08eecc5fcab29cd3b2cabb22437c
+draw_image	tests/corpus/images/c2-b8-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c2-b8-interlaced.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c2-b16.png	read=samples_sha256	69d6aa43b49e0285cf712e7338829852c9c64d0c3a9c716885337a144da5d3fe
+draw_image	tests/corpus/images/c2-b16.png	read=bits	16
+draw_image	tests/corpus/images/c2-b16.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c2-b16-interlaced.png	read=samples_sha256	01b8f4c784506cb579897138dc4d28f2c7dcf7e663cc4c9af1335102b9faeb18
+draw_image	tests/corpus/images/c2-b16-interlaced.png	read=bits	16
+draw_image	tests/corpus/images/c2-b16-interlaced.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c3-b1.png	read=samples_sha256	20f70978761065b343febcc803a16e5808f2cb44f2a6497761da902233fe28e3
+draw_image	tests/corpus/images/c3-b1.png	read=bits	1
+draw_image	tests/corpus/images/c3-b1.png	read=color_space	Indexed DeviceRGB 1 783891044ca0
+draw_image	tests/corpus/images/c3-b1-interlaced.png	read=samples_sha256	ce1d7f0f004158edfb0e10b2420a641a5ff55f1c54b79212303d129d0fc63c5f
+draw_image	tests/corpus/images/c3-b1-interlaced.png	read=bits	1
+draw_image	tests/corpus/images/c3-b1-interlaced.png	read=color_space	Indexed DeviceRGB 1 156d0a02dd50
+draw_image	tests/corpus/images/c3-b2.png	read=samples_sha256	3fc776d46c065ce227550eafc9e6ea2a6ee0d25955c47c371e4ab2bb2a56d2dc
+draw_image	tests/corpus/images/c3-b2.png	read=bits	2
+draw_image	tests/corpus/images/c3-b2.png	read=color_space	Indexed DeviceRGB 2 b2a183006dff16bbfd
+draw_image	tests/corpus/images/c3-b2-interlaced.png	read=samples_sha256	bdcac9f4c83ce5d611a50afb2ad47c1609c3b9fe2548414af4325d60b1ba4ce0
+draw_image	tests/corpus/images/c3-b2-interlaced.png	read=bits	2
+draw_image	tests/corpus/images/c3-b2-interlaced.png	read=color_space	Indexed DeviceRGB 2 4fd6fdfefdafbc791b
+draw_image	tests/corpus/images/c3-b4.png	read=samples_sha256	78d467add0927582f4cf1c9ad9617ab80ead33d072bb88e63b7754e6342d382e
+draw_image	tests/corpus/images/c3-b4.png	read=bits	4
+draw_image	tests/corpus/images/c3-b4.png	read=color_space	Indexed DeviceRGB 10 ec0b76fc8e5f62373abf332a0762c2cc8d016795e5d3f87ea791d0ffea72c50f47
+draw_image	tests/corpus/images/c3-b4-interlaced.png	read=samples_sha256	d139aa6078ad844d713c1cc378041e297009ab3c56cb3361055c0a96c6936935
+draw_image	tests/corpus/images/c3-b4-interlaced.png	read=bits	4
+draw_image	tests/corpus/images/c3-b4-interlaced.png	read=color_space	Indexed DeviceRGB 10 8940f0fa1e0f08f6587c308aecdee0d0150e0f608864355180b74b3bb25fc83858
+draw_image	tests/corpus/images/c3-b8.png	read=samples_sha256	0c30e17a9385cb2667bd552a35fceb2fe6482b030cd1e104301fc23187d3751c
+draw_image	tests/corpus/images/c3-b8.png	read=bits	8
+draw_image	tests/corpus/images/c3-b8.png	read=color_space	Indexed DeviceRGB 6 267569f9afbfaeb476392dead25bfdd59c1cb62a2b
+draw_image	tests/corpus/images/c3-b8-interlaced.png	read=samples_sha256	389626ee72054626306b251073be4b21e3d08594358b4785e3d5f5f73a5098f8
+draw_image	tests/corpus/images/c3-b8-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c3-b8-interlaced.png	read=color_space	Indexed DeviceRGB 6 c2aae2f73f6f547294f6294bb8d71ad923295ef5ce
+draw_image	tests/corpus/images/c4-b8.png	read=samples_sha256	6bf58cfce9dd776fa1209d3e9c5f83f4c1ac4859627f1f24ca8fae5c20548cde
+draw_image	tests/corpus/images/c4-b8.png	read=bits	8
+draw_image	tests/corpus/images/c4-b8.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c4-b8.png	read=mask_samples_sha256	bd557a2ac6bc141f02332d5a66d11b32cf09ec0b1c3acb988395d42c7b75e842
+draw_image	tests/corpus/images/c4-b8-interlaced.png	read=samples_sha256	c4f78ce23e04614d6fc33518c554b754d0b93a2680b70449ffdf54a5b1c72607
+draw_image	tests/corpus/images/c4-b8-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c4-b8-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c4-b8-interlaced.png	read=mask_samples_sha256	d3889654cbb41c43260b5fe3269cdc95d677170ba5e91aaef97453e399540d68
+draw_image	tests/corpus/images/c4-b16.png	read=samples_sha256	758b4aa9b8c3b9d3c585d91ebbe29ab096d995be959601362a5b7fe1b32205f9
+draw_image	tests/corpus/images/c4-b16.png	read=bits	16
+draw_image	tests/corpus/images/c4-b16.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c4-b16.png	read=mask_samples_sha256	e52941eea4828cb715512f04d02657cf75965a5c7e6b9536227bed0d5169f9cc
+draw_image	tests/corpus/images/c4-b16-interlaced.png	read=samples_sha256	6d772ba95999c4d7a5dda9eca3084ce04ff2c6e58c40ecb312faf087209d5209
+draw_image	tests/corpus/images/c4-b16-interlaced.png	read=bits	16
+draw_image	tests/corpus/images/c4-b16-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c4-b16-interlaced.png	read=mask_samples_sha256	7e89754f4e0588e92f3567e6a3df4036a949f96afafda99c29370af927827133
+draw_image	tests/corpus/images/c6-b8.png	read=samples_sha256	b06bf971e06fad09baba1fdaa87c6d72759d277596a4b902c0208fcb790fff70
+draw_image	tests/corpus/images/c6-b8.png	read=bits	8
+draw_image	tests/corpus/images/c6-b8.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c6-b8.png	read=mask_samples_sha256	98831190ef68043d3e3b764f555ab10a19d2e4135e385652fab40dce4a3e6221
+draw_image	tests/corpus/images/c6-b8-interlaced.png	read=samples_sha256	48f536385252b440ac2708c3b5161dcc3442f8f43b7efd1e0416fbf987a3b0af
+draw_image	tests/corpus/images/c6-b8-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c6-b8-interlaced.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c6-b8-interlaced.png	read=mask_samples_sha256	e4cbc96418f904b7ad5bf0e24f58d7b572b654d45a92b1f7c1b622874794b682
+draw_image	tests/corpus/images/c6-b16.png	read=samples_sha256	7f8155709120beecb30fc2f508241172e5f768cd29e6637b3f6c5340dec39b8c
+draw_image	tests/corpus/images/c6-b16.png	read=bits	16
+draw_image	tests/corpus/images/c6-b16.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c6-b16.png	read=mask_samples_sha256	1d9170088d9c543d2ba517d5321e47d1227fdc283853f2df4edfa3c541e6fa3f
+draw_image	tests/corpus/images/c6-b16-interlaced.png	read=samples_sha256	83b5b1e4e49e5ba77b0e340d521297ec11bdadf5c263a3ddcd239e39d0f2adc9
+draw_image	tests/corpus/images/c6-b16-interlaced.png	read=bits	16
+draw_image	tests/corpus/images/c6-b16-interlaced.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c6-b16-interlaced.png	read=mask_samples_sha256	dc16b02ad6113e5fcab2ddfa1c61adacdb586aff8539274c6fae0a85700ef2cd
+draw_image	tests/corpus/images/c2-b8.png	read=icc_sha256	none
+draw_image	tests/corpus/images/c2-b8.png	format=Png	read=samples_sha256	3e728b34388fecf22866cc9ef1349065e586b9726e16984e8af74bcc4e8b6390
+# A row of 65,536 pixels, the most a predictor's Columns may hold (7.4.4.4), so it reads back: 65,536 x 1, 1 bit, row bytes
+#   (i * 37 + 11) mod 256 for i in 0..8192; a row of 70,000 is LimitExceeded
+draw_image	tests/corpus/images/c0-b1-max-width.png	read=samples_sha256	1f5a16c4456f34c5459e4e66d8650d4dbb6b298810d0c21cef6571db21d69c81
+draw_image	tests/corpus/images/c0-b1-wide.png	read=size	LimitExceeded
+# An IDAT chunk of over 8 KiB: 64x64 RGB, samples x(n+1) = (1103515245 x(n) + 12345) mod 2^31 from x(0) = 1, each x(n) >> 23
+draw_image	tests/corpus/images/c2-b8-large.png	read=samples_sha256	c275b422af2ea335051b216f25d07d66297a69673d8445a64345966cc0162dea
+# ISO/IEC 15948:2004, 11.3.2.1: tRNS gives an SMask of 8 bits per sample (ISO 32000-2:2020, 11.6.5.3): for colour types 0 and 2
+#   0 where a pixel equals the key (all 16 bits compared) and 255 elsewhere; for colour type 3 the entry's alpha, 255 past its end.
+draw_image	tests/corpus/images/c0-b16-trns.png	read=samples_sha256	e81724292edc4ab27b6adfc823c5481657b0c0f2caa70a42c89cc0c0c4c6ee52
+draw_image	tests/corpus/images/c0-b16-trns.png	read=bits	16
+draw_image	tests/corpus/images/c0-b16-trns.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b16-trns.png	read=mask_samples_sha256	77fa637f096f5a98ace2ec846a9b840e958c6c5daa6ce4850d518ab4188d855a
+draw_image	tests/corpus/images/c0-b2-trns-interlaced.png	read=samples_sha256	3b756db9d3c88dd995342d7b8a2f9a83ce2647c3b9c1dd5a32c215b6774a541d
+draw_image	tests/corpus/images/c0-b2-trns-interlaced.png	read=bits	2
+draw_image	tests/corpus/images/c0-b2-trns-interlaced.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b2-trns-interlaced.png	read=mask_samples_sha256	fd5d6db99fc154a1490178e5c7ea0feda0e7975af165b212deb0b0e64566762c
+draw_image	tests/corpus/images/c0-b8-trns.png	read=samples_sha256	07b038542f639531d6bcc405c8df4303f615500a2be471701321d29886faa90e
+draw_image	tests/corpus/images/c0-b8-trns.png	read=bits	8
+draw_image	tests/corpus/images/c0-b8-trns.png	read=color_space	DeviceGray
+draw_image	tests/corpus/images/c0-b8-trns.png	read=mask_samples_sha256	af990fe404729d9dc77e60b01ef7122d28e6866ed1e008b5eac163d13927be90
+draw_image	tests/corpus/images/c2-b16-trns.png	read=samples_sha256	5bd2f0b8b7542043243647e3c328f07699089ab860459f1de76487a3c209f0c0
+draw_image	tests/corpus/images/c2-b16-trns.png	read=bits	16
+draw_image	tests/corpus/images/c2-b16-trns.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c2-b16-trns.png	read=mask_samples_sha256	b50e7a5a6914fa93624c92f69c5b090d9f175408100c42a2a40571301b3e4842
+draw_image	tests/corpus/images/c2-b8-trns.png	read=samples_sha256	54d7d56e5e378db748396b699b513f5b3b38e1da7f68e4bbae22f6891aaf66e3
+draw_image	tests/corpus/images/c2-b8-trns.png	read=bits	8
+draw_image	tests/corpus/images/c2-b8-trns.png	read=color_space	DeviceRGB
+draw_image	tests/corpus/images/c2-b8-trns.png	read=mask_samples_sha256	98273ca1600dbaf2f3ec5983113d8a044fb1c1e1f882f78c9eb8c3c94de0d2d9
+draw_image	tests/corpus/images/c3-b4-trns.png	read=samples_sha256	54fd5de0ef9cf89b43cc55920bf7235d248b012da41f695af04f0f9b9ed92b4d
+draw_image	tests/corpus/images/c3-b4-trns.png	read=bits	4
+draw_image	tests/corpus/images/c3-b4-trns.png	read=color_space	Indexed DeviceRGB 10 568d86dd260e69da394dfb9048a2b4188ae38d0ab86bfe7d0910fe0a362a05c876
+draw_image	tests/corpus/images/c3-b4-trns.png	read=mask_samples_sha256	4926732b6aa6ae1bfba07f2fba855efca1e416e2d0396821148dc8a8c1169b87
+draw_image	tests/corpus/images/c3-b8-trns-interlaced.png	read=samples_sha256	8b32a0ab1f951f064d224c2bede31e0b2306f9adbc1fbc6677813fe36a8c7806
+draw_image	tests/corpus/images/c3-b8-trns-interlaced.png	read=bits	8
+draw_image	tests/corpus/images/c3-b8-trns-interlaced.png	read=color_space	Indexed DeviceRGB 6 f3c200dbb7be0f98570af7f12e1ed11d12f135d55b
+draw_image	tests/corpus/images/c3-b8-trns-interlaced.png	read=mask_samples_sha256	654115754dff0da927e8f43c8f5a02917dc4874525b02bbf9f84d91f3ebf269b
+# ISO 32000-2:2020, 8.6.5.5: an embedded ICC profile (ICC.1, made for these tests) is kept as ICCBased: JPEG APP2 ICC_PROFILE
+#   segments (ICC.1:2010, B.4), here also split over two, and the PNG iCCP chunk (ISO/IEC 15948:2004, 11.3.3.3).
+draw_image	tests/corpus/images/icc-rgb.jpg	read=color_space	ICCBased 3
+# A 532-byte profile past decoded_limit=300 is LimitExceeded
+draw_image	tests/corpus/images/icc-rgb.jpg	decoded_limit=300	read=color_space	LimitExceeded
+# 77 bytes of samples, 11 a row, past decoded_limit=50 are LimitExceeded
+draw_image	tests/corpus/images/c0-b8.png	decoded_limit=50	read=size	LimitExceeded
+draw_image	tests/corpus/images/icc-rgb.jpg	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
+draw_image	tests/corpus/images/icc-rgb.jpg	read=raw_sha256	8c51af595852c4d4535832d8333ca7926401a69d98a765f20f6d8ddf5b3d39cb
+draw_image	tests/corpus/images/icc-grey.jpg	read=color_space	ICCBased 1
+draw_image	tests/corpus/images/icc-grey.jpg	read=icc_sha256	cc3bdc3dfb3f0bc998ac0df4804c078f834c4122e847413d39a91962fbc61d0c
+draw_image	tests/corpus/images/icc-grey.jpg	read=raw_sha256	99196f5f2f905628da3474776a96bb94a7066acb861c144aa9cd8679f1937cb4
+draw_image	tests/corpus/images/icc-two-segments.jpg	read=color_space	ICCBased 3
+draw_image	tests/corpus/images/icc-two-segments.jpg	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
+draw_image	tests/corpus/images/icc-two-segments.jpg	read=raw_sha256	c0bbf9b31bac954be2d4c74ee4c74bee70db7e2aa936ed8c82af6055eb8c41b8
+# The RGB profile padded with zeros to 6000 bytes, its size field set to match, in one segment
+draw_image	tests/corpus/images/icc-large.jpg	read=icc_sha256	e35a8960ada40cd3277f7d38b4e1aa20b4bfcd171dfabf09f5e62b189c0a6e09
+draw_image	tests/corpus/images/icc-rgb.png	read=color_space	ICCBased 3
+draw_image	tests/corpus/images/icc-rgb.png	read=icc_sha256	bbd603af7e5414f05aae6b4fc0c4c96f278840253d5a9e5cfcf65c748d448020
+draw_image	tests/corpus/images/icc-rgb.png	read=samples_sha256	2530e40e29ba7fb8de5cd160726d62dec7b812180397f956ee3d625e0dffe3ee
+draw_image	tests/corpus/images/icc-grey.png	read=color_space	ICCBased 1
+draw_image	tests/corpus/images/icc-grey.png	read=icc_sha256	cc3bdc3dfb3f0bc998ac0df4804c078f834c4122e847413d39a91962fbc61d0c
+draw_image	tests/corpus/images/icc-grey.png	read=samples_sha256	dcba62ca3cc5494f4099755240c2d69bbcb74e946c690d169f1ebeac12e6a562
+# A profile whose colour space (ICC.1:2010, 7.2.6) does not match the image's components is dropped with a warning; the device
+#   space applies (ISO 32000-2:2020, 8.6.5.5: N must match the profile). Grey images carrying the RGB profile:
+draw_image	tests/corpus/images/icc-mismatch.jpg	read=color_space	DeviceGray
+draw_image	tests/corpus/images/icc-mismatch.png	read=color_space	DeviceGray
+# The warning fails a page of a document opened strict
+draw_image	tests/corpus/images/icc-mismatch.jpg	on=tests/corpus/images/pages.pdf	strict	read=color_space	Malformed
+# Placement, ISO 32000-2:2020, 8.3.2.3, 8.9.4: x, y are the image's top-left corner in points from the top-left of the displayed page;
+#   both sizes stretch, one keeps the ratio, none puts 1 pixel on 1 point (72 DPI). baseline-rgb.jpg is 13x9, c2-b8.png 9x6.
+draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=10	y=20	width=26	height=27	read=matrix	26 0 0 27 10 53
+draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=10	y=20	width=26	read=matrix	26 0 0 18 10 62
+draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=1.5	y=2.25	width=10.5	read=matrix	10.5 0 0 7.2692 1.5 90.4808
+draw_image	tests/corpus/images/baseline-rgb.jpg	page_width=200	page_height=100	x=10	y=20	height=27	read=matrix	39 0 0 27 10 53
+# A4 by default (ISO 216: 595.2756 x 841.8898 pt)
+draw_image	tests/corpus/images/baseline-rgb.jpg	x=0	y=0	read=matrix	13 0 0 9 0 832.8898
+draw_image	tests/corpus/images/c2-b8.png	page_width=200	page_height=100	x=10	y=20	read=matrix	9 0 0 6 10 74
+draw_image	tests/corpus/images/c2-b8.png	page_width=200	page_height=100	x=10	y=20	height=3	read=matrix	4.5 0 0 3 10 77
+draw_image	tests/corpus/images/c6-b8-interlaced.png	page_width=200	page_height=100	x=10	y=20	read=matrix	11 0 0 13 10 67
+# pages.pdf: a root node of MediaBox [0 0 200 100] and Resources /XObject /Im1 (a 2x2 image), whose kids are 0: Rotate 90;
+#   1: Rotate 180; 2: Rotate 270; 3: MediaBox [0 0 300 200], CropBox [50 20 250 120]; 4: as 3 and Rotate 90; 5: UserUnit 2;
+#   6: Contents "2 0 0 2 0 0 cm /Im1 Do", leaving its cm in effect; 7: UserUnit -2, not positive, so the default 1. The displayed
+#   page turns the box clockwise by Rotate (7.7.3.3); a displayed point is 1 / UserUnit units (14.11.2). The 13x9 image at
+#   displayed x 10, y 20 spans displayed 10..23 by 20..29; Rotate 90 maps displayed (dx, dy) to user (dy, dx), Rotate 180 to
+#   (200 - dx, dy), Rotate 270 to (200 - dy, 100 - dx), the crop box to (50 + dx, 120 - dy), both to (50 + dy, 20 + dx),
+#   UserUnit 2 to (dx / 2, 100 - dy / 2).
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=0	x=10	y=20	read=matrix	0 13 -9 0 29 10
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=1	x=10	y=20	read=matrix	-13 0 0 -9 190 29
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=2	x=10	y=20	read=matrix	0 -13 9 0 171 90
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=3	x=10	y=20	read=matrix	13 0 0 9 60 91
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=4	x=10	y=20	read=matrix	0 13 -9 0 79 30
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=5	x=10	y=20	read=matrix	6.5 0 0 4.5 5 85.5
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=7	x=10	y=20	read=matrix	13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	read=matrix	2 0 0 2 0 0;13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	x=10	y=20	draws=2	read=matrix	2 0 0 2 0 0;13 0 0 9 10 71;13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/images/pages.pdf	index=6	read=size	13 9
+draw_image	tests/corpus/images/c2-b8.png	on=tests/corpus/images/pages.pdf	index=6	draws=2	read=size	9 6
+# 7.3.10, 7.7.3.4: a page whose Parent refers to an integer, not a page tree node
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/split/parent-not-dictionary.pdf	read=size	Malformed
+# Exif 2.32 (CIPA DC-008-2019), 4.6.4 A, tag 274 Orientation, in JPEG APP1 (big-endian TIFF header for even values, little-endian for
+#   odd) and the PNG eXIf chunk: the image is drawn as oriented; width and height are of the oriented image; the samples and JPEG
+#   bytes stay as stored. Stored 6x4, so 5 to 8 display 4x6. On a 200x100 page at 10, 20 the displayed box is x 10..10+W, y 80-H..80.
+draw_image	tests/corpus/images/orientation-2.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	-6 0 0 4 16 76
+draw_image	tests/corpus/images/orientation-3.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	-6 0 0 -4 16 80
+draw_image	tests/corpus/images/orientation-4.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	6 0 0 -4 10 80
+draw_image	tests/corpus/images/orientation-5.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	0 -6 -4 0 14 80
+draw_image	tests/corpus/images/orientation-6.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	0 -6 4 0 10 80
+draw_image	tests/corpus/images/orientation-7.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	0 6 4 0 10 74
+draw_image	tests/corpus/images/orientation-8.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	0 6 -4 0 14 74
+draw_image	tests/corpus/images/orientation-6.jpg	page_width=200	page_height=100	x=10	y=20	width=40	read=matrix	0 -60 40 0 10 80
+draw_image	tests/corpus/images/orientation-6.jpg	page_width=200	page_height=100	x=10	y=20	ignore_orientation	width=40	read=matrix	40 0 0 26.6667 10 53.3333
+draw_image	tests/corpus/images/orientation-5.jpg	page_width=200	page_height=100	x=10	y=20	height=12	read=matrix	0 -12 -8 0 18 80
+draw_image	tests/corpus/images/orientation-8.jpg	page_width=200	page_height=100	x=10	y=20	width=30	height=20	read=matrix	0 20 -30 0 40 60
+# Exif data whose TIFF header does not hold 42 (TIFF 6.0, 2), or an Orientation outside 1 to 8, leaves the image as stored
+draw_image	tests/corpus/images/exif-magic.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	6 0 0 4 10 76
+draw_image	tests/corpus/images/orientation-9.jpg	page_width=200	page_height=100	x=10	y=20	read=matrix	6 0 0 4 10 76
+draw_image	tests/corpus/images/orientation-6.jpg	read=size	6 4
+draw_image	tests/corpus/images/orientation-6.jpg	read=raw_sha256	a745bb4d6765d57fb497d7c2b239c1a38f5f690eda718955bbd38b9500003b34
+draw_image	tests/corpus/images/orientation-6.png	page_width=200	page_height=100	x=10	y=20	read=matrix	0 -6 4 0 10 80
+draw_image	tests/corpus/images/orientation-6.png	page_width=200	page_height=100	x=10	y=20	ignore_orientation	read=matrix	6 0 0 4 10 76
+draw_image	tests/corpus/images/orientation-6.png	read=samples_sha256	b41c67bb70991b949125aa27b01c9f7b45f1745b6a553657b7b684323dd3708c
+# Another format is Unsupported; a damaged image, or one not of the format given, is Malformed: a JPEG cut inside SOF0
+#   (ITU-T T.81, B.2.2), a PNG whose zlib data holds the reserved deflate block type 3 (RFC 1951, 3.2.3)
+draw_image	tests/corpus/images/other.gif	read=matrix	Unsupported
+draw_image	tests/corpus/images/other.gif	format=Gif	read=matrix	Unsupported
+draw_image	tests/corpus/images/other.bmp	read=matrix	Unsupported
+draw_image	tests/corpus/images/damaged.jpg	read=matrix	Malformed
+draw_image	tests/corpus/images/damaged.png	read=matrix	Malformed
+# ISO/IEC 15948:2004, 5.6: IDAT chunks are consecutive, and one PLTE precedes them and tRNS; an empty IDAT after a tEXt chunk, or
+#   a PLTE after the IDAT of an RGB image, twice, or after tRNS, is Malformed
+draw_image	tests/corpus/images/idat-after-other-chunk.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-after-idat.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-after-trns.png	read=size	Malformed
+# 11.2.3: a PLTE of no entries, of 3 for a bit depth of 1, of 257, or of a length not divisible by 3 is Malformed
+draw_image	tests/corpus/images/plte-empty.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-too-many.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-257-entries.png	read=size	Malformed
+draw_image	tests/corpus/images/plte-length.png	read=size	Malformed
+# 11.2.3: a PLTE chunk in a greyscale image is Malformed
+draw_image	tests/corpus/images/plte-in-grey.png	read=size	Malformed
+# 5.6: iCCP precedes PLTE; one after it is Malformed
+draw_image	tests/corpus/images/iccp-after-plte.png	read=size	Malformed
+# 11.3.3.3: an iCCP profile name of 1 to 79 bytes and a null separator; an empty one, or 90 bytes with no null, is Malformed
+draw_image	tests/corpus/images/iccp-empty-name.png	read=size	Malformed
+draw_image	tests/corpus/images/iccp-name-unterminated.png	read=size	Malformed
+# 5.6, 11.3.3.3: a second iCCP, or one of compression method 1, is Malformed
+draw_image	tests/corpus/images/iccp-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/iccp-method.png	read=size	Malformed
+# 5.6, 11.3.2.1: one tRNS, before IDAT, of 2 bytes for greyscale, none for alpha, at most an entry per palette entry
+draw_image	tests/corpus/images/trns-length.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-after-idat.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-in-alpha.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-too-long.png	read=size	Malformed
+draw_image	tests/corpus/images/trns-past-plte.png	read=size	Malformed
+# 5.4: an unknown critical chunk (first letter upper-case) is Unsupported
+draw_image	tests/corpus/images/unknown-critical-chunk.png	read=size	Unsupported
+# 11.2.4: image data of 6 rows for a height of 7 is Malformed
+draw_image	tests/corpus/images/rows-missing.png	read=size	Malformed
+# 5.3: an IHDR chunk whose CRC differs by a bit is Malformed
+draw_image	tests/corpus/images/crc.png	read=size	Malformed
+# 5.3: a chunk whose length (1,698,693,120) runs past the file's end (fuzzing found it slow) is Malformed
+draw_image	tests/corpus/images/chunk-past-end.png	read=size	Malformed
+# 11.2.2: a height of 0 is Malformed
+draw_image	tests/corpus/images/height-zero.png	read=size	Malformed
+# 5.6, 11.2.2: a second IHDR, an IHDR length other than 13, or interlace method 2, is Malformed; 5.4: so is a chunk type
+#   holding a digit
+draw_image	tests/corpus/images/ihdr-twice.png	read=size	Malformed
+draw_image	tests/corpus/images/ihdr-length.png	read=size	Malformed
+draw_image	tests/corpus/images/interlace-2.png	read=size	Malformed
+draw_image	tests/corpus/images/chunk-type.png	read=size	Malformed
+# 5.2: a signature whose CR became LF is Malformed
+draw_image	tests/corpus/images/bad-signature.png	format=Png	read=size	Malformed
+# 11.2.3: index 5 into a palette of 2 entries is Malformed
+draw_image	tests/corpus/images/palette-index.png	read=size	Malformed
+draw_image	tests/corpus/images/c2-b8.png	format=Jpeg	read=matrix	Malformed
+# Not implemented yet: a separate soft mask and opacity; a file of one image has no frame 1
+draw_image	tests/corpus/images/c2-b8.png	mask=tests/corpus/images/c0-b8.png	read=matrix	NotImplemented
+draw_image	tests/corpus/images/c2-b8.png	opacity=0.5	read=matrix	NotImplemented
+draw_image	tests/corpus/images/c2-b8.png	frame=1	read=matrix	InvalidArgument

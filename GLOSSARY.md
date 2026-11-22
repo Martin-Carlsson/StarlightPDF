@@ -38,6 +38,10 @@ _Avoid_: output stream, writer
 A document's changed and new objects, kept apart from its source.
 _Avoid_: change set, diff
 
+**Part**:
+A document `split` gives: a run of the split document's pages under a page tree of its own.
+_Avoid_: chunk, piece, sub-document
+
 **Handle**:
 What `Document`, `Page` and the rest are: a reference-counted, thread-safe reference. It never holds decoded data.
 _Avoid_: pointer

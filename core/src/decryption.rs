@@ -29,7 +29,7 @@ const PASSWORD_LIMIT: usize = 127;
 
 /// The characters of `PDFDocEncoding` codes 0x18 to 0x1F and 0x80 to 0xA0 other than Latin-1's
 /// (ISO 32000-2:2020, Annex D, Table D.2).
-const PDF_DOC: [(char, u8); 40] = [
+pub(crate) const PDF_DOC: [(char, u8); 40] = [
     ('\u{2D8}', 0x18),
     ('\u{2C7}', 0x19),
     ('\u{2C6}', 0x1A),
@@ -697,7 +697,7 @@ fn padded(password: &[u8]) -> [u8; 32] {
 }
 
 /// `password` in `PDFDocEncoding`; none if a character has no code (ISO 32000-2:2020, Annex D).
-fn pdf_doc(password: &str) -> Option<Vec<u8>> {
+pub(crate) fn pdf_doc(password: &str) -> Option<Vec<u8>> {
     password
         .chars()
         .map(|character| match u32::from(character) {

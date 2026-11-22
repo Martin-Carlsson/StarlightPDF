@@ -908,7 +908,7 @@ where
                     Token::Keyword(Keyword::Null) => out.push_str("null"),
                     Token::Keyword(Keyword::True) => out.push_str("true"),
                     Token::Name(name) => write_name(&mut out, &name),
-                    Token::Real(value) => out.push_str(&value.to_string()),
+                    Token::Real(value) => write_real(&mut out, value),
                     Token::Reference(id) => {
                         out.push_str(&id.number.to_string());
                         out.push(' ');
@@ -984,7 +984,7 @@ fn push_hex(out: &mut String, byte: u8, upper: bool) {
 
 /// Appends `name` in canonical syntax: `#xx` for bytes outside `!` to `~` and delimiters
 /// (ISO 32000-2:2020, 7.3.5).
-fn write_name(out: &mut String, name: &[u8]) {
+pub(crate) fn write_name(out: &mut String, name: &[u8]) {
     out.push('/');
     for &byte in name {
         if byte.is_ascii_graphic() && is_regular(byte) && byte != b'#' {
@@ -996,9 +996,39 @@ fn write_name(out: &mut String, name: &[u8]) {
     }
 }
 
+/// Appends `number` in canonical syntax, as read back: 0 when not finite, else when longer
+/// than a number read, the nearest that is not (ISO 32000-2:2020, 7.3.3).
+pub(crate) fn write_real(out: &mut String, number: f64) {
+    let text = number.to_string();
+    if !number.is_finite() {
+        out.push('0');
+    } else if text.len() <= RUN_LIMIT {
+        out.push_str(&text);
+    } else {
+        let sign = if number.is_sign_negative() { "-" } else { "" };
+        let room = RUN_LIMIT.saturating_sub(sign.len());
+        if number.abs() >= 1.0_f64 {
+            // Past the largest integer part room holds: all nines.
+            out.push_str(sign);
+            out.push_str(&"9".repeat(room));
+        } else {
+            // Without the leading 0, rounded to the places left after the point.
+            let places = room.saturating_sub(1);
+            let rounded = format!("{:.places$}", number.abs());
+            let fraction = rounded.trim_start_matches('0').trim_end_matches('0');
+            if fraction.len() > 1 {
+                out.push_str(sign);
+                out.push_str(fraction);
+            } else {
+                out.push('0');
+            }
+        }
+    }
+}
+
 /// Appends `bytes` in canonical syntax: literal when all printable ASCII, else hexadecimal
 /// (ISO 32000-2:2020, 7.3.4).
-fn write_string(out: &mut String, bytes: &[u8]) {
+pub(crate) fn write_string(out: &mut String, bytes: &[u8]) {
     if bytes.iter().all(|byte| (0x20..=0x7E).contains(byte)) {
         out.push('(');
         for &byte in bytes {
