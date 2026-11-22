@@ -108,12 +108,13 @@ case $1 in
     trap 'rm -rf "${tmp}"' EXIT
     # Corpus, then seeded runs, before lints so a planted fault is a finding; new inputs go to the first dir; cmp and reload off: nondeterministic.
     # Runs per target, corpus included: a count, not a time, so each check is the same; about 30 seconds each in CI.
-    for run in encrypted-open=25000 filters=40000 header-version=1000000 jpeg=150000 page-count=45000 png=180000 \
-      rebuild=11000 save=5000 xref-stream-flate=20000; do
-      target=${run%=*}
-      mkdir "${tmp}/${target}"
-      cargo "+${nightly}" fuzz run "${target}" "${tmp}/${target}" tests/corpus -- \
-        -seed=1 "-runs=${run#*=}" -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256
+    set -- encrypted-open 25000 filters 40000 header-version 1000000 jpeg 150000 page-count 45000 png 180000 \
+      rebuild 11000 save 5000 xref-stream-flate 20000
+    while [ "$#" -gt 0 ]; do
+      mkdir "${tmp}/$1"
+      cargo "+${nightly}" fuzz run "$1" "${tmp}/$1" tests/corpus -- \
+        -seed=1 "-runs=$2" -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256
+      shift 2
     done
     cargo fmt --check -p starlightpdf-fuzz
     cargo clippy --all-targets --locked -p starlightpdf-fuzz
