@@ -1434,7 +1434,7 @@ fn split_keeps_links_within_a_part() -> Result<(), String> {
 /// Every part carries the output condition, the profile bytes and the shown layer on (ISO
 /// 32000-2:2020, 8.11.4, 14.11.5); the conformance suite covers the rest.
 #[test]
-fn split_parts_carry_output_intents_and_layers() -> Result<(), String> {
+fn split_parts_carry_info_output_intents_and_layers() -> Result<(), String> {
     let path = "split/info-intents-layers.pdf";
     let source = parse(&read(&corpus(path))?)?;
     let saved = parts(path, &by_pages(1))?;
