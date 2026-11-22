@@ -35,7 +35,7 @@ if [ -n "${bad}" ]; then
 fi
 
 # name version of each CI tool, one per line
-tools=$(sed -n 's/.*cargo install .*--locked \(.*\)$/\1/p' ci/setup.sh | tr ' ' '\n' | grep @ | tr @ ' ')
+tools=$(sed -nE 's/^ *(fetch|cargo install --locked) ([^ ]+@[^ ]+).*/\2/p' ci/setup.sh | tr @ ' ')
 # name version license, one per line
 lic=$(
   {
