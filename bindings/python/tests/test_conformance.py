@@ -1,5 +1,7 @@
 """Runs the conformance suite in tests/conformance/*.tsv through the binding."""
 
+from __future__ import annotations
+
 import decimal
 import functools
 import hashlib
@@ -7,10 +9,12 @@ import itertools
 import pathlib
 import re
 import unittest
-from collections.abc import Callable
-from typing import NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 
 import starlightpdf
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SUITE_DIR = ROOT / "tests" / "conformance"

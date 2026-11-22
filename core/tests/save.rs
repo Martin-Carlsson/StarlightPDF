@@ -220,7 +220,8 @@ impl Progress for Cancel {
             .flatten()
             .flatten()
             .filter(|entry| entry.file_name() != "previous.pdf")
-            .filter_map(|entry| entry.metadata().ok())
+            // `DirEntry::metadata` on Windows gives the directory's size, stale while open.
+            .filter_map(|entry| fs::metadata(entry.path()).ok())
             .map(|metadata| metadata.len())
             .sum();
         *self.written.lock().unwrap_or_else(PoisonError::into_inner) = others;
