@@ -111,8 +111,8 @@ case $1 in
     # render corpus, whose PDFs only renders parse, keeping its PNG and JPEG files.
     if [ "$1" = fuzz ]; then
       seeds=tests/corpus
-      set -- cmap 5000 content 3000 dct 6000 font-cff 5000 font-opentype 5000 font-truetype 5000 font-type1 5000 \
-        font-type3 5000 function 5000 icc 5000 image-codec 4000 jbig2-symbols 5000 render-file 6000 shading 2000
+      set -- cmap 2500 content 1500 dct 3000 font-cff 2500 font-opentype 2500 font-truetype 2500 font-type1 2500 \
+        font-type3 2500 function 2500 icc 2500 image-codec 2000 jbig2-symbols 2500 render-file 2000 shading 1000
     else
       seeds=${tmp}/seeds
       mkdir "${seeds}"

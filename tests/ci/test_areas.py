@@ -49,7 +49,14 @@ class AreasTest(unittest.TestCase):
             "bindings/python/Cargo.toml": {"dependencies", "licenses"},
             "ci/dependencies.sh": {"dependencies", "licenses"},
             "ci/workflows.sh": {"licenses", "workflows"},
-            "core/src/lib.rs": {"core", "fuzz", "fuzz-files", "javascript", "python", "licenses"},
+            "core/src/lib.rs": {
+                "core",
+                "fuzz",
+                "fuzz-files",
+                "javascript",
+                "python",
+                "licenses",
+            },
             "tests/corpus/header/empty.pdf": {
                 "core",
                 "fuzz",
@@ -98,7 +105,8 @@ class AreasTest(unittest.TestCase):
         """A binding alone skips core, fuzz and the other binding."""
         for binding in ("javascript", "python"):
             with self.subTest(binding=binding):
-                skipped = {"core", "fuzz", "fuzz-files", "javascript", "python"} - {binding}
+                every = {"core", "fuzz", "fuzz-files", "javascript", "python"}
+                skipped = every - {binding}
                 path = f"bindings/{binding}/src/lib.rs"
                 self.assertEqual(set(), skipped & areas(path))
 
