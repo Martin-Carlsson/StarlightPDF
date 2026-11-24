@@ -1,0 +1,1 @@
+{ pop 0.64 sqrt 100 log 5 div 2.7182818 ln 5 div }

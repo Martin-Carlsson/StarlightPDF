@@ -10,7 +10,11 @@ use std::os::unix::fs::FileExt as _;
 use std::os::windows::fs::FileExt as _;
 use std::path::PathBuf;
 
+use crate::store::Meter;
 use crate::{ErrorCode, PdfError};
+
+/// Work of a read, besides a unit for each four bytes.
+const READ_WORK: u64 = 32;
 
 /// Bytes in memory.
 struct Bytes(BytesSourceOptions);
@@ -63,6 +67,15 @@ pub struct ReadAtSourceOptions {
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct ReaderSourceOptions;
+
+/// A source as one operation reads it, each read taken from its work where that is bounded.
+#[derive(Clone, Copy)]
+pub(crate) struct Reads<'data> {
+    /// The source.
+    source: &'data Source,
+    /// The work left.
+    work: Option<Meter<'data>>,
+}
 
 /// Input with a size and reads at an offset.
 #[derive(Clone)]
@@ -118,6 +131,33 @@ impl ReadAt for FileReadAt {
 
     fn size(&self) -> io::Result<u64> {
         Ok(self.0.metadata()?.len())
+    }
+}
+
+impl<'data> Reads<'data> {
+    /// `source`, read within `work`.
+    pub(crate) const fn new(source: &'data Source, work: Option<Meter<'data>>) -> Self {
+        Self { source, work }
+    }
+
+    /// Reads as [`Source::read`] does; what reads objects checks the work.
+    pub(crate) fn read(
+        self,
+        offset: u64,
+        buffer: &mut [u8],
+        operation: &'static str,
+    ) -> Result<usize, PdfError> {
+        let count = self.source.read(offset, buffer, operation)?;
+        if let Some(work) = self.work {
+            let units = u64::try_from(count >> 2_u32).unwrap_or(u64::MAX);
+            work.take(units.saturating_add(READ_WORK), operation)?;
+        }
+        Ok(count)
+    }
+
+    /// The size in bytes.
+    pub(crate) fn size(self, operation: &'static str) -> Result<u64, PdfError> {
+        self.source.size(operation)
     }
 }
 

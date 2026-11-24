@@ -56,7 +56,7 @@ for area; do
         'mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-aarch64-apple-darwin.tar.xz a83f7d6f48a069890743ba61f7637660c8577f263efd64fee47e673632f0e423' \
         'mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-pc-windows-msvc.zip 855fda4724dada8ba235aec7c0da7d3b28d1697c946627733143fe37444dd510'
       ;;
-    fuzz)
+    fuzz | fuzz-files)
       cargo install --locked cargo-fuzz@0.13.2
       ;;
     javascript)

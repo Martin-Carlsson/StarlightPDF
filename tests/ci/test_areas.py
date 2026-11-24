@@ -49,16 +49,18 @@ class AreasTest(unittest.TestCase):
             "bindings/python/Cargo.toml": {"dependencies", "licenses"},
             "ci/dependencies.sh": {"dependencies", "licenses"},
             "ci/workflows.sh": {"licenses", "workflows"},
-            "core/src/lib.rs": {"core", "fuzz", "javascript", "python", "licenses"},
+            "core/src/lib.rs": {"core", "fuzz", "fuzz-files", "javascript", "python", "licenses"},
             "tests/corpus/header/empty.pdf": {
                 "core",
                 "fuzz",
+                "fuzz-files",
                 "javascript",
                 "python",
                 "licenses",
             },
+            "tests/corpus/render/dct-baseline.jpg": {"fuzz", "fuzz-files", "licenses"},
             "tests/conformance/open.tsv": {"core", "javascript", "python", "licenses"},
-            "fuzz/fuzz_targets/page_count.rs": {"fuzz", "licenses"},
+            "fuzz/fuzz_targets/page_count.rs": {"fuzz", "fuzz-files", "licenses"},
             "bindings/python/src/lib.rs": {"python", "licenses"},
             "bindings/javascript/src/lib.rs": {"javascript", "licenses"},
             "bindings/javascript/package.json": {"javascript", "licenses"},
@@ -84,6 +86,10 @@ class AreasTest(unittest.TestCase):
         own = {"", "ci/check.sh", ".github/workflows/ci.yml"}
         self.assertEqual(self.accepted(), areas(*(p for p in paths if p not in own)))
 
+    def test_render_corpus_skips_file_fuzzing(self) -> None:
+        """A render PDF skips the file targets, which are not seeded from it."""
+        self.assertNotIn("fuzz-files", areas("tests/corpus/render/text-cff.pdf"))
+
     def test_licenses_alone(self) -> None:
         """Prose selects only licenses."""
         self.assertEqual({"licenses"}, areas("GLOSSARY.md"))
@@ -92,7 +98,7 @@ class AreasTest(unittest.TestCase):
         """A binding alone skips core, fuzz and the other binding."""
         for binding in ("javascript", "python"):
             with self.subTest(binding=binding):
-                skipped = {"core", "fuzz", "javascript", "python"} - {binding}
+                skipped = {"core", "fuzz", "fuzz-files", "javascript", "python"} - {binding}
                 path = f"bindings/{binding}/src/lib.rs"
                 self.assertEqual(set(), skipped & areas(path))
 

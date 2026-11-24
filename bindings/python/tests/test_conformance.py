@@ -9,8 +9,9 @@ import itertools
 import pathlib
 import re
 import unittest
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias, TypedDict
 
+import decode
 import starlightpdf
 
 if TYPE_CHECKING:
@@ -67,6 +68,20 @@ DRAW = {
     "x",
     "y",
 }
+RENDER = {
+    "cancel",
+    "color_space",
+    "fit",
+    "format",
+    "index",
+    "quality",
+    "read",
+    "resolution",
+    "usage",
+}
+MOST_TOLERANCE = 255  # The most a channel of 8 bits may differ.
+PIXEL = r"\d+,\d+=(?:[0-9a-f]{2}|[0-9a-f]{6})(?:~\d+)?"
+PIXELS = rf"\d+x\d+(?: {PIXEL})+"
 WHITE = "\0\t\n\f\r "
 DELIMITERS = "()<>[]{}/%"
 
@@ -319,9 +334,15 @@ def optional(text: str | None) -> float | None:
     return None if text is None else float(text)
 
 
-def cancel(_done: int, _total: int) -> bool:
-    """Cancel at the first progress."""
-    return False
+def after(allowed: int) -> Callable[[int, int], bool]:
+    """Return a progress callback that returns false after `allowed` calls."""
+    calls = [0]
+
+    def update(_done: int, _total: int) -> bool:
+        calls[0] += 1
+        return calls[0] <= allowed
+
+    return update
 
 
 def save(
@@ -334,7 +355,7 @@ def save(
     resolution = given.get("image_resolution")
     return document.save(
         sink,
-        cancel if "cancel" in given else None,
+        after(0) if "cancel" in given else None,
         allow_loss="allow_loss" in given,
         break_signatures="break_signatures" in given,
         cipher=given.get("cipher"),
@@ -435,6 +456,95 @@ def perform(family: str, kind: str, args: list[str]) -> str:
             raise ValueError(msg)
         document = reopen(twice(part, {}), given)
     return READS[family][2](document, given)
+
+
+class RenderOptions(TypedDict, total=False):
+    """The render options a case gives; the others keep the binding's defaults."""
+
+    color_space: str
+    fit: int
+    format: str
+    quality: int
+    resolution: int
+    usage: str
+
+
+def render_options(given: dict[str, str]) -> RenderOptions:
+    """Return the render options among `given`."""
+    options: RenderOptions = {}
+    if "color_space" in given:
+        options["color_space"] = given["color_space"]
+    if "fit" in given:
+        options["fit"] = int(given["fit"])
+    if "format" in given:
+        options["format"] = given["format"]
+    if "quality" in given:
+        options["quality"] = int(given["quality"])
+    if "resolution" in given:
+        options["resolution"] = int(given["resolution"])
+    if "usage" in given:
+        options["usage"] = given["usage"]
+    return options
+
+
+def matched(image: decode.Image, token: str) -> str:
+    """Give `token` where `image` is within its tolerance, else the colour it has."""
+    place, _, value = token.partition("=")
+    colour, _, allowed = value.partition("~")
+    column, _, row = place.partition(",")
+    found = image.pixel(int(column), int(row))
+    if found is None:
+        return f"{place}=none"
+    wanted = bytes.fromhex(colour)
+    tolerance = int(allowed or "0")
+    if tolerance > MOST_TOLERANCE:
+        msg = f"bad tolerance {allowed!r}"
+        raise ValueError(msg)
+    close = len(found) == len(wanted) and all(
+        abs(have - want) <= tolerance for have, want in zip(found, wanted, strict=True)
+    )
+    return token if close else f"{place}={found.hex()}"
+
+
+def render(kind: str, args: list[str], expected: str) -> str:
+    """Render the page as `args` say; its size and the pixels `expected` names."""
+    path, *options = args
+    # `cancel=N` is `cancel` letting N progress calls through.
+    counts = [arg[len("cancel=") :] for arg in options if arg.startswith("cancel=")]
+    if not all(re.fullmatch("[0-9]+", count) for count in counts):
+        msg = f"bad cancel {counts!r}"
+        raise ValueError(msg)
+    allowed = [int(count) for count in counts]
+    named = ["cancel" if arg.startswith("cancel=") else arg for arg in options]
+    given = parse(named, OPEN | RENDER, set())
+    reads = given.get("read")
+    if reads not in {None, "warnings"}:
+        msg = f"bad read {reads!r}"
+        raise ValueError(msg)
+    code = expected.isascii() and expected.isalpha()
+    if reads is None and not code and not re.fullmatch(PIXELS, expected):
+        msg = f"bad expected value {expected!r}"
+        raise ValueError(msg)
+    chosen = render_options(given)
+    document = open_document(source(kind, path), given)
+    shown = document.page(index=int(given.get("index", "0")))
+    sink = starlightpdf.Sink.in_memory()
+    stop = after(allowed[0] if allowed else 0) if "cancel" in given else None
+    shown.render(sink, stop, **chosen)
+    tokens = [] if code or reads else expected.split(" ")[1:]
+    # Only the rows down to the lowest pixel named are unfiltered.
+    rows = max(
+        (int(token.partition("=")[0].partition(",")[2]) + 1 for token in tokens),
+        default=0,
+    )
+    image = decode.read(sink.take_bytes(), rows)
+    if image.jpeg != (given.get("format", "Png") == "Jpeg"):
+        msg = "the file is of another format"
+        raise ValueError(msg)
+    if reads:
+        return warnings(document, given)
+    size = f"{image.width}x{image.height}"
+    return " ".join([size, *(matched(image, token) for token in tokens)])
 
 
 def inserted(args: list[str]) -> str:
@@ -801,6 +911,9 @@ OPERATIONS: dict[str, Callable[[list[str]], str]] = {
     },
 }
 
+# A render takes what it expects: the pixels to look at.
+RENDERS = {"render_bytes": "bytes", "render_file": "file"}
+
 
 class SuiteError(Exception):
     """A case failed."""
@@ -808,13 +921,16 @@ class SuiteError(Exception):
 
 def check(operation: str, args: list[str], expected: str) -> str | None:
     """Return why `operation` on `args` does not give `expected`, or None."""
-    if operation not in OPERATIONS:
+    if operation not in OPERATIONS and operation not in RENDERS:
         return f"unknown operation {operation!r}"
     try:
-        actual = OPERATIONS[operation](args)
+        if operation in RENDERS:
+            actual = render(RENDERS[operation], args, expected)
+        else:
+            actual = OPERATIONS[operation](args)
     except starlightpdf.PdfError as error:
         actual = error.code
-    except (IndexError, OSError, TypeError, ValueError) as error:
+    except (IndexError, OSError, OverflowError, TypeError, ValueError) as error:
         return f"{operation}: {error}"
     if actual != expected:
         return f"{operation}: expected {expected!r}, got {actual!r}"

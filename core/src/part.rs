@@ -7,6 +7,7 @@ use core::fmt::{self, Debug, Formatter};
 use core::mem;
 use std::sync::{Mutex, PoisonError};
 
+use crate::object_stream::Sequences;
 use crate::objects::{ObjectId, XrefKind};
 use crate::overlay::{Dictionary, Object, Overlay, Reading, View};
 use crate::store::{Objects, Store};
@@ -478,6 +479,7 @@ impl Part {
         }
         let mut found = Dictionary::new();
         let mut node = Object::Reference(start);
+        let mut visited = BTreeSet::from([(start.number, start.generation)]);
         for _ in 0..=objects.depth_limit() {
             let dictionary = self.source.direct(objects, node)?;
             if !matches!(dictionary, Object::Dictionary(_)) {
@@ -491,11 +493,19 @@ impl Part {
                     found.push((key.to_vec(), value));
                 }
             }
-            let Some(up @ Object::Reference(_)) = dictionary.take(b"Parent") else {
-                *last() = Some((start.number, found.clone()));
-                return Ok(found);
+            // A tree has no cycle (7.7.3.4): an ancestor met again ends the walk.
+            let up = match dictionary.take(b"Parent") {
+                Some(Object::Reference(parent))
+                    if visited.insert((parent.number, parent.generation)) =>
+                {
+                    parent
+                }
+                Some(_) | None => {
+                    *last() = Some((start.number, found.clone()));
+                    return Ok(found);
+                }
             };
-            node = up;
+            node = Object::Reference(up);
         }
         Err(PdfError::new(ErrorCode::LimitExceeded, OPERATION))
     }
@@ -1161,7 +1171,12 @@ impl Part {
     }
 
     /// Object `number` of the document and its generation.
-    fn raw(&self, objects: Objects<'_>, number: u32) -> Result<Option<(u16, Object)>, PdfError> {
+    fn raw<'view>(
+        &self,
+        objects: Objects<'view>,
+        number: u32,
+        sequence: &mut Sequences<'view>,
+    ) -> Result<Option<(u16, Object)>, PdfError> {
         if let Some(found) = self.source.get(number)? {
             return Ok(Some(found));
         }
@@ -1175,7 +1190,7 @@ impl Part {
         };
         Ok(Some((
             generation,
-            objects.owned(ObjectId { generation, number })?,
+            objects.owned_in(ObjectId { generation, number }, sequence)?,
         )))
     }
 
@@ -1257,10 +1272,11 @@ impl View for Part {
         self.source.generation(objects, number)
     }
 
-    fn object(
-        &self,
+    fn object<'view>(
+        &'view self,
         number: u32,
         edited: Option<(u16, Object)>,
+        sequence: &mut Sequences<'view>,
     ) -> Result<Option<(u16, Object)>, PdfError> {
         self.source.fresh(OPERATION)?;
         let objects = self.store.objects(OPERATION);
@@ -1283,7 +1299,7 @@ impl View for Part {
                     .source
                     .generation(objects, number)?
                     .map(|generation| (generation, Object::Null)),
-                None => self.raw(objects, number)?,
+                None => self.raw(objects, number, sequence)?,
             },
         };
         let Some((generation, read)) = found else {
@@ -1339,8 +1355,10 @@ fn annotations(
     visit: &mut dyn FnMut(Object) -> Result<(), PdfError>,
 ) -> Result<(), PdfError> {
     if let Object::Array(items) = source.entry(objects, page, b"Annots")? {
+        // Packed annotations are read on, each from the one before.
+        let mut sequence = Sequences::default();
         for item in items {
-            visit(source.direct(objects, item)?)?;
+            visit(source.direct_in(objects, item, &mut sequence)?)?;
         }
     }
     Ok(())

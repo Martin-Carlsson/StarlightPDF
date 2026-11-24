@@ -13,14 +13,14 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
-use pyo3::types::{PyBytes, PyDict, PyNone};
+use pyo3::types::{PyBytes, PyDict, PyList, PyNone, PyTuple};
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::compliance::Standard;
 use starlightpdf::document::{
     CreateOptions, OpenOptions, Optimization, PageOptions, SaveMode, SaveOptions,
 };
 use starlightpdf::drawing::DrawImageOptions;
-use starlightpdf::images::ImageFormat;
+use starlightpdf::images::{ImageFormat, RasterFormat};
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions};
 use starlightpdf::limits::ResourcePolicyOptions;
 use starlightpdf::metadata::SetInfoDictionaryOptions;
@@ -28,9 +28,11 @@ use starlightpdf::objects::{ObjectOptions, StreamDataOptions};
 use starlightpdf::output::{Append, AppendSinkOptions, FileSinkOptions, MemorySinkOptions};
 use starlightpdf::page::{Boundary, BoundaryOptions};
 use starlightpdf::progress::Progress;
-use starlightpdf::rendering::ColorSpace;
+use starlightpdf::rendering::{ColorSpace, RenderOptions, RenderUsage};
 use starlightpdf::security::{Cipher, Permission};
-use starlightpdf::{Version, compliance, document, input, limits, objects, output, page};
+use starlightpdf::{
+    Capability, ErrorCode, Version, compliance, document, input, limits, objects, output, page,
+};
 
 /// Each boundary's name.
 const BOUNDARIES: [(Boundary, &str); 5] = [
@@ -39,6 +41,15 @@ const BOUNDARIES: [(Boundary, &str); 5] = [
     (Boundary::Crop, "Crop"),
     (Boundary::Media, "Media"),
     (Boundary::Trim, "Trim"),
+];
+
+/// Each capability's name.
+const CAPABILITIES: [(Capability, &str); 5] = [
+    (Capability::Conversion, "Conversion"),
+    (Capability::Ocr, "Ocr"),
+    (Capability::Printing, "Printing"),
+    (Capability::Rendering, "Rendering"),
+    (Capability::Signing, "Signing"),
 ];
 
 /// Each cipher's name.
@@ -115,6 +126,20 @@ const PERMISSIONS: [(Permission, &str); 7] = [
     (Permission::FillForms, "FillForms"),
     (Permission::Print, "Print"),
     (Permission::PrintHighQuality, "PrintHighQuality"),
+];
+
+/// Each raster format's name.
+const RASTER_FORMATS: [(RasterFormat, &str); 4] = [
+    (RasterFormat::Heif, "Heif"),
+    (RasterFormat::Jpeg, "Jpeg"),
+    (RasterFormat::Png, "Png"),
+    (RasterFormat::Tiff, "Tiff"),
+];
+
+/// Each render usage's name.
+const RENDER_USAGES: [(RenderUsage, &str); 2] = [
+    (RenderUsage::Display, "Display"),
+    (RenderUsage::Print, "Print"),
 ];
 
 /// Each save mode's name.
@@ -485,6 +510,76 @@ impl Page {
         self.0
             .draw_image(&image.0, mask.map(|each| &each.0), None, &options)
             .map_err(|error| to_py(&error))
+    }
+
+    /// Writes the page as displayed to `sink` as an image; `progress(done, total)`, a `total` of 0
+    /// meaning not yet known, returns false to cancel.
+    /// `hidden_layers` must be empty, as no layer can exist yet.
+    #[pyo3(signature = (sink, progress = None, **keywords))]
+    fn render(
+        &self,
+        sink: &Sink,
+        progress: Option<Py<PyAny>>,
+        keywords: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let given = Keywords::new(
+            keywords,
+            &[
+                "color_space",
+                "fit",
+                "format",
+                "hidden_layers",
+                "quality",
+                "resolution",
+                "usage",
+            ],
+        )?;
+        let mut options = RenderOptions::default();
+        options.color_space = value(
+            &COLOR_SPACES,
+            &given.get("color_space", String::from("Rgb"))?,
+        )?;
+        options.fit = given.get("fit", None)?;
+        options.format = value(&RASTER_FORMATS, &given.get("format", String::from("Png"))?)?;
+        options.quality = given.get("quality", None)?;
+        options.resolution = given.get("resolution", None)?;
+        options.usage = value(
+            &RENDER_USAGES,
+            &given.get("usage", String::from("Display"))?,
+        )?;
+        // Counted, not copied; a list or tuple, as in JavaScript an array.
+        let hidden: Option<Bound<'_, PyAny>> = given.get("hidden_layers", None)?;
+        let count = match hidden {
+            None => 0,
+            Some(layers) => {
+                if let Ok(list) = layers.cast::<PyList>() {
+                    list.len()
+                } else if let Ok(tuple) = layers.cast::<PyTuple>() {
+                    tuple.len()
+                } else {
+                    return Err(PyTypeError::new_err(
+                        "hidden_layers must be a list or tuple",
+                    ));
+                }
+            }
+        };
+        if count > 0 {
+            return Err(pdf_error(
+                ErrorCode::NotImplemented,
+                "Page.render",
+                "no implementation yet",
+                None,
+                None,
+                None,
+            ));
+        }
+        let callback = progress.map(Callback::new);
+        let result = self.0.render(
+            &sink.sink,
+            callback.as_ref().map::<&dyn Progress, _>(|each| each),
+            &options,
+        );
+        checked(result, &[callback.as_ref(), sink.callback.as_deref()])
     }
 
     /// The rotation in degrees clockwise: 0, 90, 180 or 270.
@@ -877,6 +972,16 @@ impl Document {
     }
 }
 
+/// Calls `starlightpdf::capabilities`; each capability's name.
+#[pyfunction]
+fn capabilities() -> PyResult<Vec<&'static str>> {
+    starlightpdf::capabilities()
+        .map_err(|error| to_py(&error))?
+        .into_iter()
+        .map(|capability| name(&CAPABILITIES, capability))
+        .collect()
+}
+
 /// `result`, unless a callback raised; then the first exception raised.
 fn checked<T>(
     result: Result<T, starlightpdf::PdfError>,
@@ -918,25 +1023,41 @@ where
         .ok_or_else(|| PyRuntimeError::new_err("a value this binding does not name"))
 }
 
-/// A `PdfError` carrying `error`'s details, its operation spelled as in Python.
-fn to_py(error: &starlightpdf::PdfError) -> PyErr {
-    let operation = error.operation().replace("::", ".");
+/// A `PdfError` with these details.
+fn pdf_error(
+    code: ErrorCode,
+    operation: &str,
+    message: &str,
+    offset: Option<u64>,
+    object_number: Option<u32>,
+    io_cause: Option<io::ErrorKind>,
+) -> PyErr {
     Python::attach(|py| {
-        let raised = PdfError::new_err(format!("{operation}: {}", error.message()));
+        let raised = PdfError::new_err(format!("{operation}: {message}"));
         let value = raised.value(py);
-        let io_cause = error
-            .io_cause()
-            .map(|kind| PyErr::from(io::Error::from(kind)).into_value(py));
+        let cause = io_cause.map(|kind| PyErr::from(io::Error::from(kind)).into_value(py));
         value
-            .setattr("code", error.code().name())
-            .and_then(|()| value.setattr("number", error.code().number()))
-            .and_then(|()| value.setattr("message", error.message()))
+            .setattr("code", code.name())
+            .and_then(|()| value.setattr("number", code.number()))
+            .and_then(|()| value.setattr("message", message))
             .and_then(|()| value.setattr("operation", operation))
-            .and_then(|()| value.setattr("offset", error.offset()))
-            .and_then(|()| value.setattr("object_number", error.object_number()))
-            .and_then(|()| value.setattr("io_cause", io_cause))
+            .and_then(|()| value.setattr("offset", offset))
+            .and_then(|()| value.setattr("object_number", object_number))
+            .and_then(|()| value.setattr("io_cause", cause))
             .map_or_else(|failure| failure, |()| raised)
     })
+}
+
+/// A `PdfError` carrying `error`'s details, its operation spelled as in Python.
+fn to_py(error: &starlightpdf::PdfError) -> PyErr {
+    pdf_error(
+        error.code(),
+        &error.operation().replace("::", "."),
+        error.message(),
+        error.offset(),
+        error.object_number(),
+        error.io_cause(),
+    )
 }
 
 /// `(major, minor)` as a version.
@@ -984,6 +1105,7 @@ fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SaveReport>()?;
     module.add_class::<Sink>()?;
     module.add_class::<Source>()?;
+    module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     module.add_function(wrap_pyfunction!(header_version, module)?)?;
     module.add_function(wrap_pyfunction!(library_version, module)?)
 }

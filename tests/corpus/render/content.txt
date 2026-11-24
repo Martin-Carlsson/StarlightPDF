@@ -1,0 +1,1 @@
+q 1 0 0 rg 10 10 80 80 re f Q /G gs /S sh /X Do BT /F 20 Tf (A) Tj ET

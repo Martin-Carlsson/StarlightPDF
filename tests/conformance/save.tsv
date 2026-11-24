@@ -69,3 +69,9 @@ save_file	tests/corpus/save/huge-size.pdf	ok
 # 7.5.4: an object number past the policy's objects sizes no table
 save_bytes	tests/corpus/save/huge-number.pdf	LimitExceeded
 save_file	tests/corpus/save/huge-number.pdf	LimitExceeded
+# 7.5.7; RFC 1950, 2.2: an object stream whose Adler-32 checksum is damaged saves when its last member lies in its first
+#   512 bytes; past them and within 512 bytes of the damage, the damage is met reading it: Malformed
+save_bytes	tests/corpus/save/object-stream-adler-damaged.pdf	ok
+save_file	tests/corpus/save/object-stream-adler-damaged.pdf	ok
+save_bytes	tests/corpus/save/object-stream-adler-damaged-late.pdf	Malformed
+save_file	tests/corpus/save/object-stream-adler-damaged-late.pdf	Malformed

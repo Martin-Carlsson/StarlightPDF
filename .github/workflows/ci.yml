@@ -64,6 +64,8 @@ jobs:
           - { os: windows-latest, area: mods }
           - { os: macos-latest, area: fuzz }
           - { os: windows-latest, area: fuzz }
+          - { os: macos-latest, area: fuzz-files }
+          - { os: windows-latest, area: fuzz-files }
           - os: macos-latest
             area: ruff
           - os: windows-latest
@@ -73,7 +75,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       AREA: ${{ matrix.area }}
-      CHANGED: ${{ needs.changes.outputs.changed }}
+      # Only licenses reads it; in every job's environment it would pass Windows' limit.
+      CHANGED: ${{ matrix.area == 'licenses' && needs.changes.outputs.changed || null }}
     steps:
       - name: Check out
         run: |
@@ -82,7 +85,7 @@ jobs:
           git fetch -q --depth=2 "${URL}" "${GITHUB_SHA}"
           git checkout -q --detach FETCH_HEAD
       - name: Install Rust
-        if: contains(fromJSON('["core","python","javascript","advisories","dependencies","fuzz"]'), matrix.area)
+        if: contains(fromJSON('["core","python","javascript","advisories","dependencies","fuzz","fuzz-files"]'), matrix.area)
         run: rustup toolchain install --no-self-update
       - name: Install the area's tools
         run: sh ci/setup.sh "${AREA}"

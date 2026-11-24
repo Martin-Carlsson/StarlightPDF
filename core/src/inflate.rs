@@ -1,7 +1,14 @@
 //! Streaming zlib decoder (RFC 1950, RFC 1951).
 
 use crate::pull::{Buffered, Pull};
+use crate::store::Meter;
 use crate::{ErrorCode, PdfError};
+
+/// Work of a compressed block's header, which may bring no output.
+const BLOCK_WORK: u64 = 256;
+
+/// Work of a stored block's header, which may bring no output.
+const STORED_WORK: u64 = 4;
 
 /// Base lengths of length symbols 257 to 285 (RFC 1951, 3.2.5).
 const LENGTH_BASE: [u16; 29] = [
@@ -198,7 +205,7 @@ enum State {
 
 /// A zlib stream decoded on demand (RFC 1950, RFC 1951).
 #[derive(Debug)]
-pub(crate) struct Inflate<P> {
+pub(crate) struct Inflate<'work, P> {
     /// Adler-32, high half.
     adler_high: u32,
     /// Adler-32, low half.
@@ -207,6 +214,9 @@ pub(crate) struct Inflate<P> {
     bits: Bits<P>,
     /// The distance code.
     distance: Huffman,
+    /// The failure met, after output it still gives: given at the next pull, then its code at
+    /// each after.
+    failed: Option<(ErrorCode, Option<PdfError>)>,
     /// Whether the current block is the last.
     last: bool,
     /// The literal/length code.
@@ -215,15 +225,22 @@ pub(crate) struct Inflate<P> {
     state: State,
     /// The last 32 KiB of output.
     window: Vec<u8>,
+    /// The work left, where it is bounded.
+    work: Option<Meter<'work>>,
     /// The bytes output so far.
     written: u64,
 }
 
-impl<P: Pull> Inflate<P> {
+impl<'work, P: Pull> Inflate<'work, P> {
     /// Starts the next block (RFC 1951, 3.2.3).
     fn block(&mut self) -> Result<(), PdfError> {
         self.last = self.bits.bit()? == 1;
-        match self.bits.bits(2)? {
+        let kind = self.bits.bits(2)?;
+        if let Some(work) = self.work {
+            let units = if kind == 0 { STORED_WORK } else { BLOCK_WORK };
+            work.take(units, OPERATION)?;
+        }
+        match kind {
             0 => {
                 self.bits.align();
                 let length = self.bits.word()?;
@@ -362,6 +379,7 @@ impl<P: Pull> Inflate<P> {
                 counts: [0; 16],
                 symbols: [0; 288],
             },
+            failed: None,
             last: false,
             literal: Huffman {
                 counts: [0; 16],
@@ -369,6 +387,7 @@ impl<P: Pull> Inflate<P> {
             },
             state: State::Header,
             window: vec![0; WINDOW],
+            work: None,
             written: 0,
         }
     }
@@ -451,18 +470,38 @@ impl<P: Pull> Inflate<P> {
         self.state = State::Done;
         Ok(())
     }
+
+    /// The decoder, the blocks' codes taken from `work`.
+    pub(crate) const fn within(mut self, work: Option<Meter<'work>>) -> Self {
+        self.work = work;
+        self
+    }
 }
 
-impl<P: Pull> Pull for Inflate<P> {
+impl<P: Pull> Pull for Inflate<'_, P> {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
+        if let Some((code, ref mut pending)) = self.failed {
+            return Err(pending
+                .take()
+                .unwrap_or_else(|| PdfError::new(code, OPERATION)));
+        }
         let mut filled = 0_usize;
         for slot in buf.iter_mut() {
-            match self.next_byte()? {
-                Some(byte) => {
+            match self.next_byte() {
+                Ok(Some(byte)) => {
                     *slot = byte;
                     filled = filled.wrapping_add(1);
                 }
-                None => break,
+                Ok(None) => break,
+                // What came before the damage is given first.
+                Err(error) if filled > 0 => {
+                    self.failed = Some((error.code(), Some(error)));
+                    break;
+                }
+                Err(error) => {
+                    self.failed = Some((error.code(), None));
+                    return Err(error);
+                }
             }
         }
         Ok(filled)

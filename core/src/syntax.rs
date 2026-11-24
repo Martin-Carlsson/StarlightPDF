@@ -3,7 +3,7 @@
 
 use core::str::from_utf8;
 
-use crate::input::Source;
+use crate::input::Reads;
 use crate::objects::ObjectId;
 use crate::stream::Feeder;
 use crate::{ErrorCode, PdfError};
@@ -11,11 +11,19 @@ use crate::{ErrorCode, PdfError};
 /// Bytes read at a time.
 const CHUNK: usize = 512;
 
+/// The most bytes [`Reader::lookahead`] gives.
+#[cfg(feature = "rendering")]
+const LOOKAHEAD: usize = 256;
+
 /// Bytes kept of a name read in passing; longer names keep one more, so match no key.
 const NAME_LIMIT: usize = 127;
 
-/// Bytes of a number or keyword; longer ones are [`ErrorCode::Malformed`].
+/// Bytes of a number or keyword; longer ones are [`ErrorCode::Malformed`] outside content.
 const RUN_LIMIT: usize = 255;
+
+/// Bytes [`Reader::word`] keeps.
+#[cfg(feature = "rendering")]
+const WORD: usize = 8;
 
 /// Where a direct object starts, in the source or in an object stream's decoded data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +75,7 @@ pub(crate) struct Located<'data> {
     /// The object stream's decoded data, when one.
     packed: Option<Feeder<'data>>,
     /// The source.
-    source: &'data Source,
+    source: Reads<'data>,
 }
 
 /// Bytes at an offset.
@@ -85,14 +93,34 @@ pub(crate) trait Input {
     ) -> Result<usize, PdfError>;
 }
 
+/// What a string or name past a reader's keep limit does.
+#[cfg(feature = "rendering")]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Long {
+    /// One was dropped since last asked.
+    Dropped,
+    /// It is read to its end and dropped.
+    Drops,
+    /// It fails [`ErrorCode::LimitExceeded`].
+    Fails,
+}
+
 /// Reads tokens and objects from bytes through a small window.
 pub(crate) struct Reader<I> {
+    /// Whether content is read, whose damaged tokens are [`Keyword::Other`].
+    content: bool,
     /// The bytes of `window` read.
     filled: usize,
     /// The bytes.
     input: I,
     /// Whether strings and names are kept whole; otherwise strings are dropped and names cut.
     keep: bool,
+    /// The most bytes kept of one string or name; more are [`ErrorCode::LimitExceeded`] unless
+    /// dropped.
+    keep_limit: usize,
+    /// What a string or name past the keep limit does.
+    #[cfg(feature = "rendering")]
+    long: Long,
     /// The operation errors name.
     operation: &'static str,
     /// What the objects read belong to, for [`At`].
@@ -101,10 +129,15 @@ pub(crate) struct Reader<I> {
     position: u64,
     /// Numbers and keywords looked at ahead and not used, at most two, the next last.
     pushed: [Option<Token>; 2],
+    /// Tokens read since last asked.
+    read: u64,
     /// The offset of `window`.
     start: u64,
     /// Bytes read at `start`.
     window: [u8; CHUNK],
+    /// The first bytes of the last keyword run in content and their count.
+    #[cfg(feature = "rendering")]
+    word: ([u8; WORD], usize),
 }
 
 /// A token, or a reference read as one (ISO 32000-2:2020, 7.2 and 7.3.10).
@@ -215,7 +248,7 @@ impl Value {
     }
 }
 
-impl Input for &Source {
+impl Input for Reads<'_> {
     fn fill(
         &mut self,
         offset: u64,
@@ -242,7 +275,7 @@ impl Input for Located<'_> {
 
 impl<'data> Located<'data> {
     /// The source, or, with `packed`, that object stream's decoded data.
-    pub(crate) const fn new(source: &'data Source, packed: Option<Feeder<'data>>) -> Self {
+    pub(crate) const fn new(source: Reads<'data>, packed: Option<Feeder<'data>>) -> Self {
         Self { packed, source }
     }
 }
@@ -327,6 +360,17 @@ where
         })
     }
 
+    /// Whether a string or name was dropped since last asked; keeping resumes.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn dropped(&mut self) -> bool {
+        let was = self.long == Long::Dropped;
+        if was {
+            self.long = Long::Drops;
+            self.keep = true;
+        }
+        was
+    }
+
     /// The byte a `#` escape in a name stands for, after the `#`; `None` leaves the position.
     fn escape(&mut self) -> Result<Option<u8>, PdfError> {
         let mark = self.position;
@@ -339,6 +383,31 @@ where
             self.position = mark;
         }
         Ok(decoded)
+    }
+
+    /// Fails once more than the most kept of one string or name is, unless dropping, which stops
+    /// keeping it.
+    #[cfg(feature = "rendering")]
+    fn fits(&mut self, length: usize) -> Result<(), PdfError> {
+        if length <= self.keep_limit {
+            Ok(())
+        } else if self.long == Long::Fails {
+            Err(PdfError::new(ErrorCode::LimitExceeded, self.operation))
+        } else {
+            self.keep = false;
+            self.long = Long::Dropped;
+            Ok(())
+        }
+    }
+
+    /// Fails once more than the most kept of one string or name is.
+    #[cfg(not(feature = "rendering"))]
+    fn fits(&self, length: usize) -> Result<(), PdfError> {
+        if length <= self.keep_limit {
+            Ok(())
+        } else {
+            Err(PdfError::new(ErrorCode::LimitExceeded, self.operation))
+        }
     }
 
     /// The first value of the bytes, a container not skipped; nesting at most `depth_limit` deep.
@@ -360,6 +429,9 @@ where
                     if let Some(left) = high.take() {
                         if self.keep {
                             bytes.push(left.wrapping_shl(4) | digit);
+                            self.fits(bytes.len())?;
+                            #[cfg(feature = "rendering")]
+                            self.shed(&mut bytes);
                         }
                     } else {
                         high = Some(digit);
@@ -436,6 +508,9 @@ where
                 bytes.extend_from_slice(rest.get(..plain).unwrap_or_default());
             }
             self.advance(plain);
+            self.fits(bytes.len())?;
+            #[cfg(feature = "rendering")]
+            self.shed(&mut bytes);
             if closed {
                 self.bump();
                 return Ok(Token::String(bytes));
@@ -470,6 +545,31 @@ where
         }
     }
 
+    /// Up to `count` unread bytes, at most [`LOOKAHEAD`], without moving past them; fewer only
+    /// at the end.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn lookahead(&mut self, count: usize) -> Result<&[u8], PdfError> {
+        let wanted = count.min(LOOKAHEAD);
+        let _next: Option<u8> = self.peek()?;
+        let mut from =
+            usize::try_from(self.position.saturating_sub(self.start)).unwrap_or(usize::MAX);
+        let mut held = self.filled.saturating_sub(from);
+        if held > 0 && held < wanted {
+            self.window.copy_within(from..self.filled, 0);
+            let next = self
+                .position
+                .saturating_add(u64::try_from(held).unwrap_or(u64::MAX));
+            let room = self.window.get_mut(held..).unwrap_or_default();
+            let read = self.input.fill(next, room, self.operation)?.min(room.len());
+            held = held.saturating_add(read);
+            self.start = self.position;
+            self.filled = held;
+            from = 0;
+        }
+        let end = from.saturating_add(held.min(wanted));
+        Ok(self.window.get(from..end).unwrap_or_default())
+    }
+
     /// A [`ErrorCode::Malformed`] error.
     fn malformed(&self) -> PdfError {
         PdfError::new(ErrorCode::Malformed, self.operation)
@@ -494,6 +594,9 @@ where
             let next = rest.get(count).copied();
             let more = count > 0 && count == rest.len();
             self.advance(count);
+            self.fits(name.len())?;
+            #[cfg(feature = "rendering")]
+            self.shed(&mut name);
             if next == Some(b'#') {
                 self.bump();
                 let decoded = self.escape()?.unwrap_or(b'#');
@@ -511,15 +614,22 @@ where
     /// A reader of `input` at `position`, failing as `operation`.
     pub(crate) const fn new(input: I, position: u64, operation: &'static str) -> Self {
         Self {
+            content: false,
             input,
             keep: false,
+            keep_limit: usize::MAX,
+            #[cfg(feature = "rendering")]
+            long: Long::Fails,
             operation,
             place: At::new(0, None),
             position,
+            read: 0,
             filled: 0,
             pushed: [None, None],
             start: 0,
             window: [0; CHUNK],
+            #[cfg(feature = "rendering")]
+            word: ([0; WORD], 0),
         }
     }
 
@@ -535,6 +645,7 @@ where
         if let Some(token) = self.pop_back() {
             return Ok(Some(token));
         }
+        self.read = self.read.saturating_add(1);
         self.skip_space()?;
         let Some(byte) = self.next_byte()? else {
             return Ok(None);
@@ -553,7 +664,7 @@ where
             }
             b'(' => self.literal_string(),
             b'/' => self.name(),
-            b')' | b'>' | b'{' | b'}' => Err(self.malformed()),
+            b')' | b'>' | b'{' | b'}' => self.stray(&[byte]),
             _ => self.regular(byte),
         }
         .map(Some)
@@ -588,6 +699,11 @@ where
         self.position
     }
 
+    /// Fills its window at its position now, as a reader that read up to here holds it.
+    pub(crate) fn prime(&mut self) -> Result<(), PdfError> {
+        self.peek().map(drop)
+    }
+
     /// Keeps `token`, looked at ahead, to be read next.
     fn push_back(&mut self, token: Token) {
         if let Some(slot) = self.pushed.iter_mut().find(|slot| slot.is_none()) {
@@ -600,7 +716,8 @@ where
         let mut buffer = [0; RUN_LIMIT];
         buffer[0] = first;
         let mut length = 1_usize;
-        let operation = self.operation;
+        let mut long = false;
+        let (content, operation) = (self.content, self.operation);
         loop {
             let rest = self.ahead()?;
             let count = rest
@@ -608,11 +725,20 @@ where
                 .position(|byte| !is_regular(*byte))
                 .unwrap_or(rest.len());
             let end = length.saturating_add(count);
-            buffer
-                .get_mut(length..end)
-                .ok_or_else(|| PdfError::new(ErrorCode::Malformed, operation))?
-                .copy_from_slice(rest.get(..count).unwrap_or_default());
-            length = end;
+            if let Some(slot) = buffer.get_mut(length..end) {
+                slot.copy_from_slice(rest.get(..count).unwrap_or_default());
+                length = end;
+            } else if content {
+                // Too long for a number or an operator: its end is unimportant.
+                long = true;
+                let room = buffer.get_mut(length..).unwrap_or_default();
+                for (slot, byte) in room.iter_mut().zip(rest) {
+                    *slot = *byte;
+                }
+                length = RUN_LIMIT;
+            } else {
+                return Err(PdfError::new(ErrorCode::Malformed, operation));
+            }
             let more = count > 0 && count == rest.len();
             self.advance(count);
             if !more {
@@ -626,6 +752,13 @@ where
             .unwrap_or(run);
         let point = digits.iter().position(|byte| *byte == b'.');
         let text = from_utf8(run).unwrap_or_default();
+        if long {
+            return self.stray(run);
+        }
+        #[cfg(feature = "rendering")]
+        if content {
+            self.remember(run);
+        }
         match run {
             b"R" => Ok(Token::Keyword(Keyword::Reference)),
             b"endobj" => Ok(Token::Keyword(Keyword::EndObj)),
@@ -655,8 +788,18 @@ where
                     .map(Token::Real)
                     .ok_or_else(|| self.malformed())
             }
-            _ => Err(self.malformed()),
+            _ => self.stray(run),
         }
+    }
+
+    /// Keeps the start of the keyword run `run` for [`Reader::word`].
+    #[cfg(feature = "rendering")]
+    fn remember(&mut self, run: &[u8]) {
+        let count = run.len().min(WORD);
+        for (slot, byte) in self.word.0.iter_mut().zip(run) {
+            *slot = *byte;
+        }
+        self.word.1 = count;
     }
 
     /// Moves to `position`; only forward over decoded stream data.
@@ -665,14 +808,43 @@ where
         self.pushed = [None, None];
     }
 
+    /// Reads a content stream from now on: a stray `)`, `>`, `{` or `}`, a run too long and a
+    /// damaged number are [`Keyword::Other`], whose bytes [`Reader::word`] gives
+    /// (ISO 32000-2:2020, 7.8.2).
+    #[cfg(feature = "rendering")]
+    pub(crate) const fn set_content(&mut self) {
+        self.content = true;
+    }
+
+    /// Reads a string or name past the keep limit to its end and drops it, which [`Self::dropped`]
+    /// tells.
+    #[cfg(feature = "rendering")]
+    pub(crate) const fn set_dropping(&mut self) {
+        self.long = Long::Drops;
+    }
+
     /// Keeps strings and names whole from now on, or not.
     pub(crate) const fn set_keep(&mut self, keep: bool) {
         self.keep = keep;
     }
 
+    /// Keeps at most `bytes` of a string or name; a longer one is [`ErrorCode::LimitExceeded`]
+    /// unless dropped.
+    pub(crate) const fn set_keep_limit(&mut self, bytes: usize) {
+        self.keep_limit = bytes;
+    }
+
     /// Sets the object stream whose data is read, by object number.
     pub(crate) const fn set_place(&mut self, packed: Option<u32>) {
         self.place = At::new(0, packed);
+    }
+
+    /// Empties `bytes` of a string or name being dropped, so they count as nothing.
+    #[cfg(feature = "rendering")]
+    fn shed(&self, bytes: &mut Vec<u8>) {
+        if self.long == Long::Dropped {
+            bytes.clear();
+        }
     }
 
     /// Skips the rest of a container opened as `frame`, nesting at most `depth_limit` deep;
@@ -779,6 +951,23 @@ where
         }
     }
 
+    /// A token that is no PDF syntax: a keyword in content, else [`ErrorCode::Malformed`].
+    #[cfg(feature = "rendering")]
+    fn stray(&mut self, run: &[u8]) -> Result<Token, PdfError> {
+        if !self.content {
+            return Err(self.malformed());
+        }
+        self.remember(run);
+        Ok(Token::Keyword(Keyword::Other))
+    }
+
+    /// A token that is no PDF syntax: [`ErrorCode::Malformed`] without content to read.
+    #[cfg(not(feature = "rendering"))]
+    fn stray(&self, run: &[u8]) -> Result<Token, PdfError> {
+        let _: &[u8] = run;
+        Err(self.malformed())
+    }
+
     /// The start of a stream's data after its dictionary: `stream` and LF or CR LF
     /// (ISO 32000-2:2020, 7.3.8.1); the offset, and whether only a CR ended the line.
     pub(crate) fn stream_start(&mut self) -> Result<(u64, bool), PdfError> {
@@ -833,15 +1022,45 @@ where
         })
     }
 
+    /// Copies unread bytes into `out` as they are; returns the count, 0 only at the end.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn take(&mut self, out: &mut [u8]) -> Result<usize, PdfError> {
+        let rest = self.ahead()?;
+        let count = rest.len().min(out.len());
+        for (slot, byte) in out.iter_mut().zip(rest) {
+            *slot = *byte;
+        }
+        self.advance(count);
+        Ok(count)
+    }
+
     /// The next token; the end of the bytes is [`ErrorCode::Malformed`].
     pub(crate) fn token(&mut self) -> Result<Token, PdfError> {
         self.next_token()?.ok_or_else(|| self.malformed())
+    }
+
+    /// The tokens read since last asked.
+    pub(crate) const fn tokens(&mut self) -> u64 {
+        let count = self.read;
+        self.read = 0;
+        count
     }
 
     /// The next value, a container skipped; nesting at most `depth_limit` deep.
     pub(crate) fn value(&mut self, depth_limit: u32) -> Result<Value, PdfError> {
         let token = self.item()?;
         self.complete(token, depth_limit, true)
+    }
+
+    /// Where its window starts and how many bytes it holds.
+    pub(crate) const fn window(&self) -> (u64, usize) {
+        (self.start, self.filled)
+    }
+
+    /// The first 8 bytes of the last keyword run read in content.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn word(&self) -> &[u8] {
+        self.word.0.get(..self.word.1).unwrap_or_default()
     }
 
     /// The next value in canonical syntax, its strings through `strings`; nesting at most
@@ -944,7 +1163,7 @@ pub(crate) fn matching(word: u64, byte: u8) -> u64 {
 }
 
 /// The value of a hexadecimal digit.
-fn hex_value(byte: u8) -> Option<u8> {
+pub(crate) fn hex_value(byte: u8) -> Option<u8> {
     let value = char::from(byte).to_digit(16)?;
     u8::try_from(value).ok()
 }

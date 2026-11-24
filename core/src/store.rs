@@ -1,23 +1,40 @@
 //! A document's shared state, and its objects read through it (ISO 32000-2:2020, 7.3.8, 7.3.10
 //! and 7.5).
 
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::rc::Rc;
 use alloc::sync::Arc;
+use core::cell::{Cell, RefCell};
+use core::fmt::{self, Debug, Formatter};
+use std::collections::HashSet;
 use std::sync::{Mutex, PoisonError, RwLock};
 
 use crate::compliance::Deviation;
 use crate::decryption::{self, Handler};
-use crate::input::{BytesSourceOptions, Source};
+use crate::input::{BytesSourceOptions, Reads, Source};
 use crate::limits::ResourcePolicy;
-use crate::object_stream;
+use crate::object_stream::{self, Sequences};
 use crate::objects::{ObjectId, XrefEntry, XrefKind};
 use crate::overlay::{Data, Object};
-use crate::pull::Pull;
+use crate::pull::{Held, Pull};
 use crate::repair;
 use crate::security::{Cipher, Encryption};
 use crate::stream::{Feeder, decoder};
 use crate::syntax::{At, Input, Keyword, Located, Reader, Token, Value};
 use crate::xref;
 use crate::{ErrorCode, PdfError, Version, parse_header};
+
+/// The most bytes of one object stream a render keeps decoded.
+const CONTAINER: usize = 0x10_0000;
+
+/// The most bytes of the newest cross-reference stream kept decoded.
+pub(crate) const SECTION: usize = 0x1_0000;
+
+/// The most object streams a render reads as outside renders it records.
+const LAZY: usize = 4096;
+
+/// The most bytes of object streams a render keeps decoded.
+const CONTAINERS: usize = 0x40_0000;
 
 /// The keyword after a stream's data (ISO 32000-2:2020, 7.3.8.1).
 const ENDSTREAM: &[u8] = b"endstream";
@@ -36,6 +53,121 @@ const OPEN: &str = "Document::open";
 
 /// Bytes scanned at a time for [`ENDSTREAM`].
 const SCAN: usize = 4096;
+
+/// Slots of the entries looked up.
+const RECENT: usize = 4096;
+
+/// Work of a token of an object read while work is bounded, beside its bytes'.
+const TOKEN_WORK: u64 = 10;
+
+/// What bounds one operation, a render: its work, and each deviation recorded once.
+#[derive(Default)]
+pub(crate) struct Bounds {
+    /// Object streams and the newest cross-reference stream kept decoded: each read would decode
+    /// them again from their start.
+    pub containers: RefCell<Decoded>,
+    /// The entries looked up, absent ones too, one a slot by number, where a lookup walked more
+    /// than one section or decoded one: bands look them up again.
+    pub entries: RefCell<Vec<Recent>>,
+    /// The bytes the object being read may still take.
+    pub held: Cell<u64>,
+    /// The bytes free beside what the operation holds, where it counts them; see
+    /// [`Objects::allow`].
+    pub room: Cell<Option<u64>>,
+    /// The deviations recorded, by clause and message.
+    pub warned: RefCell<HashSet<(&'static str, &'static str)>>,
+    /// The work left, which reads and decoding take from.
+    pub work: Cell<u64>,
+}
+
+/// An object stream a render keeps decoded.
+struct Container {
+    /// Its data decoded.
+    data: Rc<[u8]>,
+    /// Where its dictionary is.
+    dictionary: At,
+    /// Its members' numbers and where their objects start, after `First`, once one was read.
+    members: Option<Listing>,
+}
+
+impl Container {
+    /// The bytes it holds.
+    fn bytes(&self) -> usize {
+        let members = match self.members {
+            Some(Listing::Listed(_, ref listed)) => listed.len(),
+            Some(Listing::Unlisted) | None => 0,
+        };
+        self.data
+            .len()
+            .saturating_add(members.saturating_mul(size_of::<(u32, u64)>()))
+    }
+}
+
+/// What a render keeps decoded.
+#[derive(Default)]
+pub(crate) struct Decoded {
+    /// The bytes of `streams`.
+    bytes: usize,
+    /// Whether an object stream was refused for room since last asked.
+    crowded: bool,
+    /// The object streams not kept, too long or damaged, whose members are read as outside
+    /// renders; at most [`LAZY`].
+    lazy: BTreeSet<u32>,
+    /// The numbers of `streams`, the first kept first.
+    order: VecDeque<u32>,
+    /// The bytes of `sections`.
+    section_bytes: usize,
+    /// The offsets of `sections`, the first kept first.
+    section_order: VecDeque<u64>,
+    /// Cross-reference streams' data, by offset, but the newest where the store keeps it.
+    sections: BTreeMap<u64, Arc<[u8]>>,
+    /// Object streams refused once for room; refused again, they are not kept.
+    starved: BTreeSet<u32>,
+    /// The object streams kept, by number.
+    streams: BTreeMap<u32, Container>,
+}
+
+impl Decoded {
+    /// Drops the first kept but `keep` until all fit in [`CONTAINERS`].
+    fn evict(&mut self, keep: u32) {
+        let mut turns = self.order.len();
+        while self.bytes > CONTAINERS && turns > 0 {
+            turns = turns.saturating_sub(1);
+            let Some(number) = self.order.pop_front() else {
+                break;
+            };
+            if number == keep {
+                self.order.push_back(number);
+                continue;
+            }
+            if let Some(gone) = self.streams.remove(&number) {
+                self.bytes = self.bytes.saturating_sub(gone.bytes());
+            }
+        }
+    }
+
+    /// Reads object stream `number`'s members as outside renders from now on.
+    fn not_kept(&mut self, number: u32) {
+        if self.lazy.len() >= LAZY {
+            self.lazy.clear();
+        }
+        let _new = self.lazy.insert(number);
+    }
+}
+
+/// An object stream's members' numbers and offsets, or that they are read as outside renders.
+enum Listing {
+    /// `First` and each member's number and offset after it.
+    Listed(u64, Vec<(u32, u64)>),
+    /// Too many to list, or damaged.
+    Unlisted,
+}
+
+/// A kept object stream's data and where a member's object starts in it.
+type Member = (Rc<[u8]>, u64);
+
+/// An entry looked up: its number and what was found.
+type Recent = Option<(u32, Option<XrefEntry>)>;
 
 /// A dictionary's keys and their values.
 #[derive(Clone, Debug)]
@@ -82,11 +214,42 @@ enum Kept {
     Reference(ObjectId),
 }
 
+/// What reports progress and staleness as work is taken.
+pub(crate) trait Pacing {
+    /// Reports progress and checks staleness when due.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorCode::Cancelled`] when the caller cancels, or the document changed.
+    fn pace(&self) -> Result<(), PdfError>;
+}
+
+/// The work left, where it is bounded, and what reports progress as it is taken.
+#[derive(Clone, Copy)]
+pub(crate) struct Meter<'store> {
+    /// The work left.
+    left: &'store Cell<u64>,
+    /// What reports progress and staleness.
+    pace: Option<&'store dyn Pacing>,
+}
+
+impl Debug for Meter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Meter")
+            .field("left", &self.left.get())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A document's objects, read for one operation.
 #[derive(Clone, Copy)]
 pub(crate) struct Objects<'store> {
+    /// What bounds the operation, where something does.
+    bounds: Option<&'store Bounds>,
     /// The operation errors name.
     operation: &'static str,
+    /// Its pace, where reads report progress.
+    pace: Option<&'store dyn Pacing>,
     /// Entries found by scanning the file, read in place of the store's, sorted by number.
     scanned: Option<&'store [XrefEntry]>,
     /// The state.
@@ -114,8 +277,11 @@ pub(crate) struct Store {
     rebuilt: RwLock<Option<Vec<XrefEntry>>>,
     /// The entry looked up last, so reading it again needs no new lookup.
     recent: Mutex<Option<XrefEntry>>,
-    /// Held while [`Objects::repair`] runs.
-    repairing: Mutex<()>,
+    /// Held while [`Objects::repair`] runs; whether it recorded the table damaged.
+    repairing: Mutex<bool>,
+    /// The newest cross-reference section's data decoded, where a stream's and at most
+    /// [`SECTION`] bytes: each lookup would decode it again.
+    section: Mutex<Option<Arc<[u8]>>>,
     /// The security handler, when encrypted.
     security: Option<Handler>,
     /// The source.
@@ -187,6 +353,28 @@ impl Indexed {
 }
 
 impl<'store> Objects<'store> {
+    /// Lets the object to be read take a quarter of the decoded limit, and of the room free beside
+    /// what the operation holds, under bounds: growing its lists and strings may take three times
+    /// what they hold.
+    fn allow(self) {
+        if let Some(bounds) = self.bounds {
+            let free = bounds.room.get().map_or(u64::MAX, |room| room >> 2_u32);
+            bounds.held.set((self.decoded_limit() >> 2_u32).min(free));
+        }
+    }
+
+    /// Keeps a reader's strings and names within what an object may take, under bounds, so that
+    /// one fails while it grows.
+    fn bound<I>(self, reader: &mut Reader<I>)
+    where
+        I: Input,
+    {
+        if self.bounds.is_some() {
+            let most = self.decoded_limit() >> 2_u32;
+            reader.set_keep_limit(usize::try_from(most).unwrap_or(usize::MAX));
+        }
+    }
+
     /// The catalog's id, the trailer's `Root` (ISO 32000-2:2020, 7.5.5 and 7.7.2).
     pub(crate) fn catalog(self) -> Result<ObjectId, PdfError> {
         let root = self.get(self.trailer()?, b"Root")?;
@@ -198,8 +386,24 @@ impl<'store> Objects<'store> {
         Ok(id)
     }
 
+    /// Takes the work of the tokens `reader` read since last asked, where work is bounded.
+    pub(crate) fn charge<I>(self, reader: &mut Reader<I>) -> Result<(), PdfError>
+    where
+        I: Input,
+    {
+        let tokens = reader.tokens();
+        self.work().map_or(Ok(()), |work| {
+            work.take(tokens.saturating_mul(TOKEN_WORK), self.operation)
+        })
+    }
+
     /// The data of object stream `number` and its dictionary (ISO 32000-2:2020, 7.5.7).
     fn container(self, number: u32) -> Result<(Box<dyn Pull + 'store>, At), PdfError> {
+        if let Some(bounds) = self.bounds
+            && let Some(kept) = bounds.containers.borrow().streams.get(&number)
+        {
+            return Ok((Box::new(Held::new(Rc::clone(&kept.data))), kept.dictionary));
+        }
         let generation = self
             .entry(number)?
             .ok_or_else(|| self.malformed())?
@@ -211,10 +415,77 @@ impl<'store> Objects<'store> {
             .dictionary()
             .ok_or_else(|| self.malformed())?;
         let (start, length) = self.extent(&mut reader, dictionary, true)?;
-        Ok((
-            decoder(self, Some(id), start, length, dictionary, false)?,
-            dictionary,
-        ))
+        let mut data = decoder(self, Some(id), start, length, dictionary, false)?;
+        // A render keeps what fits, beside what it holds, for the members read after.
+        let Some(bounds) = self.bounds else {
+            return Ok((data, dictionary));
+        };
+        if bounds.containers.borrow().lazy.contains(&number) {
+            return Ok((data, dictionary));
+        }
+        match self.whole(&mut *data, CONTAINER) {
+            Ok(Some(bytes))
+                if self
+                    .fits_room(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+                    .is_err() =>
+            {
+                // No room: the caches give way first, and it is refused only when that was
+                // not enough.
+                let mut kept = bounds.containers.borrow_mut();
+                if kept.starved.insert(number) {
+                    kept.crowded = true;
+                } else {
+                    kept.not_kept(number);
+                }
+                drop(kept);
+                drop(bytes);
+                data = decoder(self, Some(id), start, length, dictionary, false)?;
+                return Ok((data, dictionary));
+            }
+            Ok(Some(bytes)) => {
+                let held: Rc<[u8]> = Rc::from(bytes);
+                let mut kept = bounds.containers.borrow_mut();
+                kept.bytes = kept.bytes.saturating_add(held.len());
+                kept.order.push_back(number);
+                let _replaced = kept.streams.insert(
+                    number,
+                    Container {
+                        data: Rc::clone(&held),
+                        dictionary,
+                        members: None,
+                    },
+                );
+                kept.evict(number);
+                return Ok((Box::new(Held::new(held)), dictionary));
+            }
+            // Damaged: its members before the damage are read as outside renders.
+            Ok(None) => {}
+            Err(error) if error.code() == ErrorCode::Malformed => {}
+            Err(error) => return Err(error),
+        }
+        // Longer than is kept, no room, or damaged: read anew, as each time after.
+        bounds.containers.borrow_mut().not_kept(number);
+        data = decoder(self, Some(id), start, length, dictionary, false)?;
+        Ok((data, dictionary))
+    }
+
+    /// The bytes of the object streams an operation keeps and of the cross-reference stream kept.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn containers(self) -> u64 {
+        let section = self
+            .store
+            .section
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map_or(0, |kept| kept.len());
+        let total = self.bounds.map_or(section, |bounds| {
+            let kept = bounds.containers.borrow();
+            section
+                .saturating_add(kept.section_bytes)
+                .saturating_add(kept.bytes)
+        });
+        u64::try_from(total).unwrap_or(u64::MAX)
     }
 
     /// Bytes one stream may decode to.
@@ -231,8 +502,8 @@ impl<'store> Objects<'store> {
     /// [`ErrorCode::Malformed`] when strict.
     pub(crate) fn deviation(
         self,
-        clause: &str,
-        message: &str,
+        clause: &'static str,
+        message: &'static str,
         offset: Option<u64>,
     ) -> Result<(), PdfError> {
         if self.store.strict {
@@ -241,6 +512,12 @@ impl<'store> Objects<'store> {
                 offset,
                 ..self.malformed()
             });
+        }
+        if let Some(bounds) = self.bounds {
+            // A render reads again for every band, whose count is not the document's.
+            if !bounds.warned.borrow_mut().insert((clause, message)) {
+                return Ok(());
+            }
         }
         let mut warnings = self
             .store
@@ -278,9 +555,10 @@ impl<'store> Objects<'store> {
         self,
         offset: u64,
         id: ObjectId,
-    ) -> Result<Reader<&'store Source>, PdfError> {
-        let mut reader = Reader::new(&self.store.source, offset, self.operation);
-        if xref::object_header(&mut reader, self.operation)?
+    ) -> Result<Reader<Reads<'store>>, PdfError> {
+        let mut reader = Reader::new(self.source(), offset, self.operation);
+        self.bound(&mut reader);
+        if xref::object_header(&mut reader, self)?
             != Some((i64::from(id.number), i64::from(id.generation)))
         {
             return Err(self.malformed());
@@ -288,13 +566,29 @@ impl<'store> Objects<'store> {
         Ok(reader)
     }
 
+    /// Gives up the object and cross-reference streams a render keeps, so that what needs the
+    /// room has it.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn drop_containers(self) {
+        if let Some(bounds) = self.bounds {
+            let mut kept = bounds.containers.borrow_mut();
+            kept.streams.clear();
+            kept.order.clear();
+            kept.bytes = 0;
+            kept.sections.clear();
+            kept.section_order.clear();
+            kept.section_bytes = 0;
+        }
+    }
+
     /// Whether `endstream` follows `offset`, after white-space.
     fn ends(self, offset: u64) -> Result<bool, PdfError> {
-        let mut reader = Reader::new(&self.store.source, offset, self.operation);
+        let mut reader = Reader::new(self.source(), offset, self.operation);
         match reader.next_token() {
             Ok(found) => Ok(found == Some(Token::Keyword(Keyword::EndStream))),
-            Err(error) if error.code() == ErrorCode::Io => Err(error),
-            Err(_) => Ok(false),
+            // Only damage means no `endstream`; the operation's end is not damage.
+            Err(error) if error.code() == ErrorCode::Malformed => Ok(false),
+            Err(error) => Err(error),
         }
     }
 
@@ -324,6 +618,15 @@ impl<'store> Objects<'store> {
         if let Some(found) = rebuilt() {
             return Ok(found);
         }
+        let looked = self.bounds.and_then(|bounds| {
+            let held = bounds.entries.borrow();
+            held.get(slot(number, held.len())).copied().flatten()
+        });
+        if let Some((held, found)) = looked
+            && held == number
+        {
+            return Ok(found);
+        }
         let recent = || {
             self.store
                 .recent
@@ -334,7 +637,7 @@ impl<'store> Objects<'store> {
         if hit.is_some() {
             return Ok(hit);
         }
-        let found = match xref::entry(self, self.store.newest, number) {
+        let (found, further) = match xref::entry(self, self.store.newest, number) {
             Err(error) if error.code() == ErrorCode::Malformed => {
                 self.repair()?;
                 return Ok(rebuilt().flatten());
@@ -343,6 +646,9 @@ impl<'store> Objects<'store> {
         };
         if found.is_some() {
             *recent() = found;
+        }
+        if further {
+            self.remember(number, found);
         }
         Ok(found)
     }
@@ -368,7 +674,7 @@ impl<'store> Objects<'store> {
             Some(Value::Reference(id)) if indirect_length => self.length(id)?,
             Some(_) | None => None,
         };
-        let size = self.store.source.size(self.operation)?;
+        let size = self.source().size(self.operation)?;
         if let Some(bytes) = length
             && let Some(end) = start.checked_add(bytes).filter(|end| *end <= size)
             && self.ends(end)?
@@ -404,7 +710,7 @@ impl<'store> Objects<'store> {
         let at = keyword.ok_or_else(|| self.malformed())?;
         let from = at.saturating_sub(2).max(start);
         let mut buffer = [0; 2];
-        let count = self.store.source.read(
+        let count = self.source().read(
             from,
             buffer
                 .get_mut(..usize::try_from(at.saturating_sub(from)).unwrap_or_default())
@@ -424,6 +730,27 @@ impl<'store> Objects<'store> {
         Ok(at.saturating_sub(eol))
     }
 
+    /// Fails [`ErrorCode::LimitExceeded`] where `bytes` more are past the room free beside what
+    /// the operation holds, where it counts it.
+    pub(crate) fn fits_room(self, bytes: u64) -> Result<(), PdfError> {
+        match self.bounds.and_then(|bounds| bounds.room.get()) {
+            Some(room) if bytes > room => {
+                Err(PdfError::new(ErrorCode::LimitExceeded, self.operation))
+            }
+            Some(_) | None => Ok(()),
+        }
+    }
+
+    /// Whether a cross-reference stream of `bytes` decoded fits the room a render leaves; when
+    /// not, what is kept for reuse gives way.
+    pub(crate) fn fits_section(self, bytes: u64) -> bool {
+        let fits = self.fits_room(bytes).is_ok();
+        if !fits && let Some(bounds) = self.bounds {
+            bounds.containers.borrow_mut().crowded = true;
+        }
+        fits
+    }
+
     /// The value of key `key` of the dictionary at `dictionary`, the last if repeated, reading the
     /// whole dictionary (ISO 32000-2:2020, 7.3.7).
     pub(crate) fn get(self, dictionary: At, key: &[u8]) -> Result<Option<Value>, PdfError> {
@@ -441,7 +768,9 @@ impl<'store> Objects<'store> {
                 Kept::At(offset) => {
                     let mut reader = self.reader(At::new(offset, dictionary.packed()))?;
                     reader.set_keep(true);
-                    reader.value(self.inner_depth())?
+                    let value = reader.value(self.inner_depth())?;
+                    self.charge(&mut reader)?;
+                    value
                 }
                 Kept::Boolean(flag) => Value::Boolean(flag),
                 Kept::Dictionary(at) => Value::Dictionary(at),
@@ -452,6 +781,21 @@ impl<'store> Objects<'store> {
             }));
         }
         self.index(dictionary, key)
+    }
+
+    /// Counts an object and `payload` more bytes of the object being read, under bounds.
+    fn hold(self, payload: usize) -> Result<(), PdfError> {
+        let Some(bounds) = self.bounds else {
+            return Ok(());
+        };
+        let bytes = size_of::<Object>().saturating_add(payload);
+        let left = bounds
+            .held
+            .get()
+            .checked_sub(u64::try_from(bytes).unwrap_or(u64::MAX))
+            .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, self.operation))?;
+        bounds.held.set(left);
+        Ok(())
     }
 
     /// The value of key `key` of the dictionary at `dictionary`, reading it whole and keeping its
@@ -493,6 +837,7 @@ impl<'store> Objects<'store> {
                     reader.set_keep(matches);
                     let value = reader.value(inner)?;
                     reader.set_keep(false);
+                    self.charge(&mut reader)?;
                     if indexed.complete && !indexed.add(&name, start, &value) {
                         indexed.complete = false;
                     }
@@ -517,6 +862,55 @@ impl<'store> Objects<'store> {
         self.depth_limit().saturating_sub(1).max(1)
     }
 
+    /// Keeps `data`, the cross-reference stream at `offset` decoded: the newest in the store
+    /// where small, else in a render.
+    pub(crate) fn keep_section(self, offset: u64, data: Arc<[u8]>) {
+        if offset == self.store.newest && data.len() <= SECTION {
+            *self
+                .store
+                .section
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(data);
+            return;
+        }
+        let Some(bounds) = self.bounds else {
+            return;
+        };
+        let most = self.sections_most();
+        let mut kept = bounds.containers.borrow_mut();
+        kept.section_bytes = kept.section_bytes.saturating_add(data.len());
+        kept.section_order.push_back(offset);
+        if let Some(old) = kept.sections.insert(offset, data) {
+            kept.section_bytes = kept.section_bytes.saturating_sub(old.len());
+        }
+        // The first kept give way to the last.
+        while kept.section_bytes > most && kept.section_order.len() > 1 {
+            let Some(first) = kept.section_order.pop_front() else {
+                break;
+            };
+            if let Some(gone) = kept.sections.remove(&first) {
+                kept.section_bytes = kept.section_bytes.saturating_sub(gone.len());
+            }
+        }
+    }
+
+    /// The data of the cross-reference stream at `offset` decoded, where kept.
+    pub(crate) fn kept_section(self, offset: u64) -> Option<Arc<[u8]>> {
+        let shared = (offset == self.store.newest)
+            .then(|| {
+                self.store
+                    .section
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            })
+            .flatten();
+        shared.or_else(|| {
+            let bounds = self.bounds?;
+            bounds.containers.borrow().sections.get(&offset).cloned()
+        })
+    }
+
     /// The integer `Length` of a stream in object `id`, in use and not in an object stream;
     /// `None` when it is not (ISO 32000-2:2020, 7.3.8.2).
     fn length(self, id: ObjectId) -> Result<Option<u64>, PdfError> {
@@ -535,7 +929,10 @@ impl<'store> Objects<'store> {
     /// A reader after the header of object `id`, in use in the file body; `None` when it is not.
     /// A header missing where the table puts it rebuilds the table (ISO 32000-2:2020, 7.3.10 and
     /// 7.5.4).
-    pub(crate) fn located(self, id: ObjectId) -> Result<Option<Reader<&'store Source>>, PdfError> {
+    pub(crate) fn located(self, id: ObjectId) -> Result<Option<Reader<Reads<'store>>>, PdfError> {
+        if self.work().is_some_and(|work| work.left.get() == 0) {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, self.operation));
+        }
         loop {
             let table = self.scanned.is_none() && !self.store.is_rebuilt();
             let Some(entry) = self
@@ -552,9 +949,74 @@ impl<'store> Objects<'store> {
         }
     }
 
+    /// Whether the stored object `id` is an array of more than `most` items, counted without
+    /// reading them into memory.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn longer(self, id: ObjectId, most: usize) -> Result<bool, PdfError> {
+        let Value::Array(at) = self.resolve(id)? else {
+            return Ok(false);
+        };
+        let mut reader = self.reader(at)?;
+        drop(reader.token()?);
+        for _ in 0..=most {
+            let token = reader.item()?;
+            if token == Token::ArrayEnd {
+                return Ok(false);
+            }
+            drop(reader.complete(token, self.inner_depth(), true)?);
+            self.charge(&mut reader)?;
+        }
+        Ok(true)
+    }
+
     /// A [`ErrorCode::Malformed`] error.
     pub(crate) fn malformed(self) -> PdfError {
         PdfError::new(ErrorCode::Malformed, self.operation)
+    }
+
+    /// Where object `number`, at the entry's index in a kept object stream, starts in its data,
+    /// its members' places read once; none where it is not kept.
+    fn member_start(self, entry: XrefEntry, number: u32) -> Result<Option<Member>, PdfError> {
+        let Some(bounds) = self.bounds else {
+            return Ok(None);
+        };
+        let mut kept = bounds.containers.borrow_mut();
+        let Some(container) = kept.streams.get_mut(&entry.stream) else {
+            return Ok(None);
+        };
+        if container.members.is_none() {
+            let data: Box<dyn Pull + '_> = Box::new(Held::new(Rc::clone(&container.data)));
+            let listed = match object_stream::members(
+                self,
+                data,
+                container.dictionary,
+                container.data.len(),
+            ) {
+                Ok(Some((first, members))) => Listing::Listed(first, members),
+                // Too many, or damaged: read as outside renders.
+                Ok(None) => Listing::Unlisted,
+                Err(error) if error.code() == ErrorCode::Malformed => Listing::Unlisted,
+                Err(error) => return Err(error),
+            };
+            container.members = Some(listed);
+            let grown = container.bytes().saturating_sub(container.data.len());
+            kept.bytes = kept.bytes.saturating_add(grown);
+            kept.evict(entry.stream);
+        }
+        let Some(listed) = kept.streams.get(&entry.stream) else {
+            return Ok(None);
+        };
+        let Some(Listing::Listed(first, ref members)) = listed.members else {
+            return Ok(None);
+        };
+        let index = usize::try_from(entry.index).unwrap_or(usize::MAX);
+        match members.get(index) {
+            Some(&(found, offset)) if found == number => Ok(Some((
+                Rc::clone(&listed.data),
+                first.checked_add(offset).ok_or_else(|| self.malformed())?,
+            ))),
+            Some(_) | None => Err(self.malformed()),
+        }
     }
 
     /// Object `id` in canonical syntax, a stream's dictionary for a stream; `null` when free or
@@ -593,6 +1055,7 @@ impl<'store> Objects<'store> {
     /// read decrypted, so without its own `Crypt` filter; null when free or missing
     /// (ISO 32000-2:2020, 7.3.10, 7.4.10, 7.6.2).
     pub(crate) fn owned(self, id: ObjectId) -> Result<Object, PdfError> {
+        self.allow();
         let depth = self.depth_limit();
         if let Some(mut reader) = self.located(id)? {
             let handler = self.strings(&mut reader, id)?;
@@ -650,6 +1113,68 @@ impl<'store> Objects<'store> {
         }
     }
 
+    /// The value of `key` of the dictionary at `dictionary` in object `id`, read into memory as
+    /// [`Objects::owned`] reads it; the other entries are passed over unread, so a large one takes no
+    /// memory (ISO 32000-2:2020, 7.3.7).
+    #[cfg(feature = "rendering")]
+    pub(crate) fn owned_entry(
+        self,
+        id: ObjectId,
+        dictionary: At,
+        key: &[u8],
+    ) -> Result<Option<Object>, PdfError> {
+        let Some(value) = self.get(dictionary, key)? else {
+            return Ok(None);
+        };
+        // Strings in an object stream are not encrypted on their own (7.5.7, 7.6.2).
+        let handler = self
+            .security()
+            .filter(|found| found.encrypts(id) && dictionary.packed().is_none());
+        let mut strings = |bytes: Vec<u8>| match handler {
+            Some(found) => found.string(id, &bytes, self.operation),
+            None => Ok(bytes),
+        };
+        let at = match value {
+            Value::Array(at) | Value::Dictionary(at) => at,
+            Value::Boolean(flag) => return Ok(Some(Object::Boolean(flag))),
+            Value::Integer(number) => return Ok(Some(Object::Integer(number))),
+            Value::Name(name) => return Ok(Some(Object::Name(name))),
+            Value::Null => return Ok(Some(Object::Null)),
+            Value::Real(number) => return Ok(Some(Object::Real(number))),
+            Value::Reference(target) => return Ok(Some(Object::Reference(target))),
+            Value::String(bytes) => return Ok(Some(Object::String(strings(bytes)?))),
+        };
+        self.allow();
+        let mut reader = self.reader(at)?;
+        reader.set_keep(true);
+        let token = reader.item()?;
+        self.read(&mut reader, token, self.depth_limit(), &mut strings)
+            .map(Some)
+    }
+
+    /// Object `id`, as [`Objects::owned`] reads it; a member of an object stream is read on in
+    /// `sequences` from the member read before, where that gives what reading it alone gives.
+    pub(crate) fn owned_in(
+        self,
+        id: ObjectId,
+        sequences: &mut Sequences<'store>,
+    ) -> Result<Object, PdfError> {
+        sequences.renew(self.store.is_rebuilt());
+        if let Some(entry) = self.entry(id.number)?
+            && entry.kind == XrefKind::Compressed
+            && id.generation == 0
+            && !sequences.refuses(entry.stream)
+        {
+            match self.sequenced(id, entry, sequences) {
+                Ok(Some(object)) => return Ok(object),
+                Ok(None) => {}
+                // Read alone, so that it fails or not as it would alone.
+                Err(_) => sequences.refuse(entry.stream),
+            }
+        }
+        self.owned(id)
+    }
+
     /// The trailer dictionary read into memory; an empty one without a source (ISO 32000-2:2020,
     /// 7.5.5).
     pub(crate) fn owned_trailer(self) -> Result<Object, PdfError> {
@@ -658,17 +1183,82 @@ impl<'store> Objects<'store> {
         };
         let mut reader = self.reader(at)?;
         reader.set_keep(true);
+        self.allow();
+        self.room(&mut reader);
         let token = reader.item()?;
         self.read(&mut reader, token, self.depth_limit(), &mut Ok)
+    }
+
+    /// These objects, reporting progress through `pace` as their reads take work.
+    #[cfg(feature = "rendering")]
+    pub(crate) const fn paced<'view>(self, pace: &'view dyn Pacing) -> Objects<'view>
+    where
+        'store: 'view,
+    {
+        Objects {
+            bounds: self.bounds,
+            operation: self.operation,
+            pace: Some(pace),
+            scanned: self.scanned,
+            store: self.store,
+        }
     }
 
     /// A reader at object `number` in the object stream `entry` names, at the entry's index
     /// (ISO 32000-2:2020, 7.5.7).
     fn packed(self, entry: XrefEntry, number: u32) -> Result<Reader<Feeder<'store>>, PdfError> {
         let (data, dictionary) = self.container(entry.stream)?;
+        if let Some((bytes, start)) = self.member_start(entry, number)? {
+            // Its members' places are known: only its own object is read.
+            drop(data);
+            let at = usize::try_from(start).unwrap_or(usize::MAX);
+            let held: Box<dyn Pull + 'store> = Box::new(Held::at(bytes, at));
+            let mut reader = Reader::new(Feeder::at(held, start), start, self.operation);
+            reader.set_place(Some(entry.stream));
+            self.bound(&mut reader);
+            return Ok(reader);
+        }
         let mut reader = object_stream::member(self, data, dictionary, number, entry.index)?;
         reader.set_place(Some(entry.stream));
+        self.bound(&mut reader);
         Ok(reader)
+    }
+
+    /// Whether the stream whose dictionary is at `dictionary` has only Flate filters and no
+    /// parameters, or no filter and no encryption: a failure in its data then falls at the same
+    /// byte for any read sizes, short of the decoded limit.
+    fn plain(self, dictionary: At) -> Result<bool, PdfError> {
+        if self.get(dictionary, b"DecodeParms")?.is_some() {
+            return Ok(false);
+        }
+        let flate = |value: &Value| value.is_name(b"FlateDecode");
+        Ok(match self.get(dictionary, b"Filter")? {
+            None => self.store.security.is_none(),
+            Some(Value::Array(at)) => {
+                let mut items = self.reader(at)?;
+                let mut any = false;
+                let mut all = true;
+                loop {
+                    match items.token()? {
+                        Token::ArrayStart => {}
+                        Token::ArrayEnd => break,
+                        Token::Name(name) => {
+                            any = true;
+                            all &= name.as_slice() == b"FlateDecode";
+                        }
+                        Token::DictionaryEnd
+                        | Token::DictionaryStart
+                        | Token::Integer(_)
+                        | Token::Keyword(_)
+                        | Token::Real(_)
+                        | Token::Reference(_)
+                        | Token::String(_) => return Ok(false),
+                    }
+                }
+                any && all
+            }
+            Some(ref single) => flate(single),
+        })
     }
 
     /// The object that starts with `token`, read into memory, nesting at most `depth` deep, its
@@ -689,11 +1279,14 @@ impl<'store> Objects<'store> {
                 .checked_sub(1)
                 .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, self.operation))
         };
+        self.hold(0)?;
+        self.charge(reader)?;
         Ok(match token {
             Token::ArrayStart => {
                 let below = inner()?;
                 let mut items = Vec::new();
                 loop {
+                    self.room(reader);
                     let item = reader.item()?;
                     if item == Token::ArrayEnd {
                         break Object::Array(items);
@@ -705,9 +1298,12 @@ impl<'store> Objects<'store> {
                 let below = inner()?;
                 let mut entries: Vec<(Vec<u8>, Object)> = Vec::new();
                 loop {
+                    self.room(reader);
                     match reader.item()? {
                         Token::DictionaryEnd => break Object::Dictionary(last_values(entries)),
                         Token::Name(key) => {
+                            self.hold(key.len())?;
+                            self.room(reader);
                             let item = reader.item()?;
                             let value = self.read(reader, item, below, strings)?;
                             entries.push((key, value));
@@ -727,10 +1323,16 @@ impl<'store> Objects<'store> {
             Token::Keyword(Keyword::False) => Object::Boolean(false),
             Token::Keyword(Keyword::Null) => Object::Null,
             Token::Keyword(Keyword::True) => Object::Boolean(true),
-            Token::Name(name) => Object::Name(name),
+            Token::Name(name) => {
+                self.hold(name.len())?;
+                Object::Name(name)
+            }
             Token::Real(value) => Object::Real(value),
             Token::Reference(id) => Object::Reference(id),
-            Token::String(bytes) => Object::String(strings(bytes)?),
+            Token::String(bytes) => {
+                self.hold(bytes.len())?;
+                Object::String(strings(bytes)?)
+            }
             Token::ArrayEnd
             | Token::DictionaryEnd
             | Token::Keyword(
@@ -751,16 +1353,36 @@ impl<'store> Objects<'store> {
             .packed()
             .map(|number| self.container(number).map(|(data, _)| Feeder::new(data)))
             .transpose()?;
-        let input = Located::new(&self.store.source, packed);
+        let input = Located::new(self.source(), packed);
         let mut reader = Reader::new(input, at.offset(), self.operation);
         reader.set_place(at.packed());
+        self.bound(&mut reader);
         Ok(reader)
+    }
+
+    /// Keeps what a lookup of object `number` found, where an operation keeps it, so that it is
+    /// not looked up again.
+    fn remember(self, number: u32, found: Option<XrefEntry>) {
+        let Some(bounds) = self.bounds else {
+            return;
+        };
+        let mut kept = bounds.entries.borrow_mut();
+        if kept.is_empty() {
+            kept.resize(RECENT, None);
+        }
+        let at = slot(number, kept.len());
+        if let Some(place) = kept.get_mut(at) {
+            *place = Some((number, found));
+        }
     }
 
     /// Rebuilds the entries by scanning the file, once, keeping the trailer and security handler,
     /// and records the deviation (ISO 32000-2:2020, 7.5.4).
     fn repair(self) -> Result<(), PdfError> {
-        let _held = self
+        // Charged to the operation, which repairs again if it ends first, and not paced, as the
+        // lock is held.
+        let objects = Self { pace: None, ..self };
+        let mut held = self
             .store
             .repairing
             .lock()
@@ -768,11 +1390,16 @@ impl<'store> Objects<'store> {
         if self.store.is_rebuilt() {
             return Ok(());
         }
-        self.deviation("7.5.4", "cross-reference table damaged or missing", None)?;
-        let mut found = repair::scan(self, self.store.object_limit)?;
+        // Recorded before the scan, once, though a scan cut short is done again.
+        if !*held {
+            self.deviation("7.5.4", "cross-reference table damaged or missing", None)?;
+            *held = true;
+        }
+        let mut found = repair::scan(objects, self.store.object_limit)?;
         let entries = repair::newest(found.take_entries());
         self.store
-            .set_rebuilt(self.with_members(&entries, found.streams())?);
+            .set_rebuilt(objects.with_members(&entries, found.streams())?);
+        drop(held);
         Ok(())
     }
 
@@ -790,13 +1417,28 @@ impl<'store> Objects<'store> {
         }
     }
 
+    /// Keeps a reader's next string or name within the room left for the object being read, under
+    /// bounds, so that it fails while it grows.
+    fn room<I>(self, reader: &mut Reader<I>)
+    where
+        I: Input,
+    {
+        if let Some(bounds) = self.bounds {
+            let left = bounds
+                .held
+                .get()
+                .saturating_sub(u64::try_from(size_of::<Object>()).unwrap_or(u64::MAX));
+            reader.set_keep_limit(usize::try_from(left).unwrap_or(usize::MAX));
+        }
+    }
+
     /// Where the first `endstream` from `start` lies, if any.
     fn search_endstream(self, start: u64, size: u64) -> Result<Option<u64>, PdfError> {
         let mut buffer = vec![0; SCAN];
         let mut at = start;
         let step = u64::try_from(SCAN.saturating_sub(ENDSTREAM.len())).unwrap_or(1);
         while at < size {
-            let count = self.store.source.read(at, &mut buffer, self.operation)?;
+            let count = self.source().read(at, &mut buffer, self.operation)?;
             if let Some(found) = buffer
                 .get(..count)
                 .unwrap_or_default()
@@ -812,9 +1454,65 @@ impl<'store> Objects<'store> {
         Ok(None)
     }
 
+    /// The most bytes of the cross-reference stream at `offset` kept decoded: the newest only,
+    /// and small, but in a render, which keeps any and gives them up when it needs the room.
+    pub(crate) fn section_most(self, offset: u64) -> usize {
+        if self.bounds.is_some() {
+            self.sections_most()
+        } else if offset == self.store.newest {
+            SECTION
+        } else {
+            0
+        }
+    }
+
+    /// The most bytes of cross-reference streams a render keeps decoded: a quarter of the decoded
+    /// limit, at least [`SECTION`].
+    fn sections_most(self) -> usize {
+        usize::try_from(self.decoded_limit() >> 2_u32)
+            .unwrap_or(usize::MAX)
+            .max(SECTION)
+    }
+
     /// The security handler, when encrypted.
     pub(crate) const fn security(self) -> Option<&'store Handler> {
         self.store.security.as_ref()
+    }
+
+    /// Object `id`, at `entry` in an object stream whose data is only Flate or not filtered,
+    /// read on in `sequences`; none where it must be read alone.
+    fn sequenced(
+        self,
+        id: ObjectId,
+        entry: XrefEntry,
+        sequences: &mut Sequences<'store>,
+    ) -> Result<Option<Object>, PdfError> {
+        let open = sequences.of(entry.stream, || {
+            let (pairs, dictionary) = self.container(entry.stream)?;
+            if !self.plain(dictionary)? {
+                return Err(self.malformed());
+            }
+            let (data, _) = self.container(entry.stream)?;
+            object_stream::sequence(self, (pairs, data), dictionary, entry.stream)
+        })?;
+        let Some(mut reader) = open.member(self, id.number, entry.index)? else {
+            return Ok(None);
+        };
+        self.allow();
+        reader.set_place(Some(entry.stream));
+        self.bound(&mut reader);
+        reader.set_keep(true);
+        let token = reader.item()?;
+        self.read(&mut reader, token, self.depth_limit(), &mut Ok)
+            .map(Some)
+    }
+
+    /// Sets the bytes free beside what the operation holds, where it is bounded.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn set_room(self, room: u64) {
+        if let Some(bounds) = self.bounds {
+            bounds.room.set(Some(room));
+        }
     }
 
     /// One more than the highest object number the cross-reference sections declare or the
@@ -844,8 +1542,14 @@ impl<'store> Objects<'store> {
     }
 
     /// The source.
-    pub(crate) const fn source(self) -> &'store Source {
-        &self.store.source
+    pub(crate) const fn source(self) -> Reads<'store> {
+        Reads::new(&self.store.source, self.work())
+    }
+
+    /// Whether the first deviation fails.
+    #[cfg(feature = "rendering")]
+    pub(crate) const fn strict(self) -> bool {
+        self.store.strict
     }
 
     /// The handler decrypting the strings of object `id`, whose value `reader` is at: none when
@@ -853,7 +1557,7 @@ impl<'store> Objects<'store> {
     /// (ISO 32000-2:2020, 7.5.8.2 and 7.6.2).
     fn strings(
         self,
-        reader: &mut Reader<&'store Source>,
+        reader: &mut Reader<Reads<'store>>,
         id: ObjectId,
     ) -> Result<Option<&'store Handler>, PdfError> {
         let Some(handler) = self.security().filter(|found| found.encrypts(id)) else {
@@ -877,7 +1581,9 @@ impl<'store> Objects<'store> {
         'store: 'view,
     {
         Objects {
+            bounds: self.bounds,
             operation: self.operation,
+            pace: self.pace,
             scanned: Some(entries),
             store: self.store,
         }
@@ -891,6 +1597,38 @@ impl<'store> Objects<'store> {
     /// The header's version (ISO 32000-2:2020, 7.5.2).
     pub(crate) const fn version(self) -> Version {
         self.store.version
+    }
+
+    /// Whether an object stream was refused for room since last asked, so that the caches give
+    /// way.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn wants_room(self) -> bool {
+        self.bounds.is_some_and(|bounds| {
+            let mut kept = bounds.containers.borrow_mut();
+            let wanted = kept.crowded;
+            kept.crowded = false;
+            wanted
+        })
+    }
+
+    /// All of `data`, where at most `most` bytes.
+    fn whole(self, data: &mut dyn Pull, most: usize) -> Result<Option<Vec<u8>>, PdfError> {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let count = data.pull(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            if bytes.len().saturating_add(count) > most {
+                return Ok(None);
+            }
+            bytes
+                .try_reserve(count)
+                .map_err(|_error| PdfError::new(ErrorCode::BudgetExceeded, self.operation))?;
+            bytes.extend_from_slice(buffer.get(..count).unwrap_or_default());
+        }
+        Ok(Some(bytes))
     }
 
     /// `entries`, sorted by number, with the objects of those object streams `streams` that
@@ -924,6 +1662,49 @@ impl<'store> Objects<'store> {
                 .chain(members)
                 .collect(),
         ))
+    }
+
+    /// These objects, read and decoded within `bounds`.
+    #[cfg(feature = "rendering")]
+    pub(crate) const fn within<'view>(self, bounds: &'view Bounds) -> Objects<'view>
+    where
+        'store: 'view,
+    {
+        Objects {
+            bounds: Some(bounds),
+            operation: self.operation,
+            pace: self.pace,
+            scanned: self.scanned,
+            store: self.store,
+        }
+    }
+
+    /// The work left, where it is bounded.
+    pub(crate) const fn work(self) -> Option<Meter<'store>> {
+        match self.bounds {
+            Some(bounds) => Some(Meter {
+                left: &bounds.work,
+                pace: self.pace,
+            }),
+            None => None,
+        }
+    }
+}
+
+impl Meter<'_> {
+    /// Whether no work is left.
+    pub(crate) const fn exhausted(self) -> bool {
+        self.left.get() == 0
+    }
+
+    /// Takes `units`, failing past the work left as `operation`, and reports progress when due.
+    pub(crate) fn take(self, units: u64, operation: &'static str) -> Result<(), PdfError> {
+        let left = self.left.get().checked_sub(units);
+        self.left.set(left.unwrap_or(0));
+        if left.is_none() {
+            return Err(PdfError::new(ErrorCode::LimitExceeded, operation));
+        }
+        self.pace.map_or(Ok(()), Pacing::pace)
     }
 }
 
@@ -966,6 +1747,7 @@ impl Store {
             rebuilt: RwLock::new(Some(Vec::new())),
             recent: Mutex::default(),
             repairing: Mutex::default(),
+            section: Mutex::default(),
             security: None,
             source: Source::from_bytes(&BytesSourceOptions {
                 bytes: Arc::new(Vec::new()),
@@ -1032,7 +1814,9 @@ impl Store {
     /// The objects, read for `operation`.
     pub(crate) const fn objects(&self, operation: &'static str) -> Objects<'_> {
         Objects {
+            bounds: None,
             operation,
+            pace: None,
             scanned: None,
             store: self,
         }
@@ -1058,6 +1842,7 @@ impl Store {
             rebuilt: RwLock::default(),
             recent: Mutex::default(),
             repairing: Mutex::default(),
+            section: Mutex::default(),
             security: None,
             source: source.clone(),
             strict,
@@ -1182,6 +1967,10 @@ fn last_values(entries: Vec<(Vec<u8>, Object)>) -> Vec<(Vec<u8>, Object)> {
         .zip(kept)
         .filter_map(|(entry, keep)| keep.then_some(entry))
         .collect()
+}
+/// The slot of object `number` among `slots`, a power of two.
+fn slot(number: u32, slots: usize) -> usize {
+    usize::try_from(number).unwrap_or(0) & slots.wrapping_sub(1)
 }
 
 /// A stream's `entries` without a leading `Crypt` filter and its parameters (ISO 32000-2:2020,

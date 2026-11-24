@@ -2,14 +2,14 @@
 
 mod exif;
 mod jpeg;
-mod png;
+pub(crate) mod png;
 
-use core::slice::Iter;
+use alloc::vec::IntoIter;
 
 use crate::images::ImageFormat;
 use crate::inflate::Inflate;
 use crate::input::Source;
-use crate::pull::Pull;
+use crate::pull::{Held, Pull, fill, number};
 use crate::{ErrorCode, PdfError};
 
 /// The operation reading errors name.
@@ -88,7 +88,7 @@ pub(crate) struct Profile {
 }
 
 /// Ranges of a source, read in order.
-struct Ranges<'source> {
+struct Ranges {
     /// Bytes left in the current range.
     left: u64,
     /// The offset of the next byte.
@@ -96,9 +96,9 @@ struct Ranges<'source> {
     /// The operation errors name.
     operation: &'static str,
     /// The ranges after the current one.
-    parts: Iter<'source, (u64, u64)>,
+    parts: IntoIter<(u64, u64)>,
     /// The source.
-    source: &'source Source,
+    source: Source,
 }
 
 impl<'source> Cursor<'source> {
@@ -174,19 +174,12 @@ impl Image {
         self.components
     }
 
-    /// The stored data read in order, as [`Image::write_data`] writes it; `None` when written a
-    /// row at a time.
-    pub(crate) fn data(&self) -> Option<Box<dyn Pull + '_>> {
+    /// The stored data read in order.
+    pub(crate) fn data(&self) -> Box<dyn Pull> {
         match self.png.as_ref() {
-            None => Some(Box::new(Ranges {
-                left: self.length,
-                offset: 0,
-                operation: WRITE,
-                parts: [].iter(),
-                source: &self.source,
-            })),
-            Some(png) if png.decoded() => None,
-            Some(png) => Some(Box::new(png.idat(&self.source))),
+            None => Box::new(Ranges::new(&self.source, &[(0, self.length)], WRITE)),
+            Some(png) if png.decoded() => Box::new(png.samples(&self.source)),
+            Some(png) => Box::new(png.idat(&self.source)),
         }
     }
 
@@ -216,15 +209,29 @@ impl Image {
         self.height
     }
 
-    /// Bytes [`Image::write_data`] writes.
+    /// Bytes a reader of [`Image::data`] or [`Image::mask_data`] holds whole.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn held(&self) -> u64 {
+        self.png.as_ref().map_or(0, png::Png::held)
+    }
+
+    /// Bytes [`Image::data`] gives.
     pub(crate) const fn length(&self) -> u64 {
         self.length
     }
 
-    /// The soft mask's bits per component and the bytes [`Image::write_mask`] writes: unfiltered
+    /// The soft mask's bits per component and the bytes [`Image::mask_data`] gives: unfiltered
     /// `DeviceGray` samples of the image's size (11.6.5.3).
     pub(crate) fn mask(&self) -> Option<(u8, u64)> {
         self.png.as_ref().and_then(png::Png::mask)
+    }
+
+    /// The soft mask's samples read in order, of an image with one ([`Image::mask`]).
+    pub(crate) fn mask_data(&self) -> Box<dyn Pull> {
+        match self.png.as_ref() {
+            Some(png) => Box::new(png.mask_samples(&self.source)),
+            None => Box::new(Held::new(Vec::new())),
+        }
     }
 
     /// Exif orientation (CIPA DC-008-2019, 4.6.4 A, tag 274): 1 to 8, 1 when absent.
@@ -243,65 +250,17 @@ impl Image {
         self.profile.as_ref()
     }
 
-    /// The ICC profile's stored bytes read in order, as [`Image::write_profile`] writes them;
-    /// `None` without one.
-    pub(crate) fn profile_data(&self) -> Option<Box<dyn Pull + '_>> {
-        self.profile.as_ref().map(|profile| -> Box<dyn Pull + '_> {
-            Box::new(Ranges::new(&self.source, &profile.parts, WRITE))
-        })
+    /// The ICC profile's stored bytes read in order; empty without one.
+    pub(crate) fn profile_data(&self) -> Box<dyn Pull> {
+        match self.profile.as_ref() {
+            Some(profile) => Box::new(Ranges::new(&self.source, &profile.parts, WRITE)),
+            None => Box::new(Held::new(Vec::new())),
+        }
     }
 
     /// Columns.
     pub(crate) const fn width(&self) -> u32 {
         self.width
-    }
-
-    /// Writes the stored data in pieces, as read from the source.
-    ///
-    /// # Errors
-    ///
-    /// Whatever `out` fails with; [`ErrorCode::Io`], or [`ErrorCode::Malformed`] when the source
-    /// changed.
-    pub(crate) fn write_data(
-        &self,
-        out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
-        match self.png.as_ref() {
-            None => copy(
-                &mut Ranges::new(&self.source, &[(0, self.length)], WRITE),
-                out,
-            ),
-            Some(png) if png.decoded() => png.write_samples(&self.source, out),
-            Some(png) => copy(&mut png.idat(&self.source), out),
-        }
-    }
-
-    /// Writes the soft mask's samples in pieces, of an image with one ([`Image::mask`]).
-    ///
-    /// # Errors
-    ///
-    /// As [`Image::write_data`].
-    pub(crate) fn write_mask(
-        &self,
-        out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
-        self.png
-            .as_ref()
-            .map_or(Ok(()), |png| png.write_mask(&self.source, out))
-    }
-
-    /// Writes the ICC profile's stored bytes in pieces; nothing without one.
-    ///
-    /// # Errors
-    ///
-    /// As [`Image::write_data`].
-    pub(crate) fn write_profile(
-        &self,
-        out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
-        self.profile.as_ref().map_or(Ok(()), |profile| {
-            copy(&mut Ranges::new(&self.source, &profile.parts, WRITE), out)
-        })
     }
 }
 
@@ -346,29 +305,29 @@ impl Profile {
         self.compressed
     }
 
-    /// Bytes [`Image::write_profile`] writes.
+    /// Bytes [`Image::profile_data`] gives.
     pub(crate) const fn length(&self) -> u64 {
         self.length
     }
 }
 
-impl<'source> Ranges<'source> {
+impl Ranges {
     /// Reads `parts` of `source`, failing as `operation`.
-    fn new(source: &'source Source, parts: &'source [(u64, u64)], operation: &'static str) -> Self {
+    fn new(source: &Source, parts: &[(u64, u64)], operation: &'static str) -> Self {
         Self {
             left: 0,
             offset: 0,
             operation,
-            parts: parts.iter(),
-            source,
+            parts: Vec::from(parts).into_iter(),
+            source: source.clone(),
         }
     }
 }
 
-impl Pull for Ranges<'_> {
+impl Pull for Ranges {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
         while self.left == 0 {
-            let Some(&(offset, length)) = self.parts.next() else {
+            let Some((offset, length)) = self.parts.next() else {
                 return Ok(0);
             };
             self.offset = offset;
@@ -389,7 +348,7 @@ impl Pull for Ranges<'_> {
 }
 
 /// Pulls all of `data` into `out` in pieces.
-fn copy(
+pub(crate) fn copy(
     data: &mut dyn Pull,
     out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
 ) -> Result<(), PdfError> {
@@ -402,28 +361,9 @@ fn copy(
     }
 }
 
-/// Pulls until `out` is full or the data ends; returns the count.
-fn fill(data: &mut dyn Pull, out: &mut [u8]) -> Result<usize, PdfError> {
-    let mut filled = 0_usize;
-    while let Some(rest) = out.get_mut(filled..).filter(|rest| !rest.is_empty()) {
-        match data.pull(rest)? {
-            0 => break,
-            count => filled = filled.saturating_add(count),
-        }
-    }
-    Ok(filled)
-}
-
 /// The error for a damaged file.
 fn malformed() -> PdfError {
     PdfError::new(ErrorCode::Malformed, READ)
-}
-
-/// The big-endian number in `bytes`.
-fn number(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0, |value: u32, byte| {
-        value.wrapping_shl(8) | u32::from(*byte)
-    })
 }
 
 /// Reads the image file in `source`, of `format` or the format its signature shows; a PNG's

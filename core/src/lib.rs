@@ -141,11 +141,15 @@ mod ascii_hex;
 pub mod attachments;
 pub mod compliance;
 mod crypto;
+#[cfg(feature = "rendering")]
+mod dct;
 mod decryption;
 pub mod document;
 pub mod drawing;
 pub mod edit;
 pub mod extract;
+#[cfg(feature = "rendering")]
+mod font_program;
 pub mod fonts;
 pub mod forms;
 pub mod images;
@@ -166,6 +170,8 @@ mod predictor;
 pub mod progress;
 mod pull;
 mod raster;
+#[cfg(feature = "rendering")]
+mod render;
 pub mod rendering;
 mod repair;
 mod run_length;
@@ -425,13 +431,15 @@ pub struct Version {
 
 /// The parts this build includes.
 ///
-/// Not implemented: fails with [`ErrorCode::NotImplemented`].
-///
 /// # Errors
 ///
-/// [`ErrorCode::NotImplemented`].
+/// None.
 pub fn capabilities() -> Result<Vec<Capability>, PdfError> {
-    Err(PdfError::new(ErrorCode::NotImplemented, "capabilities"))
+    Ok(if cfg!(feature = "rendering") {
+        vec![Capability::Rendering]
+    } else {
+        Vec::new()
+    })
 }
 
 /// Reads the version from the header (ISO 32000-2:2020, 7.5.2).

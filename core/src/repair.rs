@@ -18,6 +18,9 @@ const BEHIND: usize = 64;
 /// Bytes read at a time.
 const CHUNK: usize = 0x1_0000;
 
+/// Work of a byte that may start a word, where work is bounded.
+const CANDIDATE_WORK: u64 = 2;
+
 /// Bytes after a match a chunk must hold to judge it.
 const AHEAD: usize = 16;
 
@@ -38,6 +41,66 @@ pub(crate) struct Found {
 }
 
 impl Found {
+    /// Keeps what starts at `at` of `bytes`, read from `base`: an object, at most `limit`, a
+    /// trailer, a table or a stream of objects or entries.
+    fn judge(
+        &mut self,
+        (bytes, at, base, file_start): (&[u8], usize, u64, bool),
+        limit: u64,
+        operation: &'static str,
+    ) -> Result<(), PdfError> {
+        let offset = base.saturating_add(u64::try_from(at).unwrap_or_default());
+        // One word can start at each byte: `/` must be followed by `O` or `X`.
+        let first = bytes.get(at).copied().unwrap_or(0);
+        let second = bytes.get(at.saturating_add(1)).copied().unwrap_or(0);
+        let slashed = first == b'/' && matches!(second, b'O' | b'X');
+        if first == b'/' && !slashed {
+            return Ok(());
+        }
+        if first == b'o'
+            && token_at(bytes, at, b"obj", file_start)
+            && let Some((start, id)) = object_id(bytes, at, file_start)
+        {
+            if u64::try_from(self.entries.len()).unwrap_or(u64::MAX) >= limit {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, operation));
+            }
+            let begin = base.saturating_add(u64::try_from(start).unwrap_or_default());
+            self.entries.push((
+                begin,
+                XrefEntry {
+                    generation: id.generation,
+                    index: 0,
+                    kind: XrefKind::InUse,
+                    number: id.number,
+                    offset: begin,
+                    stream: 0,
+                },
+            ));
+        }
+        if first == b't' && token_at(bytes, at, b"trailer", file_start) {
+            self.trailer(Trailer::Keyword(offset.saturating_add(7)));
+        }
+        if first == b'x' && token_at(bytes, at, b"xref", file_start) {
+            self.xref = true;
+        }
+        let last = self.entries.last().copied();
+        if slashed
+            && token_at(bytes, at, b"/ObjStm", file_start)
+            && let Some((begin, entry)) = last
+            && self.streams.last().is_none_or(|stream| stream.0 != begin)
+        {
+            self.streams.push((begin, id_of(entry)));
+        }
+        if slashed
+            && token_at(bytes, at, b"/XRef", file_start)
+            && let Some((begin, entry)) = last
+        {
+            self.xref = true;
+            self.trailer(Trailer::Stream(begin, id_of(entry)));
+        }
+        Ok(())
+    }
+
     /// The objects that name `/ObjStm`: where and their ids.
     pub(crate) fn streams(&self) -> &[(u64, ObjectId)] {
         &self.streams
@@ -223,6 +286,7 @@ pub(crate) fn scan(objects: Objects<'_>, limit: u64) -> Result<Found, PdfError> 
         let from = usize::try_from(next.saturating_sub(base)).unwrap_or(usize::MAX);
         let file_start = base == 0;
         let mut at = from;
+        let mut candidates = 0_u64;
         loop {
             // Eight bytes at a time while none starts a word.
             while let Some(group) = bytes.get(at..judged).and_then(<[u8]>::first_chunk) {
@@ -244,46 +308,16 @@ pub(crate) fn scan(objects: Objects<'_>, limit: u64) -> Result<Found, PdfError> 
                 break;
             };
             at = at.saturating_add(skip);
-            let offset = base.saturating_add(u64::try_from(at).unwrap_or_default());
-            if token_at(bytes, at, b"obj", file_start)
-                && let Some((start, id)) = object_id(bytes, at, file_start)
-            {
-                if u64::try_from(found.entries.len()).unwrap_or(u64::MAX) >= limit {
-                    return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
-                }
-                let begin = base.saturating_add(u64::try_from(start).unwrap_or_default());
-                found.entries.push((
-                    begin,
-                    XrefEntry {
-                        generation: id.generation,
-                        index: 0,
-                        kind: XrefKind::InUse,
-                        number: id.number,
-                        offset: begin,
-                        stream: 0,
-                    },
-                ));
-            }
-            if token_at(bytes, at, b"trailer", file_start) {
-                found.trailer(Trailer::Keyword(offset.saturating_add(7)));
-            }
-            if token_at(bytes, at, b"xref", file_start) {
-                found.xref = true;
-            }
-            let last = found.entries.last().copied();
-            if token_at(bytes, at, b"/ObjStm", file_start)
-                && let Some((begin, entry)) = last
-                && found.streams.last().is_none_or(|stream| stream.0 != begin)
-            {
-                found.streams.push((begin, id_of(entry)));
-            }
-            if token_at(bytes, at, b"/XRef", file_start)
-                && let Some((begin, entry)) = last
-            {
-                found.xref = true;
-                found.trailer(Trailer::Stream(begin, id_of(entry)));
-            }
+            candidates = candidates.saturating_add(1);
+            found.judge((bytes, at, base, file_start), limit, objects.operation())?;
             at = at.saturating_add(1);
+        }
+        // Each candidate examined, beside the bytes read.
+        if let Some(work) = objects.work() {
+            work.take(
+                candidates.saturating_mul(CANDIDATE_WORK),
+                objects.operation(),
+            )?;
         }
         if at_end {
             return Ok(found);

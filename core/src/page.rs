@@ -6,8 +6,10 @@
 //! [`Page::user_space_matrix`] maps them to user space. Page boundaries are in default user space
 //! (ISO 32000-2:2020, 14.11.2).
 
+pub(crate) mod display;
 mod image;
 
+use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
 use crate::annotations::{AddAnnotationOptions, Annotation, Annotations};
@@ -23,6 +25,8 @@ use crate::objects::ObjectId;
 use crate::output::Sink;
 use crate::overlay::{Object, Overlay};
 use crate::progress::Progress;
+#[cfg(feature = "rendering")]
+use crate::render::{self, Subject};
 use crate::rendering::{ExportVectorOptions, RenderOptions};
 use crate::shapes::Shapes;
 use crate::store::{Objects, Store};
@@ -386,23 +390,40 @@ impl Page {
         found.map(|value| rectangle(objects, &value)).transpose()
     }
 
-    /// Rasterizes the page with its annotations and fields.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Rasterizes the page with its annotations and fields, as displayed, on opaque white. Sides
+    /// round to whole pixels, at least 1 and at most 65,536, in JPEG 65,535. What is damaged,
+    /// missing or past a cap in the content is left out with a warning. `progress` counts the
+    /// image's rows, 0 of 0 while the page is prepared and its rows not yet known.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`] without rendering built in, [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`] also past the work limit, a size, or under strict a cap, [`ErrorCode::Malformed`] also for a warning under strict, [`ErrorCode::NotImplemented`] for CMYK, TIFF, HEIF and hidden layers, [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`] for text without an embedded font or with a predefined `CMap` other than Identity, and for image codings that are not read.
     pub fn render(
         &self,
         sink: &Sink,
         progress: Option<&dyn Progress>,
         options: &RenderOptions,
     ) -> Result<(), PdfError> {
-        let _: &Sink = sink;
-        let _: Option<&dyn Progress> = progress;
-        let _: &RenderOptions = options;
-        Err(PdfError::new(ErrorCode::NotImplemented, "Page::render"))
+        /// The operation.
+        const RENDER: &str = "Page::render";
+        #[cfg(feature = "rendering")]
+        let result = render::page(
+            &Subject {
+                id: self.id,
+                overlay: &self.overlay,
+                store: &self.store,
+            },
+            sink,
+            progress,
+            options,
+        );
+        #[cfg(not(feature = "rendering"))]
+        let result = {
+            let _: Option<&dyn Progress> = progress;
+            let _: &RenderOptions = options;
+            Err(PdfError::new(ErrorCode::CapabilityMissing, RENDER))
+        };
+        sink.finish(result, RENDER)
     }
 
     /// Rotates clockwise by `degrees`.
@@ -948,6 +969,7 @@ fn held(
     inherit: bool,
 ) -> Result<Option<Object>, PdfError> {
     let mut node = Object::Reference(id);
+    let mut visited = BTreeSet::from([(id.number, id.generation)]);
     for _ in 0..=objects.depth_limit() {
         node = overlay.direct(objects, node)?;
         if !matches!(node, Object::Dictionary(_)) {
@@ -958,7 +980,14 @@ fn held(
             return Ok(Some(found));
         }
         match node.get(b"Parent") {
-            Some(parent @ Object::Reference(_)) if inherit => node = parent,
+            Some(Object::Reference(parent)) if inherit => {
+                // A tree has no cycle (7.7.3.4): an ancestor met again ends the walk.
+                if !visited.insert((parent.number, parent.generation)) {
+                    objects.deviation("7.7.3.4", display::CYCLE, None)?;
+                    return Ok(None);
+                }
+                node = Object::Reference(parent);
+            }
             Some(_) | None => return Ok(None),
         }
     }
@@ -1002,13 +1031,21 @@ fn held_rectangle(
 /// (ISO 32000-2:2020, 7.7.3.4).
 fn inherited(objects: Objects<'_>, id: ObjectId, key: &[u8]) -> Result<Option<Value>, PdfError> {
     let mut node = id;
+    let mut visited = BTreeSet::from([(id.number, id.generation)]);
     for _ in 0..=objects.depth_limit() {
         let dictionary = objects.dictionary(Some(Value::Reference(node)))?;
         if let Some(found) = own(objects, dictionary, key)? {
             return Ok(Some(found));
         }
         match objects.get(dictionary, b"Parent")? {
-            Some(Value::Reference(parent)) => node = parent,
+            Some(Value::Reference(parent)) => {
+                // A tree has no cycle (7.7.3.4): an ancestor met again ends the walk.
+                if !visited.insert((parent.number, parent.generation)) {
+                    objects.deviation("7.7.3.4", display::CYCLE, None)?;
+                    return Ok(None);
+                }
+                node = parent;
+            }
             Some(_) | None => return Ok(None),
         }
     }

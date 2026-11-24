@@ -77,3 +77,9 @@ boundary_file	tests/corpus/encryption/r4-aes-128.pdf	password=user	by=Pages	coun
 # 7.5.4, 7.5.5: a trailer Size below the objects the table declares loses none: page object 3 under Size 3
 boundary_bytes	tests/corpus/save/small-size.pdf	saved	index=0	box=Media	0 0 300 400
 boundary_file	tests/corpus/save/small-size.pdf	saved	index=0	box=Media	0 0 300 400
+# 7.7.3.4: a page that is its own Parent: the search for its inherited CropBox stops at the page and warns, so the
+#   CropBox is its MediaBox; strict rejects it
+boundary_bytes	tests/corpus/pages/own-parent-dense-mutated.pdf	index=0	box=Crop	0 0 100 100
+boundary_bytes	tests/corpus/pages/own-parent-dense-mutated.pdf	strict	index=0	box=Crop	Malformed
+# 7.7.3.4: split, the part's page keeps what it inherits; the search stops at the page, so its CropBox is its MediaBox
+boundary_bytes	tests/corpus/pages/own-parent-dense-mutated.pdf	by=Pages	count=1	part=0	index=0	box=Crop	0 0 100 100

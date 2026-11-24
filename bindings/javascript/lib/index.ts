@@ -50,6 +50,7 @@ function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): 
   const operations: Record<Name, string> = {
     appendSink: "Sink.fromAppend",
     boundary: "Page.boundary",
+    capabilities: "capabilities",
     catalog: "Document.catalog",
     create: "Document.create",
     drawImage: "Page.drawImage",
@@ -67,6 +68,7 @@ function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): 
     page: "Document.page",
     pageCount: "Document.pageCount",
     policy: "ResourcePolicy.new",
+    render: "Page.render",
     rotation: "Page.rotation",
     save: "Document.save",
     setInfoDictionary: "Document.setInfoDictionary",
@@ -287,7 +289,7 @@ export interface OpenOptions {
   readonly strict?: boolean;
 }
 
-/** What each sink's append callback threw during the current save. */
+/** What each sink's append callback threw during the current operation. */
 const failures = new WeakMap<Sink, unknown[]>();
 
 /** Output that only appends. */
@@ -295,8 +297,8 @@ export class Sink {
   private constructor() {}
 
   /**
-   * A sink over `append`, called on this thread with a copy of each chunk as it is written; `save` rethrows what it
-   * throws. On a page's main thread, needs cross-origin isolation.
+   * A sink over `append`, called on this thread with a copy of each chunk as it is written; the operation writing to it
+   * rethrows what it throws. On a page's main thread, needs cross-origin isolation.
    */
   static async fromAppend(append: (chunk: Uint8Array) => void): Promise<Sink> {
     const thrown: unknown[] = [];
@@ -348,7 +350,7 @@ export interface Encryption {
   readonly restrictions: readonly string[];
 }
 
-/** Called with work done of the total; `false` cancels. */
+/** Called with work done of the total, a total of 0 meaning not yet known; `true` goes on, anything else cancels. */
 export type Progress = (done: number, total: number) => boolean;
 
 /** Options for `Document.save`; unset is the default. */
@@ -438,6 +440,24 @@ export interface DrawImageOptions {
   readonly y?: number;
 }
 
+/** Options for `Page.render`; unset is the default. */
+export interface RenderOptions {
+  /** A `ColorSpace` name; unset: `Rgb`. */
+  readonly colorSpace?: string;
+  /** The longer side in pixels, 1 to 65,536; overrides `resolution`. */
+  readonly fit?: number;
+  /** A `RasterFormat` name; unset: `Png`. */
+  readonly format?: string;
+  /** Must be empty: no layer can exist yet. */
+  readonly hiddenLayers?: readonly never[];
+  /** JPEG quality, 1 to 100; unset: 85. */
+  readonly quality?: number;
+  /** Pixels per inch, 1 to 4800; unset: 72. */
+  readonly resolution?: number;
+  /** `Display` or `Print`; unset: `Display`. */
+  readonly usage?: string;
+}
+
 /** A deviation from a standard; `null` when unknown. */
 export interface Deviation {
   /** Standard and clause, e.g. `ISO 32000-2:2020, 7.5.4`. */
@@ -479,6 +499,19 @@ export class Page {
       options,
       page: handles.get(this) ?? 0,
     });
+  }
+
+  /**
+   * Writes the page as displayed to `sink` as an image, calling `progress` on this thread; rethrows what a callback
+   * throws. On a page's main thread, `progress` needs cross-origin isolation, else fails `Unsupported`, as `save`
+   * does, before any other check.
+   */
+  async render(sink: Sink, progress: Progress | null = null, options: RenderOptions = {}): Promise<void> {
+    const thrown = failures.get(sink) ?? [];
+    thrown.length = 0;
+    const [made, transfer] = progress === null ? [null, []] : await passed(progress, thrown, "Page.render");
+    const arg = { options, page: handles.get(this) ?? 0, progress: made, sink: handles.get(sink) ?? 0 };
+    return rethrown(thrown, call("render", arg, transfer));
   }
 
   /** The rotation in degrees: 0, 90, 180 or 270. */
@@ -618,6 +651,11 @@ export class Document {
       },
     };
   }
+}
+
+/** The parts this module includes, as `Capability` names; `starlightpdf/without-rendering` has no `Rendering`. */
+export async function capabilities(): Promise<string[]> {
+  return call("capabilities", undefined);
 }
 
 /** The PDF version in the header of `bytes`, as `[major, minor]`; copies only the header's 9 bytes. */

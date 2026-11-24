@@ -17,6 +17,8 @@ const FIELD_MAX: i64 = 8;
 struct Subsections<'store> {
     /// `0 Size` when there is no `Index`.
     default: Option<(u64, u64)>,
+    /// The objects, which its tokens are charged to.
+    objects: Objects<'store>,
     /// The operation errors name.
     operation: &'static str,
     /// A reader in `Index`.
@@ -37,6 +39,7 @@ impl<'store> Subsections<'store> {
         let (Token::Integer(first), Token::Integer(count)) = (start, reader.token()?) else {
             return Err(malformed());
         };
+        self.objects.charge(reader)?;
         u64::try_from(first)
             .ok()
             .zip(u64::try_from(count).ok())
@@ -63,6 +66,7 @@ impl<'store> Subsections<'store> {
         };
         Ok(Self {
             default: Some((0, size)),
+            objects,
             operation: objects.operation(),
             reader,
         })
@@ -191,6 +195,50 @@ pub(crate) fn lookup(
     }
     drain(data)?;
     Ok(found)
+}
+
+/// The entry for object `number` in a cross-reference stream's decoded `data`, held whole, as
+/// [`lookup`] finds it.
+pub(crate) fn lookup_in(
+    objects: Objects<'_>,
+    dictionary: At,
+    data: &[u8],
+    number: u32,
+) -> Result<Option<XrefEntry>, PdfError> {
+    let operation = objects.operation();
+    let fields = widths(objects, dictionary)?;
+    let bytes = u64::try_from(fields.iter().sum::<usize>()).unwrap_or_default();
+    let mut subsections = Subsections::of(objects, dictionary)?;
+    let (mut start, mut found) = (0_u64, None);
+    while let Some((first, count)) = subsections.next()? {
+        if let Some(at) = u64::from(number)
+            .checked_sub(first)
+            .filter(|at| *at < count)
+        {
+            let from = usize::try_from(start.saturating_add(at.saturating_mul(bytes)))
+                .unwrap_or(usize::MAX);
+            let mut rest = data.get(from..).unwrap_or_default();
+            found = Some(entry(&mut rest, fields, number, operation)?);
+        }
+        start = start.saturating_add(count.saturating_mul(bytes));
+    }
+    if start > u64::try_from(data.len()).unwrap_or(u64::MAX) {
+        return Err(PdfError::new(ErrorCode::Malformed, operation));
+    }
+    Ok(found)
+}
+
+/// The bytes the entries of the cross-reference stream whose dictionary is at `dictionary` take
+/// decoded, as `W` and `Index` declare (ISO 32000-2:2020, 7.5.8.2).
+pub(crate) fn size(objects: Objects<'_>, dictionary: At) -> Result<u64, PdfError> {
+    let bytes =
+        u64::try_from(widths(objects, dictionary)?.iter().sum::<usize>()).unwrap_or_default();
+    let mut subsections = Subsections::of(objects, dictionary)?;
+    let mut total = 0_u64;
+    while let Some((_, count)) = subsections.next()? {
+        total = total.saturating_add(count.saturating_mul(bytes));
+    }
+    Ok(total)
 }
 
 /// The byte widths of the entries' three fields, `W` (ISO 32000-2:2020, 7.5.8.2).

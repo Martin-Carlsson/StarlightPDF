@@ -7,6 +7,7 @@ use core::mem::replace;
 use core::ops::Deref;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use crate::object_stream::Sequences;
 use crate::objects::{ObjectId, XrefKind};
 use crate::pull::Pull;
 use crate::store::Objects;
@@ -19,8 +20,8 @@ pub(crate) type Dictionary = Vec<(Vec<u8>, Object)>;
 /// A stream's data.
 #[derive(Clone, Debug)]
 pub(crate) enum Data {
-    /// These bytes.
-    Bytes(Vec<u8>),
+    /// These bytes, shared, so a copy of the object copies none.
+    Bytes(Arc<[u8]>),
     /// Written at save time.
     Produced(Arc<dyn Produce>),
     /// The stored bytes of the source's stream object, decrypted.
@@ -88,22 +89,27 @@ pub(crate) trait View: Debug + Send + Sync {
     /// The generation of object `number` when not changed; `None` when free or missing.
     fn generation(&self, objects: Objects<'_>, number: u32) -> Result<Option<u16>, PdfError>;
 
-    /// Object `number` and its generation, given `edited`, the overlay's own change of it; `None`
-    /// when free or missing.
-    fn object(
-        &self,
+    /// Object `number` and its generation, given `edited`, the overlay's own change of it, members
+    /// of an object stream read on in `sequence`; `None` when free or missing.
+    fn object<'view>(
+        &'view self,
         number: u32,
         edited: Option<(u16, Object)>,
+        sequence: &mut Sequences<'view>,
     ) -> Result<Option<(u16, Object)>, PdfError>;
 }
 
 /// Stream data written at save time.
 pub(crate) trait Produce: Debug + Send + Sync {
+    /// Bytes a reader holds whole while it is alive.
+    #[cfg(feature = "rendering")]
+    fn held(&self) -> u64;
+
     /// Bytes [`Produce::write`] writes.
     fn length(&self) -> u64;
 
-    /// The data read in order, when it is stored bytes; `None` when made a piece at a time.
-    fn pull(&self) -> Option<Box<dyn Pull + '_>>;
+    /// The data read in order, by a reader that keeps it alive.
+    fn reader(&self) -> Box<dyn Pull>;
 
     /// Writes the data in pieces to `out`.
     ///
@@ -220,6 +226,32 @@ impl Overlay {
         self.ended(objects, value).map(|found| found.0)
     }
 
+    /// [`Self::direct`], members of an object stream read on in `sequence`.
+    pub(crate) fn direct_in<'store>(
+        &self,
+        objects: Objects<'store>,
+        value: Object,
+        sequence: &mut Sequences<'store>,
+    ) -> Result<Object, PdfError> {
+        let mut found = value;
+        for _ in 0..=objects.depth_limit() {
+            let Object::Reference(id) = found else {
+                return Ok(found);
+            };
+            found = match self.get(id.number)? {
+                Some((generation, object)) => {
+                    if generation == id.generation {
+                        object
+                    } else {
+                        Object::Null
+                    }
+                }
+                None => objects.owned_in(id, sequence)?,
+            };
+        }
+        Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()))
+    }
+
     /// The changed or added object `number` and its generation, not through the view.
     fn edited(&self, number: u32) -> Option<(u16, Object)> {
         self.edits().objects.get(&number).cloned()
@@ -279,9 +311,18 @@ impl Overlay {
 
     /// Object `number` and its generation when changed, added or given by the view.
     pub(crate) fn get(&self, number: u32) -> Result<Option<(u16, Object)>, PdfError> {
+        self.get_in(number, &mut Sequences::default())
+    }
+
+    /// [`Self::get`], members of an object stream the view reads read on in `sequence`.
+    pub(crate) fn get_in<'view>(
+        &'view self,
+        number: u32,
+        sequence: &mut Sequences<'view>,
+    ) -> Result<Option<(u16, Object)>, PdfError> {
         let edited = self.edited(number);
         match self.view.as_deref() {
-            Some(view) => view.object(number, edited),
+            Some(view) => view.object(number, edited, sequence),
             None => Ok(edited),
         }
     }

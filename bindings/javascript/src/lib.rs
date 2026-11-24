@@ -9,14 +9,13 @@ use std::io::{self, ErrorKind};
 use std::sync::{Mutex, PoisonError};
 
 use js_sys::{Array, BigInt, Error, Number, Object, RangeError, Reflect, TypeError, Uint8Array};
-use starlightpdf::Version;
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::compliance::Standard;
 use starlightpdf::document::{
     CreateOptions, OpenOptions, Optimization, PageOptions, SaveMode, SaveOptions,
 };
 use starlightpdf::drawing::DrawImageOptions;
-use starlightpdf::images::ImageFormat;
+use starlightpdf::images::{ImageFormat, RasterFormat};
 use starlightpdf::input::{ReadAt, ReadAtSourceOptions};
 use starlightpdf::limits::ResourcePolicyOptions;
 use starlightpdf::metadata::SetInfoDictionaryOptions;
@@ -24,9 +23,11 @@ use starlightpdf::objects::{ObjectId, ObjectOptions, StreamDataOptions};
 use starlightpdf::output::{Append, AppendSinkOptions, MemorySinkOptions};
 use starlightpdf::page::{Boundary, BoundaryOptions};
 use starlightpdf::progress::Progress;
-use starlightpdf::rendering::ColorSpace;
+use starlightpdf::rendering::{ColorSpace, RenderOptions, RenderUsage};
 use starlightpdf::security::{Cipher, Permission};
-use starlightpdf::{compliance, document, input, limits, output, page};
+use starlightpdf::{
+    Capability, ErrorCode, Version, compliance, document, input, limits, output, page,
+};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
@@ -47,6 +48,15 @@ extern "C" {
     #[wasm_bindgen(catch)]
     fn update(id: u32, done: u64, total: u64) -> Result<bool, JsValue>;
 }
+
+/// Each capability and its name.
+const CAPABILITIES: [(Capability, &str); 5] = [
+    (Capability::Conversion, "Conversion"),
+    (Capability::Ocr, "Ocr"),
+    (Capability::Printing, "Printing"),
+    (Capability::Rendering, "Rendering"),
+    (Capability::Signing, "Signing"),
+];
 
 /// Each cipher and its name.
 const CIPHERS: [(Cipher, &str); 4] = [
@@ -131,6 +141,20 @@ const PERMISSIONS: [(Permission, &str); 7] = [
     (Permission::PrintHighQuality, "PrintHighQuality"),
 ];
 
+/// Each raster format and its name.
+const RASTER_FORMATS: [(RasterFormat, &str); 4] = [
+    (RasterFormat::Heif, "Heif"),
+    (RasterFormat::Jpeg, "Jpeg"),
+    (RasterFormat::Png, "Png"),
+    (RasterFormat::Tiff, "Tiff"),
+];
+
+/// Each render usage and its name.
+const RENDER_USAGES: [(RenderUsage, &str); 2] = [
+    (RenderUsage::Display, "Display"),
+    (RenderUsage::Print, "Print"),
+];
+
 /// Each split and its name.
 const SPLITS: [(SplitBy, &str); 4] = [
     (SplitBy::Bookmarks, "Bookmarks"),
@@ -170,7 +194,7 @@ const WINDOW: usize = 0x4000;
 /// Windows of an input kept.
 const WINDOWS: usize = 32;
 
-/// A callback in the JavaScript table, by id: a sink's append or a save's progress.
+/// A callback in the JavaScript table, by id: a sink's append or an operation's progress.
 struct Callback {
     /// Its id.
     id: u32,
@@ -677,6 +701,36 @@ impl Page {
             .map_err(|error| to_js(&error))
     }
 
+    /// Renders to `sink`, reporting to callback `progress` of the JavaScript table, with the `RenderOptions` fields
+    /// of `options`.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details; `NotImplemented` for hidden layers; a `TypeError` or `RangeError` for a wrong
+    /// option.
+    pub fn render(
+        &self,
+        sink: &Sink,
+        progress: Option<u32>,
+        options: &JsValue,
+    ) -> Result<(), JsValue> {
+        // First, so the table forgets the callback whatever fails.
+        let callback = progress.map(|id| Callback { id });
+        // Without rendering, the core refuses before any option is read.
+        let made = if cfg!(feature = "rendering") {
+            render_options(options)?
+        } else {
+            RenderOptions::default()
+        };
+        self.0
+            .render(
+                &sink.0,
+                callback.as_ref().map::<&dyn Progress, _>(|held| held),
+                &made,
+            )
+            .map_err(|error| to_js(&error))
+    }
+
     /// The rotation in degrees.
     ///
     /// # Errors
@@ -763,6 +817,20 @@ impl Sink {
     }
 }
 
+/// Calls `starlightpdf::capabilities`; each capability's name.
+///
+/// # Errors
+///
+/// The core's, as details.
+#[wasm_bindgen]
+pub fn capabilities() -> Result<Vec<String>, JsValue> {
+    starlightpdf::capabilities()
+        .map_err(|error| to_js(&error))?
+        .into_iter()
+        .map(|capability| named(&CAPABILITIES, capability, "capability").map(String::from))
+        .collect()
+}
+
 /// Calls `starlightpdf::header_version`; `[major, minor]`.
 ///
 /// # Errors
@@ -786,17 +854,7 @@ pub fn library_version() -> String {
 #[wasm_bindgen]
 #[must_use]
 pub fn unsupported(operation: &str, message: &str) -> JsValue {
-    let code = starlightpdf::ErrorCode::Unsupported;
-    record([
-        ("code", code.name().into()),
-        ("number", code.number().into()),
-        ("message", message.into()),
-        ("operation", operation.into()),
-        ("offset", JsValue::NULL),
-        ("objectNumber", JsValue::NULL),
-        ("ioCause", JsValue::NULL),
-    ])
-    .unwrap_or_else(|failure| failure)
+    refusal(ErrorCode::Unsupported, operation, message)
 }
 
 /// String `key` of `options` as the value it names in `table`, a `kind`; `None` when undefined.
@@ -862,6 +920,16 @@ fn to_js(error: &starlightpdf::PdfError) -> JsValue {
         ("ioCause", io_cause.map_or(JsValue::NULL, JsValue::from)),
     ];
     record(fields).unwrap_or_else(|failure| failure)
+}
+
+/// How many items the array `key` of `options` has, not copying them; 0 when unset.
+fn count(options: &JsValue, key: &str) -> Result<u32, JsValue> {
+    field(options, key)?.map_or(Ok(0), |value| {
+        value
+            .dyn_ref::<Array>()
+            .map(Array::length)
+            .ok_or_else(|| wrong(key, "an array"))
+    })
 }
 
 /// Option `key` of `options`; `None` when undefined.
@@ -984,6 +1052,40 @@ fn record<const N: usize>(fields: [(&str, JsValue); N]) -> Result<JsValue, JsVal
         .into_iter()
         .try_for_each(|(key, value)| Reflect::set(&object, &key.into(), &value).map(drop))?;
     Ok(object.into())
+}
+
+/// The details of `operation` failing with `code` and `message`, found before the core runs.
+fn refusal(code: ErrorCode, operation: &str, message: &str) -> JsValue {
+    record([
+        ("code", code.name().into()),
+        ("number", code.number().into()),
+        ("message", message.into()),
+        ("operation", operation.into()),
+        ("offset", JsValue::NULL),
+        ("objectNumber", JsValue::NULL),
+        ("ioCause", JsValue::NULL),
+    ])
+    .unwrap_or_else(|failure| failure)
+}
+
+/// The `RenderOptions` fields of `options`; `NotImplemented` for hidden layers, as none can be made yet.
+fn render_options(options: &JsValue) -> Result<RenderOptions, JsValue> {
+    let mut made = RenderOptions::default();
+    made.color_space =
+        choice(options, "colorSpace", &COLOR_SPACES, "color space")?.unwrap_or_default();
+    made.fit = whole(options, "fit")?;
+    made.format = choice(options, "format", &RASTER_FORMATS, "raster format")?.unwrap_or_default();
+    made.quality = whole(options, "quality")?;
+    made.resolution = whole(options, "resolution")?;
+    made.usage = choice(options, "usage", &RENDER_USAGES, "render usage")?.unwrap_or_default();
+    if count(options, "hiddenLayers")? > 0 {
+        return Err(refusal(
+            ErrorCode::NotImplemented,
+            "Page.render",
+            "no implementation yet",
+        ));
+    }
+    Ok(made)
 }
 
 /// The `SaveOptions` fields of `options`.

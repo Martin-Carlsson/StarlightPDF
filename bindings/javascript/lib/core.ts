@@ -9,6 +9,7 @@ import type {
   ObjectId,
   OpenOptions,
   Rect,
+  RenderOptions,
   ResourcePolicyOptions,
   SaveOptions,
   SaveReport,
@@ -22,6 +23,7 @@ import init, {
   ResourcePolicy,
   Sink,
   Source,
+  capabilities,
   headerVersion,
   libraryVersion,
   unsupported,
@@ -32,6 +34,7 @@ import { add, appends, type Callback, inputs, updates } from "./table.js";
 export interface Signatures {
   appendSink: [Callback<[Uint8Array]>, number];
   boundary: [{ kind: Boundary; page: number }, Rect];
+  capabilities: [undefined, string[]];
   catalog: [number, ObjectId];
   create: [{ options: { readonly version?: readonly [number, number] }; policy: number | null }, number];
   drawImage: [{ image: number; mask: number | null; options: DrawImageOptions; page: number }, undefined];
@@ -49,6 +52,10 @@ export interface Signatures {
   page: [{ document: number; index: number }, number];
   pageCount: [number, number];
   policy: [ResourcePolicyOptions, number];
+  render: [
+    { options: RenderOptions; page: number; progress: Callback<[number, number]> | null; sink: number },
+    undefined,
+  ];
   rotation: [number, number];
   save: [
     { document: number; options: SaveOptions; progress: Callback<[number, number]> | null; sink: number },
@@ -105,6 +112,9 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   },
   boundary({ kind, page }) {
     return get(pages, page).boundary(kind);
+  },
+  capabilities() {
+    return capabilities();
   },
   catalog(document) {
     return get(documents, document).catalog();
@@ -169,6 +179,11 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   policy({ decodedLimit, objectLimit, warningLimit }) {
     const big = (limit: number | undefined): bigint | undefined => (limit === undefined ? undefined : BigInt(limit));
     return hold(policies, ResourcePolicy.create(big(decodedLimit), big(objectLimit), warningLimit));
+  },
+  render({ options, page, progress, sink }) {
+    const [shown, into] = [get(pages, page), get(sinks, sink)];
+    // Added last, as the core forgets it whatever then fails.
+    shown.render(into, progress === null ? undefined : add(updates, progress), options);
   },
   rotation(page) {
     return get(pages, page).rotation();

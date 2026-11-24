@@ -349,3 +349,7 @@ draw_image	tests/corpus/images/c2-b8.png	format=Jpeg	read=matrix	Malformed
 draw_image	tests/corpus/images/c2-b8.png	mask=tests/corpus/images/c0-b8.png	read=matrix	NotImplemented
 draw_image	tests/corpus/images/c2-b8.png	opacity=0.5	read=matrix	NotImplemented
 draw_image	tests/corpus/images/c2-b8.png	frame=1	read=matrix	InvalidArgument
+# ISO 32000-2:2020, 7.7.3.4: on a page that is its own Parent the search for its inherited Rotate and boxes stops at the page:
+#   it is drawn as on a 100 x 100 page unrotated, the 13x9 image at displayed x 10, y 20 at user 10, 71; strict rejects it.
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/pages/own-parent-dense-mutated.pdf	x=10	y=20	read=matrix	13 0 0 9 10 71
+draw_image	tests/corpus/images/baseline-rgb.jpg	on=tests/corpus/pages/own-parent-dense-mutated.pdf	strict	x=10	y=20	read=matrix	Malformed

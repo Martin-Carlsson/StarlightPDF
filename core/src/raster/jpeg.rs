@@ -1,7 +1,8 @@
 //! JPEG files (ITU-T T.81, B), embedded unchanged under `DCTDecode` (ISO 32000-2:2020, 7.4.8).
 
-use super::{Cursor, Image, Profile, READ, exif, malformed, number};
+use super::{Cursor, Image, Profile, READ, exif, malformed};
 use crate::input::Source;
+use crate::pull::number;
 use crate::{ErrorCode, PdfError};
 
 /// The size of an `ICC_PROFILE` segment's own header (ICC.1:2010, B.4).

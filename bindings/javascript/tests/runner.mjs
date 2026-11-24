@@ -1,7 +1,8 @@
 // Runs the conformance suite (tests/conformance/*.tsv) through the package, in Node.js or a browser.
+import { decode, pixel } from "./decode.mjs";
 
 /**
- * @import { Api, Boundary, Document, DrawImageOptions, InfoDictionary, ObjectId, Page, ResourcePolicy, SaveOptions, SaveReport, Sink, Source, SplitOptions } from "./api.mts"
+ * @import { Api, Boundary, Document, DrawImageOptions, InfoDictionary, ObjectId, Page, RenderOptions, ResourcePolicy, SaveOptions, SaveReport, Sink, Source, SplitOptions } from "./api.mts"
  * @typedef {object} Environment Where case files come from.
  * @property {(path: string) => Promise<Uint8Array>} bytes The bytes of the file at `path`.
  * @property {(path: string) => Promise<Source | string>} file A source over the file at `path`, or the outcome.
@@ -62,6 +63,10 @@ const DRAW = [
   "x",
   "y",
 ];
+/** The keys `render` takes besides those of open. */
+const RENDER = ["cancel", "color_space", "fit", "format", "index", "quality", "read", "resolution", "usage"];
+/** An expected render: its size, then each pixel named and its colour. */
+const PIXELS = /^\d+x\d+(?: \d+,\d+=(?:[0-9a-f]{2}|[0-9a-f]{6})(?:~\d+)?)+$/u;
 /** Each `key=` of `info`. @type {(keyof InfoDictionary)[]} */
 const INFO = ["author", "created", "creator", "keywords", "modified", "producer", "subject", "title"];
 /** Each `read=` of `draw_image`. */
@@ -508,6 +513,92 @@ async function perform(api, environment, file, name, args) {
   return family.read(api, document, given);
 }
 
+/** `token` where `image` has its colour within its tolerance, else the colour it has. @type {(image: import("./decode.mjs").Image, token: string) => string} */
+function matched(image, token) {
+  const [place = "", value = ""] = token.split("=");
+  const [colour = "", allowed = "0"] = value.split("~");
+  const [column, row] = place.split(",");
+  const found = pixel(image, integer(column), integer(row));
+  if (found === undefined) {
+    return `${place}=none`;
+  }
+  const wanted = stringBytes(`<${colour}>`);
+  const tolerance = integer(allowed);
+  if (tolerance > 255) {
+    throw new Error(`bad tolerance '${allowed}'`);
+  }
+  const close =
+    found.length === wanted.length && found.every((have, at) => Math.abs(have - (wanted[at] ?? Infinity)) <= tolerance);
+  return close ? token : `${place}=${hex(found)}`;
+}
+
+/**
+ * Renders the page as `args` say; its size and, of the pixels `expected` names, each one's token or true colour.
+ * @param {Api} api
+ * @param {Environment} environment
+ * @param {boolean} file
+ * @param {string[]} args
+ * @param {string} expected
+ * @returns {Promise<string>}
+ */
+async function rendered(api, environment, file, args, expected) {
+  const [path, ...options] = args;
+  if (path === undefined) {
+    throw new Error("takes a path");
+  }
+  // `cancel=N` is `cancel` letting N progress calls through.
+  const counts = options.filter((arg) => arg.startsWith("cancel=")).map((arg) => arg.slice("cancel=".length));
+  if (!counts.every((count) => /^[0-9]+$/u.test(count))) {
+    throw new Error(`bad cancel '${counts.join(" ")}'`);
+  }
+  const allowed = counts.map(integer);
+  const named = options.map((arg) => (arg.startsWith("cancel=") ? "cancel" : arg));
+  const given = parse(named, new Set([...OPEN, ...RENDER]), []);
+  const reads = given.get("read");
+  if (reads !== undefined && reads !== "warnings") {
+    throw new Error(`bad read '${reads}'`);
+  }
+  const code = /^[A-Za-z]+$/u.test(expected);
+  if (reads === undefined && !code && !PIXELS.test(expected)) {
+    throw new Error(`bad expected value '${expected}'`);
+  }
+  /** @type {RenderOptions} */
+  const rendering = {
+    ...(given.has("color_space") ? { colorSpace: given.get("color_space") ?? "" } : {}),
+    ...(given.has("fit") ? { fit: integer(given.get("fit")) } : {}),
+    ...(given.has("format") ? { format: given.get("format") ?? "" } : {}),
+    ...(given.has("quality") ? { quality: integer(given.get("quality")) } : {}),
+    ...(given.has("resolution") ? { resolution: integer(given.get("resolution")) } : {}),
+    ...(given.has("usage") ? { usage: given.get("usage") ?? "" } : {}),
+  };
+  const made = file ? await environment.file(path) : await api.Source.fromBytes(await environment.bytes(path));
+  if (typeof made === "string") {
+    return made;
+  }
+  const document = await open(api, made, given);
+  const shown = await document.page({ index: integer(given.get("index") ?? "0") });
+  const sink = await api.Sink.inMemory();
+  let calls = 0;
+  const stop = () => {
+    calls += 1;
+    return calls <= (allowed[0] ?? 0);
+  };
+  await shown.render(sink, given.has("cancel") ? stop : null, rendering);
+  const image = await decode(await sink.takeBytes());
+  if (image.jpeg !== (given.get("format") === "Jpeg")) {
+    throw new Error("the file is of another format");
+  }
+  if (reads !== undefined) {
+    const warnings = FAMILIES.get("warnings");
+    if (warnings === undefined) {
+      throw new Error("no warnings family");
+    }
+    return warnings.read(api, document, given);
+  }
+  const tokens = code ? [] : expected.split(" ").slice(1);
+  return [`${image.width}x${image.height}`, ...tokens.map((token) => matched(image, token))].join(" ");
+}
+
 /** Creates a document, inserts each `page=[WxH][@I]`, saves, reopens: each MediaBox. @type {(api: Api, args: string[]) => Promise<string>} */
 async function inserted(api, args) {
   const [path, ...options] = args;
@@ -881,13 +972,15 @@ async function drawn(api, environment, args) {
  */
 async function check(api, environment, operation, args, expected) {
   const [, name, kind] = /^(.+)_(bytes|file)$/u.exec(operation) ?? [];
-  const known = name !== undefined && (FAMILIES.has(name) || name === "save" || name === "split");
+  const known = name !== undefined && (FAMILIES.has(name) || name === "render" || name === "save" || name === "split");
   if (!known && !["draw_image", "header_version", "insert_blank_page"].includes(operation)) {
     return `unknown operation '${operation}'`;
   }
   let actual;
   try {
-    if (known) {
+    if (known && name === "render") {
+      actual = await rendered(api, environment, kind === "file", args, expected);
+    } else if (known) {
       actual = await perform(api, environment, kind === "file", name, args);
     } else if (operation === "insert_blank_page") {
       actual = await inserted(api, args);

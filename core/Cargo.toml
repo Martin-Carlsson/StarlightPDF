@@ -9,5 +9,14 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["rendering"]
+rendering = ["dep:hayro-ccitt", "dep:hayro-jbig2", "dep:hayro-jpeg2000"]
+
+[dependencies]
+hayro-ccitt = { version = "=0.5.0", default-features = false, optional = true } # CCITT fax decoder: risky to write here; hayro-jbig2 needs it too.
+hayro-jbig2 = { version = "=0.4.0", default-features = false, features = ["std"], optional = true } # JBIG2 decoder: large and risky to write here.
+hayro-jpeg2000 = { version = "=0.5.0", default-features = false, optional = true } # JPEG 2000 decoder: very large and risky to write here.
+
 [lints]
 workspace = true

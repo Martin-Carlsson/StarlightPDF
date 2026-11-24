@@ -24,6 +24,16 @@ _Avoid_: job
 The 22:00 UTC CI run of every area; when all pass, it tags `main` as `nightly-YYYY-MM-DD`.
 _Avoid_: nightly build
 
+## Rendering
+
+**Band**:
+The rows of a page rendered at once.
+_Avoid_: strip, slice
+
+**Work limit**:
+The most work one render may do before it fails `LimitExceeded`.
+_Avoid_: timeout, work budget
+
 ## Public API
 
 **Source**:

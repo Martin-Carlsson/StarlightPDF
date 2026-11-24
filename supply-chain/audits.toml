@@ -31,6 +31,24 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 notes = "build.rs only sets a msan cfg; read the lib, util and the Windows (ProcessPrng), macOS (getentropy) and Linux (getrandom, /dev/urandom fallback) backends: sound FFI and MaybeUninit handling; other backends grepped; no net or process use."
 
+[[audits.hayro-ccitt]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0"
+notes = "Read every source file: forbids unsafe, no features, deps, build.rs, fs, net, process or env use; loops consume input. Discretion: rows = 0 is unbounded and extreme columns or input overflow; holds where callers bound them, as both paths in core do (fax and JBIG2 guards: rows set, at most 2^24 columns, input under 512 MiB, memory charged first)."
+
+[[audits.hayro-jbig2]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.4.0"
+notes = "Read every source file, built with feature std only: forbids unsafe, only dep hayro-ccitt, no build.rs, fs, net, process or env use. Discretion: coded symbol sizes and counts loop for ever or allocate without bound; holds behind core's JBIG2 guard only: segments walked and charged as the decoder reads them, symbol dictionaries scanned first, refinement and aggregate coding and arithmetic-coded pattern widths over 127 refused, 256 MiB and work capped."
+
+[[audits.hayro-jpeg2000]]
+who = "Claude Opus 5.5 <noreply@anthropic.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0"
+notes = "Read every source file, built without features: forbids unsafe, no deps, build.rs, fs, net, process or env use. Discretion: header fields alone panic, abort allocations or cost exponential CPU; holds behind core's JPX guard only: main and tile-part headers walked and bounded, memory and work charged first, codestream given in empty JP2 boxes. Embeds two CC0-1.0 ICC profiles outside the declared license."
+
 [[audits.jobserver]]
 who = "Claude Opus 5.5 <noreply@anthropic.com>"
 criteria = "safe-to-deploy"

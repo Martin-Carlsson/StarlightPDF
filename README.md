@@ -159,10 +159,12 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 
 ### Rendering and printing
 
-- 💤 **Rasterize:** pages to PNG, JPEG, TIFF, HEIC/HEIF; thumbnails; chosen DPI and color space
+- 👨‍💻 **Rasterize:** pages to PNG and JPEG; thumbnails; chosen DPI; RGB and grayscale
+  - 💤 TIFF, HEIC/HEIF, CMYK
 - 💤 **Vector export:** to SVG, PostScript
 - 💤 **Print:** send to a printer, with tray, duplex and scaling options
-- 💤 **Display:** viewer components, annotation and form rendering, layer visibility
+- 👨‍💻 **Display:** annotation and form field appearances, layer visibility
+  - 💤 viewer components
 
 ### Optimization
 
@@ -222,6 +224,9 @@ Danish law. Copenhagen City Court.
 
 | Name | License | Links | What and why |
 | --- | --- | --- | --- |
+| hayro-ccitt | [Apache-2.0](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-ccitt/LICENSE-APACHE) OR [MIT](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-ccitt/LICENSE-MIT) | [Repository](https://github.com/LaurenzV/hayro), [crates.io](https://crates.io/crates/hayro-ccitt) | CCITT fax decoder: risky to write here; hayro-jbig2 needs it too. |
+| hayro-jbig2 | [Apache-2.0](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-jbig2/LICENSE-APACHE) OR [MIT](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-jbig2/LICENSE-MIT) | [Repository](https://github.com/LaurenzV/hayro), [crates.io](https://crates.io/crates/hayro-jbig2) | JBIG2 decoder: large and risky to write here. |
+| hayro-jpeg2000 | [Apache-2.0](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-jpeg2000/LICENSE-APACHE) OR [MIT](https://github.com/LaurenzV/hayro/blob/HEAD/hayro-jpeg2000/LICENSE-MIT) | [Repository](https://github.com/LaurenzV/hayro), [crates.io](https://crates.io/crates/hayro-jpeg2000) | JPEG 2000 decoder: very large and risky to write here. |
 | pyo3 | [MIT](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/pyo3/pyo3), [crates.io](https://crates.io/crates/pyo3), [Homepage](https://pyo3.rs/) | Python binding layer; hand-written FFI would be large and unsafe. |
 | pyo3-ffi | [MIT](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/pyo3/pyo3), [crates.io](https://crates.io/crates/pyo3-ffi), [Homepage](https://pyo3.rs/) | CPython C API declarations; needed by pyo3. |
 | pyo3-macros | [MIT](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-MIT) OR [Apache-2.0](https://github.com/pyo3/pyo3/blob/HEAD/LICENSE-APACHE) | [Repository](https://github.com/pyo3/pyo3), [crates.io](https://crates.io/crates/pyo3-macros), [Homepage](https://pyo3.rs/) | pyo3's procedural macros; needed by pyo3. |

@@ -5,6 +5,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::crypto::md5::Md5;
 use crate::metadata::text;
+use crate::object_stream::Sequences;
 use crate::objects::{ObjectId, XrefKind};
 use crate::output::Sink;
 use crate::overlay::{Data, Object, Overlay};
@@ -311,6 +312,8 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
     header.extend_from_slice(&[0xE2, 0xE3, 0xCF, 0xD3, b'\n']);
     out.put(&header)?;
     let mut index = 0_usize;
+    // Members of object streams are read on, each from the one before, there and in the view.
+    let (mut sequence, mut viewed) = (Sequences::default(), Sequences::default());
     while let Some(&slot) = numbers.slots.get(index) {
         let offset = out.position();
         if offset > OFFSET_LIMIT {
@@ -320,9 +323,9 @@ pub(crate) fn rewrite(run: &Rewrite<'_>, sink: &Sink) -> Result<(Vec<String>, u6
             *written = pack(offset);
         }
         let old = u32::try_from(unpack(slot)).unwrap_or_default();
-        let object = match overlay.get(old)? {
+        let object = match overlay.get_in(old, &mut viewed)? {
             Some((_, found)) => found,
-            None => source(objects, old)?,
+            None => source(objects, old, &mut sequence)?,
         };
         index = index.saturating_add(1);
         write(&mut out, objects, &mut numbers, index, object)?;
@@ -391,14 +394,19 @@ fn signed(
     Ok(found)
 }
 
-/// Object `number` of the source, the generation its entry gives; null when free or missing.
-fn source(objects: Objects<'_>, number: u32) -> Result<Object, PdfError> {
+/// Object `number` of the source, the generation its entry gives; null when free or missing. A
+/// member of an object stream is read on in `sequence`.
+fn source<'store>(
+    objects: Objects<'store>,
+    number: u32,
+    sequence: &mut Sequences<'store>,
+) -> Result<Object, PdfError> {
     let generation = match objects.entry(number)? {
         Some(entry) if entry.kind == XrefKind::InUse => entry.generation,
         Some(entry) if entry.kind == XrefKind::Compressed => 0,
         Some(_) | None => return Ok(Object::Null),
     };
-    objects.owned(ObjectId { generation, number })
+    objects.owned_in(ObjectId { generation, number }, sequence)
 }
 
 /// `value`'s 40 bits.
