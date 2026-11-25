@@ -1,5 +1,6 @@
-//! Peak allocation of a page's boundary, of a stream decoded to a sink and of a split whose parts
-//! are saved, on the two virtual 1 GiB files of `.architecture-decisions/memory-is-bounded-by-work-not-file-size.md`.
+//! Peak allocation of a page's boundary, of a stream decoded to a sink, of a split whose parts
+//! are saved and of a page redacted, on the two virtual 1 GiB files of
+//! `.architecture-decisions/memory-is-bounded-by-work-not-file-size.md`.
 
 extern crate alloc;
 
@@ -9,8 +10,10 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::io::{self, Cursor, Write as _};
 use std::path::PathBuf;
 
+use starlightpdf::annotations::{AddAnnotationOptions, AnnotationKind};
 use starlightpdf::arrange::{SplitBy, SplitOptions};
 use starlightpdf::document::{Document, OpenOptions, PageOptions, SaveOptions};
+use starlightpdf::edit::ApplyRedactionsOptions;
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::objects::{ObjectId, StreamDataOptions};
 use starlightpdf::output::{Append, AppendSinkOptions, Sink};
@@ -35,6 +38,10 @@ const SMALL_SPLIT_BOUND: usize = 104_857_600;
 /// Most bytes opening split/packed-kids.pdf and splitting it may hold allocated at once; measured
 /// 78,936.
 const PACKED_KIDS_BOUND: usize = 98_304;
+
+/// Most bytes opening each file, marking a page and applying the mark may hold allocated at once;
+/// a placeholder until measured.
+const REDACT_BOUND: usize = 1_000_000;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
@@ -806,4 +813,34 @@ fn split_of_more_packed_kids_than_objects_is_bounded() {
         Err(ErrorCode::Malformed)
     );
     bounded(Some(top), PACKED_KIDS_BOUND);
+}
+
+/// A page deep in each file, marked across its middle, redacts (ISO 32000-2:2020, 12.5.6.23).
+#[test]
+fn redaction_is_bounded() {
+    for case in cases() {
+        let measured = case.map(|found| {
+            let read_at: Arc<dyn ReadAt> = Arc::new(found.file);
+            let mut page = PageOptions::default();
+            page.index = found.page;
+            let mut mark = AddAnnotationOptions::default();
+            mark.kind = AnnotationKind::Redact;
+            [mark.x, mark.y, mark.width, mark.height] =
+                [206.0_f64, 296.0_f64, 200.0_f64, 200.0_f64];
+            let mut options = ApplyRedactionsOptions::default();
+            options.pages = Some(vec![found.page]);
+            let (result, bytes) = peak(|| -> Result<(), PdfError> {
+                let document = open(&read_at)?;
+                drop(document.page(&page)?.add_annotation(None, &mark)?);
+                document.apply_redactions(None, &options)
+            });
+            (result.map_err(|error| error.code()), bytes)
+        });
+        assert_eq!(
+            measured.as_ref().map(|&(result, _)| result),
+            Some(Ok(())),
+            "redaction"
+        );
+        bounded(measured.map(|(_, bytes)| bytes), REDACT_BOUND);
+    }
 }

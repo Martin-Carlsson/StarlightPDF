@@ -6,6 +6,7 @@ import decimal
 import functools
 import hashlib
 import itertools
+import math
 import pathlib
 import re
 import unittest
@@ -900,10 +901,603 @@ def drawn(args: list[str]) -> str:
     return image_read(reopen(twice(document, {}), given), index, given["read"])
 
 
+ANNOTATE = {"color", "delete", "height", "index", "kind", "quads", "saved"}
+ANNOTATE |= {"width", "x", "y"}
+REDACT = {"bytes", "cancel", "do", "except", "index", "marks", "mode", "pages", "read"}
+# Each read= of redact, and whether it takes index=.
+REDACT_READS = {
+    "annotations": True,
+    "image_raw": False,
+    "image_samples": False,
+    "mask_samples": False,
+    "ok": False,
+    "painted": True,
+    "pixels": True,
+    "points": True,
+    "render": True,
+    "text": False,
+    "thumb": True,
+}
+IMAGE_SAMPLES = {"image_raw", "image_samples", "mask_samples"}
+MARGIN = 0.01  # How far inside a mark a point counts: room for rounding at a cut.
+DEPTH = 16  # Deepest nesting of forms whose points are counted.
+QUAD = 8  # Numbers of a quadrilateral (ISO 32000-2:2020, 12.5.6.10).
+PLACE = 4  # Numbers of x,y,w,h.
+COLOUR = re.compile("[0-9a-f]{6}")
+# An inline image's data, from ID to EI (ISO 32000-2:2020, 8.9.7).
+INLINE = re.compile(
+    rb"(?:(?<=[\0\t\n\f\r ])|^)ID[\0\t\n\f\r ]"
+    rb".*?(?<=[\0\t\n\f\r ])EI(?=[\0\t\n\f\r ]|\Z)",
+    re.DOTALL,
+)
+# The points each path operator takes (ISO 32000-2:2020, 8.5.2.1).
+COORDINATES = {"m": 2, "l": 2, "v": 4, "y": 4, "c": 6}
+Matrix: TypeAlias = tuple[float, float, float, float, float, float]
+IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+class Area(NamedTuple):
+    """An axis-aligned area between two x and two y."""
+
+    left: float
+    low: float
+    right: float
+    high: float
+
+    def holds(self, x: float, y: float) -> bool:
+        """Whether `x`, `y` is inside by more than MARGIN."""
+        return (
+            self.left + MARGIN < x < self.right - MARGIN
+            and self.low + MARGIN < y < self.high - MARGIN
+        )
+
+    def overlaps(self, column: int, row: int) -> bool:
+        """Whether the unit square from `column`, `row` overlaps the area."""
+        return (
+            column + 1 > self.left
+            and column < self.right
+            and row + 1 > self.low
+            and row < self.high
+        )
+
+    def user(self, crop: starlightpdf.Rect) -> Area:
+        """Map the area to user space of an unrotated page cropped to `crop`."""
+        top = crop.y + crop.height
+        return Area(
+            crop.x + self.left, top - self.high, crop.x + self.right, top - self.low
+        )
+
+
+class Scene(NamedTuple):
+    """A document and its marks in default user space, whose points are counted."""
+
+    document: starlightpdf.Document
+    marks: list[Area]
+
+
+class Applied(NamedTuple):
+    """A document whose marks were applied, saved and reopened, and what came before."""
+
+    document: starlightpdf.Document
+    saved: bytes
+    marks: list[Area]
+    before: decode.Image | None
+
+
+def places(text: str) -> list[float]:
+    """Return the numbers of `x,y,w,h`."""
+    values = [float(item) for item in text.split(",")]
+    if len(values) != PLACE or not all(math.isfinite(value) for value in values):
+        msg = f"bad area {text!r}"
+        raise ValueError(msg)
+    return values
+
+
+def area(place: list[float]) -> Area:
+    """Return the area `x,y,w,h`."""
+    x, y, width, height = place
+    return Area(x, y, x + width, y + height)
+
+
+def mark(text: str) -> tuple[int, list[float], str]:
+    """Return the page, area and `#rrggbb` or empty of `page@x,y,w,h[@rrggbb]`."""
+    page_index, place, *colour = text.split("@")
+    if len(colour) > 1 or (colour and not COLOUR.fullmatch(colour[0])):
+        msg = f"bad mark {text!r}"
+        raise ValueError(msg)
+    return int(page_index), places(place), f"#{colour[0]}" if colour else ""
+
+
+def joined(values: list[float]) -> str:
+    """`values` rounded and comma-separated."""
+    return ",".join(rounded(value) for value in values)
+
+
+def listing(document: starlightpdf.Document, index: int) -> tuple[str, list[Area]]:
+    """Return page `index`'s annotations as a case gives them, and its marks."""
+    items: list[str] = []
+    marks: list[Area] = []
+    for annotation in document.page(index=index).annotations:
+        info = annotation.info
+        place = [info.x, info.y, info.width, info.height]
+        quads = list(info.quads)
+        item = f"{info.kind} {joined(place)}"
+        if quads:
+            item += f" q={joined(quads)}"
+        if info.color:
+            item += f" c={info.color.removeprefix('#')}"
+        items.append(item)
+        if info.kind != "Redact":
+            continue
+        if not quads:
+            marks.append(area(place))
+        for start in range(0, len(quads), QUAD):
+            xs, ys = (
+                quads[start : start + QUAD : 2],
+                quads[start + 1 : start + QUAD : 2],
+            )
+            marks.append(Area(min(xs), min(ys), max(xs), max(ys)))
+    return ";".join(items) or "none", marks
+
+
+def survey(document: starlightpdf.Document) -> tuple[str, list[list[Area]]]:
+    """Every page's annotations and marks."""
+    found = [listing(document, index) for index in range(document.page_count)]
+    return "|".join(shown for shown, _ in found), [marks for _, marks in found]
+
+
+def annotate(kind: str, args: list[str]) -> str:
+    """Add and delete as `args` say, saving if `saved`; page `index=`'s annotations."""
+    path, *options = args
+    given = parse(options, OPEN | ANNOTATE, {"index"})
+    adding = {"x", "y", "width", "height", "quads", "color"} & given.keys()
+    if (adding and "kind" not in given) or given.get("kind", "Redact") != "Redact":
+        msg = "a mark needs kind=Redact"
+        raise ValueError(msg)
+    document = open_document(source(kind, path), given)
+    index = int(given["index"])
+    shown = document.page(index=index)
+    if "kind" in given:
+        quads = given.get("quads")
+        shown.add_annotation(
+            None,
+            kind="Redact",
+            x=float(given.get("x", "0")),
+            y=float(given.get("y", "0")),
+            width=float(given.get("width", "0")),
+            height=float(given.get("height", "0")),
+            quads=[float(value) for value in quads.split(",")] if quads else [],
+            color=given.get("color", ""),
+        )
+    if "delete" in given:
+        nth = int(given["delete"])
+        found = next(itertools.islice(shown.annotations, nth, None), None)
+        if found is None:
+            msg = f"no annotation {nth}"
+            raise ValueError(msg)
+        found.delete()
+    if "saved" in given:
+        document = reopen(twice(document, {}), given)
+    return listing(document, index)[0]
+
+
+def unfiltered(names: str, raw: bytes) -> bytes:
+    """`raw` decoded through the filters `names`: none or FlateDecode (RFC 1950)."""
+    if names == "none":
+        return raw
+    if names == "FlateDecode":
+        return decode.inflate(raw)
+    msg = f"a stream filtered by {names}"
+    raise ValueError(msg)
+
+
+def decoded(document: starlightpdf.Document, found: Ref) -> bytes:
+    """Return the data of the stream `found`, inflated by the runner."""
+    dictionary = object_at(document, found)
+    if entry(dictionary, "DecodeParms") is not None:
+        msg = "a stream with DecodeParms"
+        raise ValueError(msg)
+    raw = stream_bytes(document, as_id(found), decode=False)
+    return unfiltered(filters(entry(dictionary, "Filter")), raw)
+
+
+def streams(saved: bytes) -> list[bytes]:
+    """Return each stream of the file `saved`, decoded by the runner (7.3.8)."""
+    found = []
+    start_at = 0
+    while (at := saved.find(b"stream", start_at)) >= 0:
+        after_keyword = start_at = at + len(b"stream")
+        head = saved[:at].rstrip(b"\t\n\f\r ")
+        if not head.endswith(b">>"):
+            continue
+        if saved.startswith(b"\r\n", after_keyword):
+            begin = after_keyword + len(b"\r\n")
+        elif saved.startswith(b"\n", after_keyword):
+            begin = after_keyword + len(b"\n")
+        else:
+            continue
+        end = saved.find(b"endstream", begin)
+        if end < 0:
+            msg = "a stream without endstream"
+            raise ValueError(msg)
+        start_at = end + len(b"endstream")
+        data = saved[begin:end]
+        for eol in (b"\r\n", b"\n", b"\r"):
+            if data.endswith(eol):
+                data = data[: -len(eol)]
+                break
+        opened = head.rfind(b"obj")
+        syntax = head[opened + len(b"obj") if opened >= 0 else 0 :].decode("latin-1")
+        dictionary = parse_object(tokens(syntax), 0)[0]
+        found.append(unfiltered(filters(entry(dictionary, "Filter")), data))
+    return found
+
+
+def found_text(saved: bytes, needle: bytes) -> str:
+    """Whether `needle` or its hex is in `saved` or a stream of it decoded."""
+    lower = needle.hex().encode()
+    forms = (needle, lower, lower.upper())
+    places_ = [saved, *streams(saved)]
+    present = any(form in place for place in places_ for form in forms)
+    return "present" if present else "absent"
+
+
+def content_tokens(content: bytes) -> list[str]:
+    """Split `content` into tokens, inline images' data left out (8.9.7)."""
+    return tokens(INLINE.sub(b"ID EI", content).decode("latin-1"))
+
+
+def is_operator(word: str) -> bool:
+    """Whether `word` is an operator (7.8.2)."""
+    return word[:1].isalpha() or word[:1] in {"'", '"'}
+
+
+def kid(document: starlightpdf.Document, index: int) -> Obj:
+    """Return the page object of kid `index` of the root page tree node."""
+    catalog = document.catalog
+    root = object_at(document, Ref(catalog.number, catalog.generation))
+    kids = resolve(document, entry(resolve(document, entry(root, "Pages")), "Kids"))
+    if not isinstance(kids, list) or index >= len(kids):
+        msg = f"no kid {index}"
+        raise ValueError(msg)
+    return resolve(document, kids[index])
+
+
+def contents(document: starlightpdf.Document, value: Obj | None) -> bytes:
+    """Return the contents `value` names, decoded, each followed by a newline."""
+    items = value if isinstance(value, list) else [value]
+    return b"".join(
+        decoded(document, item) + b"\n" for item in items if isinstance(item, Ref)
+    )
+
+
+def named(
+    document: starlightpdf.Document, resources: Obj | None, category: str, key: str
+) -> Obj | None:
+    """Return the value `key` names in `category` of `resources`, if any."""
+    if resources is None:
+        return None
+    items = entry(resolve(document, resources), category)
+    return None if items is None else entry(resolve(document, items), key)
+
+
+def numbers(operands: list[str], count: int) -> list[float]:
+    """Return the last `count` of `operands` as numbers."""
+    if len(operands) < count:
+        msg = f"an operator takes {count} numbers"
+        raise ValueError(msg)
+    return [float(operand) for operand in operands[len(operands) - count :]]
+
+
+def product(first: Matrix, second: Matrix) -> Matrix:
+    """Multiply `first` by `second` (8.3.4)."""
+    ma, mb, mc, md, me, mf = first
+    ca, cb, cc, cd, ce, cf = second
+    return (
+        ma * ca + mb * cc,
+        ma * cb + mb * cd,
+        mc * ca + md * cc,
+        mc * cb + md * cd,
+        me * ca + mf * cc + ce,
+        me * cb + mf * cd + cf,
+    )
+
+
+def matrix_of(values: list[float]) -> Matrix:
+    """Return the matrix of 6 `values`."""
+    ma, mb, mc, md, me, mf = values
+    return (ma, mb, mc, md, me, mf)
+
+
+def path_points(word: str, operands: list[str]) -> list[float]:
+    """Return the coordinates of path operator `word`, a corner each of `re`."""
+    if word in COORDINATES:
+        return numbers(operands, COORDINATES[word])
+    if word == "re":
+        x, y, width, height = numbers(operands, PLACE)
+        return [x, y, x + width, y, x, y + height, x + width, y + height]
+    return []
+
+
+def count(marks: list[Area], ctm: Matrix, coordinates: list[float]) -> int:
+    """How many points of `coordinates`, mapped by `ctm`, lie inside `marks`."""
+    ma, mb, mc, md, me, mf = ctm
+    pairs = zip(coordinates[::2], coordinates[1::2], strict=True)
+    return sum(
+        any(mark.holds(ma * x + mc * y + me, mb * x + md * y + mf) for mark in marks)
+        for x, y in pairs
+    )
+
+
+def walk(
+    scene: Scene, content: bytes, resources: Obj | None, ctm: Matrix, depth: int
+) -> int:
+    """Count the points of `content` inside the marks, through cm and forms."""
+    states: list[Matrix] = []
+    current = ctm
+    operands: list[str] = []
+    inside = 0
+    for word in content_tokens(content):
+        if word == "q":
+            states.append(current)
+        elif word == "Q" and states:
+            current = states.pop()
+        elif word == "cm":
+            current = product(matrix_of(numbers(operands, len(IDENTITY))), current)
+        elif word == "Do":
+            label = operands[-1].removeprefix("/") if operands else ""
+            inside += form(scene, label, resources, current, depth)
+        else:
+            inside += count(scene.marks, current, path_points(word, operands))
+        if is_operator(word):
+            operands.clear()
+        else:
+            operands.append(word)
+    return inside
+
+
+def form(
+    scene: Scene, label: str, resources: Obj | None, ctm: Matrix, depth: int
+) -> int:
+    """Count the points inside the marks of the form `label` names, if one."""
+    found = named(scene.document, resources, "XObject", label)
+    if not isinstance(found, Ref):
+        msg = f"no XObject /{label}"
+        raise TypeError(msg)
+    dictionary = object_at(scene.document, found)
+    if entry(dictionary, "Subtype") != Name("Form"):
+        return 0
+    if depth >= DEPTH:
+        msg = "forms nest too deep"
+        raise ValueError(msg)
+    given = entry(dictionary, "Matrix")
+    matrix = IDENTITY
+    if isinstance(given, list):
+        matrix = matrix_of([float(text(item)) for item in given])
+    own = entry(dictionary, "Resources")
+    inner = own if own is not None else resources
+    content = decoded(scene.document, found)
+    return walk(scene, content, inner, product(matrix, ctm), depth + 1)
+
+
+def points(document: starlightpdf.Document, index: int, marks: list[Area]) -> str:
+    """Path points of page `index` strictly inside `marks` (8.5.2.1)."""
+    shown = document.page(index=index)
+    if shown.rotation != 0:
+        msg = "points needs an unrotated page"
+        raise ValueError(msg)
+    crop = shown.boundary(kind="Crop")
+    page_object = kid(document, index)
+    scene = Scene(document, [found.user(crop) for found in marks])
+    content = contents(document, entry(page_object, "Contents"))
+    return str(walk(scene, content, entry(page_object, "Resources"), IDENTITY, 0))
+
+
+def painted_images(
+    document: starlightpdf.Document, index: int
+) -> tuple[list[tuple[Ref, Obj]], int]:
+    """Each image a Do of page `index` paints, and its inline images (8.8, 8.9.7)."""
+    page_object = kid(document, index)
+    resources = entry(page_object, "Resources")
+    operands: list[str] = []
+    images: list[tuple[Ref, Obj]] = []
+    inline = 0
+    for word in content_tokens(contents(document, entry(page_object, "Contents"))):
+        if word == "BI":
+            inline += 1
+        if word == "Do":
+            label = operands[-1].removeprefix("/") if operands else ""
+            found = named(document, resources, "XObject", label)
+            if isinstance(found, Ref):
+                image = object_at(document, found)
+                if entry(image, "Subtype") == Name("Image"):
+                    images.append((found, image))
+        if is_operator(word):
+            operands.clear()
+        else:
+            operands.append(word)
+    return images, inline
+
+
+def stencil(dictionary: Obj, samples: bytes) -> bytes:
+    """Return a stencil mask's samples, 1 for masked whatever its Decode."""
+    ends = entry(dictionary, "Decode")
+    if not isinstance(ends, list) or [number(float(text(end))) for end in ends] != [
+        "1",
+        "0",
+    ]:
+        return samples
+    width = int(text(entry(dictionary, "Width")))
+    stride = max((width + 7) // 8, 1)
+    flipped = bytearray(samples)
+    for start in range(0, len(flipped), stride):
+        for column in range(width):
+            at = start + column // 8
+            if column // 8 < stride and at < len(flipped):
+                flipped[at] ^= 0x80 >> (column % 8)
+    return bytes(flipped)
+
+
+def mask_samples(document: starlightpdf.Document, image: Obj, found: Ref) -> str:
+    """Return the samples of an image's soft, explicit or stencil mask, or its key."""
+    soft = entry(image, "SMask")
+    if isinstance(soft, Ref):
+        return decoded(document, soft).hex()
+    explicit = entry(image, "Mask")
+    if isinstance(explicit, Ref):
+        return stencil(object_at(document, explicit), decoded(document, explicit)).hex()
+    if isinstance(explicit, list):
+        return "key " + " ".join(number(float(text(item))) for item in explicit)
+    if entry(image, "ImageMask") == "true":
+        return stencil(image, decoded(document, found)).hex()
+    return "none"
+
+
+def image_after(document: starlightpdf.Document, given: dict[str, str]) -> str:
+    """Read `read=` of the `do=`-th image page 0 paints."""
+    images, _ = painted_images(document, 0)
+    at = int(given["do"])
+    if at >= len(images):
+        msg = f"no image {at}"
+        raise ValueError(msg)
+    found, image = images[at]
+    if given["read"] == "image_raw":
+        raw = stream_bytes(document, as_id(found), decode=False)
+        return hashlib.sha256(raw).hexdigest()
+    if given["read"] == "image_samples":
+        return decoded(document, found).hex()
+    return mask_samples(document, image, found)
+
+
+def rendered(document: starlightpdf.Document, index: int) -> decode.Image:
+    """Page `index` rendered at the defaults and read back."""
+    sink = starlightpdf.Sink.in_memory()
+    document.page(index=index).render(sink)
+    return decode.read(sink.take_bytes())
+
+
+def same(applied: Applied, index: int, excluded: list[Area]) -> str:
+    """Compare the renders before and after outside `excluded`."""
+    earlier, later = applied.before, rendered(applied.document, index)
+    if earlier is None or earlier[:3] != later[:3]:
+        msg = "no render before, or one of another size"
+        raise ValueError(msg)
+    differ = sum(
+        earlier.pixel(column, row) != later.pixel(column, row)
+        for row in range(later.height)
+        for column in range(later.width)
+        if not any(found.overlaps(column, row) for found in excluded)
+    )
+    return "same" if differ == 0 else f"{differ} differ"
+
+
+def snapshot(document: starlightpdf.Document) -> bytes:
+    """Return the bytes `document` saves to."""
+    sink = starlightpdf.Sink.in_memory()
+    save(document, sink, {})
+    return sink.take_bytes()
+
+
+def redact_given(options: list[str], expected: str) -> tuple[dict[str, str], int]:
+    """Check a redact case's keys; they and the calls `cancel=N` lets through."""
+    counts = [
+        arg.removeprefix("cancel=") for arg in options if arg.startswith("cancel=")
+    ]
+    if not all(re.fullmatch("[0-9]+", found) for found in counts):
+        msg = f"bad cancel {counts!r}"
+        raise ValueError(msg)
+    named_ = ["cancel" if arg.startswith("cancel=") else arg for arg in options]
+    given = parse(named_, OPEN | REDACT, {"read"})
+    read = given["read"]
+    code = expected.isascii() and expected.isalpha()
+    if (
+        read not in REDACT_READS
+        or ("index" in given and not REDACT_READS[read])
+        or ("bytes" in given) != (read == "text")
+        or given.get("bytes") == ""
+        or ("do" in given) != (read in IMAGE_SAMPLES)
+        or ("except" in given and read != "pixels")
+        or (read == "render" and not code and not re.fullmatch(PIXELS, expected))
+    ):
+        msg = f"keys that do not go together, or a bad expected value {expected!r}"
+        raise ValueError(msg)
+    return given, int(counts[0]) if counts else 0
+
+
+def redact_read(applied: Applied, given: dict[str, str], expected: str) -> str:
+    """Read `read=` of the document redacted."""
+    document, index = applied.document, int(given.get("index", "0"))
+    excluded = [
+        area(places(item)) for item in given.get("except", "").split(";") if item
+    ]
+
+    def thumb() -> str:
+        return "none" if entry(kid(document, index), "Thumb") is None else "kept"
+
+    def counted() -> str:
+        images, inline = painted_images(document, index)
+        return f"images={len(images)} inline={inline}"
+
+    def shown() -> str:
+        image = rendered(document, index)
+        named_pixels = expected.split(" ")[1:]
+        size = f"{image.width}x{image.height}"
+        return " ".join([size, *(matched(image, token) for token in named_pixels)])
+
+    reads: dict[str, Callable[[], str]] = {
+        "ok": lambda: "ok",
+        "text": lambda: found_text(applied.saved, bytes.fromhex(given["bytes"])),
+        "annotations": lambda: listing(document, index)[0],
+        "thumb": thumb,
+        "painted": counted,
+        "points": lambda: points(document, index, applied.marks),
+        "pixels": lambda: same(applied, index, [*applied.marks, *excluded]),
+        "render": shown,
+    }
+    return reads.get(given["read"], lambda: image_after(document, given))()
+
+
+def redact(kind: str, args: list[str], expected: str) -> str:
+    """Add the marks, apply them, save, reopen and read; or the code of a failure."""
+    path, *options = args
+    given, allowed = redact_given(options, expected)
+    document = open_document(source(kind, path), given)
+    marks = (
+        [mark(item) for item in given["marks"].split(";")] if "marks" in given else []
+    )
+    for page_index, (x, y, width, height), colour in marks:
+        document.page(index=page_index).add_annotation(
+            None, kind="Redact", x=x, y=y, width=width, height=height, color=colour
+        )
+    listed, areas = survey(document)
+    index = int(given.get("index", "0"))
+    before = snapshot(document)
+    shown = rendered(document, index) if given["read"] == "pixels" else None
+    pages = given.get("pages")
+    try:
+        document.apply_redactions(
+            after(allowed) if "cancel" in given else None,
+            pages=None
+            if pages is None
+            else [int(item) for item in pages.split(",") if item],
+        )
+    except starlightpdf.PdfError as error:
+        kept = snapshot(document) == before and survey(document)[0] == listed
+        return error.code if kept else f"{error.code} changed"
+    saved = twice(document, {key: given[key] for key in ("mode",) if key in given})
+    page_marks = areas[index] if index < len(areas) else []
+    applied = Applied(reopen(saved, given), saved, page_marks, shown)
+    return redact_read(applied, given, expected)
+
+
 OPERATIONS: dict[str, Callable[[list[str]], str]] = {
     "header_version": lambda args: header_version(*args),
     "insert_blank_page": inserted,
     "draw_image": drawn,
+    **{
+        f"annotate_{kind}": functools.partial(annotate, kind)
+        for kind in ("bytes", "file")
+    },
     **{
         f"{family}_{kind}": functools.partial(perform, family, kind)
         for family in (*READS, "save", "split")
@@ -913,6 +1507,8 @@ OPERATIONS: dict[str, Callable[[list[str]], str]] = {
 
 # A render takes what it expects: the pixels to look at.
 RENDERS = {"render_bytes": "bytes", "render_file": "file"}
+# So does a redaction, whose read=render looks at pixels too.
+REDACTIONS = {"redact_bytes": "bytes", "redact_file": "file"}
 
 
 class SuiteError(Exception):
@@ -921,11 +1517,13 @@ class SuiteError(Exception):
 
 def check(operation: str, args: list[str], expected: str) -> str | None:
     """Return why `operation` on `args` does not give `expected`, or None."""
-    if operation not in OPERATIONS and operation not in RENDERS:
+    if not {operation} & (OPERATIONS.keys() | RENDERS.keys() | REDACTIONS.keys()):
         return f"unknown operation {operation!r}"
     try:
         if operation in RENDERS:
             actual = render(RENDERS[operation], args, expected)
+        elif operation in REDACTIONS:
+            actual = redact(REDACTIONS[operation], args, expected)
         else:
             actual = OPERATIONS[operation](args)
     except starlightpdf.PdfError as error:

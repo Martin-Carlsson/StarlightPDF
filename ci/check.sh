@@ -112,7 +112,8 @@ case $1 in
     if [ "$1" = fuzz ]; then
       seeds=tests/corpus
       set -- cmap 2500 content 1500 dct 3000 font-cff 2500 font-opentype 2500 font-truetype 2500 font-type1 2500 \
-        font-type3 2500 function 2500 icc 2500 image-codec 2000 jbig2-symbols 2500 render-file 2000 shading 1000
+        font-type3 2500 function 2500 icc 2500 image-codec 2000 jbig2-symbols 2500 redact 1000 render-file 2000 \
+        shading 1000
     else
       seeds=${tmp}/seeds
       mkdir "${seeds}"

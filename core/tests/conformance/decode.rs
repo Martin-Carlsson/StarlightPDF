@@ -402,7 +402,7 @@ fn number(bytes: &[u8]) -> usize {
 }
 
 /// The zlib stream `data`, decoded and checked (RFC 1950, 2.2).
-fn inflate(data: &[u8]) -> Result<Vec<u8>, Fault> {
+pub(crate) fn inflate(data: &[u8]) -> Result<Vec<u8>, Fault> {
     let (&[method, flags], body) = data.split_first_chunk().ok_or("a short zlib stream")?;
     if method & 15 != 8 || flags & 0x20 != 0 || number(&[method, flags]).checked_rem(31) != Some(0)
     {

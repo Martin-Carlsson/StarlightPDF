@@ -4,6 +4,8 @@ extern crate alloc;
 
 #[path = "conformance/decode.rs"]
 mod decode;
+#[path = "conformance/redact.rs"]
+mod redact;
 #[path = "conformance/render.rs"]
 mod render;
 
@@ -367,6 +369,19 @@ fn call(operation: &str, args: &[&str], expected: &str) -> Result<String, String
             .split_first()
             .ok_or_else(|| format!("{operation} takes a path"))?;
         return render::call(operation, file, relative, rest, expected);
+    }
+    if matches!(family, "annotate" | "redact") && operation != family {
+        let (&relative, rest) = args
+            .split_first()
+            .ok_or_else(|| format!("{operation} takes a path"))?;
+        return redact::call(
+            operation,
+            family == "redact",
+            file,
+            relative,
+            rest,
+            expected,
+        );
     }
     let (takes, needs) = keys(family).ok_or_else(unknown)?;
     let (&relative, rest) = args

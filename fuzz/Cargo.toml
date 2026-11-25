@@ -128,5 +128,10 @@ name = "shading"
 path = "fuzz_targets/shading.rs"
 test = false
 
+[[bin]]
+name = "redact"
+path = "fuzz_targets/redact.rs"
+test = false
+
 [lints]
 workspace = true

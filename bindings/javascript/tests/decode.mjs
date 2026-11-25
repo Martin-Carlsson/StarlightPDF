@@ -76,7 +76,7 @@ const FIXED = [
 ];
 
 /** The one zlib stream `parts` hold, of fixed-code blocks (RFC 1950, 2.2; RFC 1951, 3.2.6). @type {(parts: Uint8Array[]) => Uint8Array} */
-function inflate(parts) {
+export function inflate(parts) {
   const packed = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
   let filled = 0;
   for (const part of parts) {

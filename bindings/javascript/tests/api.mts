@@ -1,4 +1,4 @@
-// The package's API as the tests expect it (issues #147, #148, #149 and #150).
+// The package's API as the tests expect it (issues #147, #148, #149, #150 and #151).
 
 export type Source = object;
 
@@ -112,7 +112,34 @@ export interface Deviation {
   readonly clause: string;
 }
 
+export interface AnnotationInfo {
+  readonly color: string;
+  readonly height: number;
+  readonly kind: string;
+  readonly quads: readonly number[];
+  readonly width: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+export interface Annotation {
+  delete(): Promise<void>;
+  info(): Promise<AnnotationInfo>;
+}
+
+export interface AddAnnotationOptions {
+  readonly color?: string;
+  readonly height?: number;
+  readonly kind?: string;
+  readonly quads?: readonly number[];
+  readonly width?: number;
+  readonly x?: number;
+  readonly y?: number;
+}
+
 export interface Page {
+  addAnnotation(data: Source | null, options: AddAnnotationOptions): Promise<Annotation>;
+  annotations(): Promise<AsyncIterable<Annotation>>;
   boundary(options?: { readonly kind?: Boundary }): Promise<Rect>;
   drawImage(image: Source, mask?: Source | null, layer?: null, options?: DrawImageOptions): Promise<void>;
   render(sink: Sink, progress?: Progress | null, options?: RenderOptions): Promise<void>;
@@ -120,6 +147,7 @@ export interface Page {
 }
 
 export interface Document {
+  applyRedactions(progress?: Progress | null, options?: { readonly pages?: readonly number[] }): Promise<void>;
   catalog(): Promise<ObjectId>;
   droppedWarnings(): Promise<number>;
   encryption(): Promise<Encryption>;
