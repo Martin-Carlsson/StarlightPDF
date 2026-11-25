@@ -5,6 +5,7 @@ mod glyph;
 mod image;
 mod marks;
 pub(crate) mod page;
+mod shared;
 mod stage;
 mod structure;
 mod walk;

@@ -40,8 +40,7 @@ fn boxed(
     code: &Code,
 ) -> Result<Option<Vec<Point>>, PdfError> {
     let job = run.job;
-    let space = text::scaled(&run.state.text, code.origin);
-    let full = space.then(&block.matrix()).then(&run.state.matrix);
+    let user = text::scaled(&run.state.text, code.origin).then(&block.matrix());
     let none = Fixed::default();
     let wide = if shown.is_vertical() {
         Fixed::from_i64(1)
@@ -59,7 +58,7 @@ fn boxed(
         if ink.all {
             return Ok(None);
         }
-        let inked = ink.area.map(|found| extent(&procedures.matrix(), found));
+        let inked = ink.area.map(|found| procedures.matrix().extent(found));
         let [_, bottom, _, top] = inked.unwrap_or_default();
         walk::joined(inked, [none, bottom, wide, top])
     } else {
@@ -67,17 +66,24 @@ fn boxed(
         let advance = [none, descent, wide, ascent];
         match shown.outline(job, &mut run.caches.fonts.loaded, code)? {
             Some((traced, units)) => traced.corners().map_or(advance, |found| {
-                walk::joined(Some(advance), extent(&units, found))
+                walk::joined(Some(advance), units.extent(found))
             }),
             None => advance,
         }
     };
-    Ok(Some(walk::corners(&full, area)))
-}
-
-/// The box of the rectangle `corners` under `matrix`.
-fn extent(matrix: &Matrix, corners: [Fixed; 4]) -> [Fixed; 4] {
-    matrix.extent(corners)
+    // Stroked, it reaches half the line width further (9.3.6).
+    if matches!(run.state.text.mode, 1 | 2 | 5 | 6) {
+        let half = Fixed::from_bits(run.state.style.width.bits().saturating_abs() >> 1_u32);
+        let [left, bottom, right, top] = user.extent(area);
+        let grown = [
+            left.minus(half),
+            bottom.minus(half),
+            right.plus(half),
+            top.plus(half),
+        ];
+        return Ok(Some(walk::corners(&run.state.matrix, grown)));
+    }
+    Ok(Some(walk::corners(&user.then(&run.state.matrix), area)))
 }
 
 /// Where the glyph procedure `id` of `procedures` paints, in glyph space, measured once (9.6.4).

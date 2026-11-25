@@ -21,8 +21,8 @@ use crate::render::job::{Job, Pace, WORK_STEP, work_limit};
 use crate::render::plane::Planes;
 use crate::render::redact::marks::{self, Mark};
 use crate::render::redact::stage::Stage;
-use crate::render::redact::structure;
 use crate::render::redact::walk::{self, Context, Found, Mode};
+use crate::render::redact::{shared, structure};
 use crate::render::surface::Surface;
 use crate::rendering::RenderUsage;
 use crate::store::{Bounds, Objects, Store};
@@ -37,7 +37,7 @@ type Walked = (Found, Option<Vec<u8>>, Vec<Object>);
 struct Kept {
     /// Those left.
     left: Vec<Object>,
-    /// The `StructParent` keys of those removed, and them.
+    /// The `StructParent` keys of those removed, and them; then of forms a mark touched.
     parents: Vec<(i64, Option<ObjectId>)>,
     /// The widgets removed, and their dictionaries.
     widgets: Vec<(ObjectId, Object)>,
@@ -83,8 +83,13 @@ pub(crate) fn apply(
 }
 
 /// The annotations `listed` of a page less the marks, those whose `Rect` meets one and their
-/// pop-ups (12.5.2, 12.5.6.14).
-fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kept, PdfError> {
+/// pop-ups, and those left without their `IRT` and `Popup` where these are gone (12.5.2,
+/// 12.5.6.14).
+fn annotations(
+    (job, stage): (&Job<'_>, &mut Stage),
+    marks: &[Mark],
+    listed: Vec<Object>,
+) -> Result<Kept, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
     let mut read = Vec::new();
     let mut gone = Vec::new();
@@ -121,7 +126,8 @@ fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kep
             || parent.is_some_and(|found| gone.contains(&found))
             || (id.is_none() && widget);
         if !removed {
-            kept.left.push(item);
+            kept.left
+                .push(unlinked((job, &mut *stage), (item, value, id), &gone)?);
             continue;
         }
         if widget && let Some(found) = id {
@@ -129,6 +135,31 @@ fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kep
         }
     }
     Ok(kept)
+}
+
+/// The annotation `item`, `value` read from object `id` where one, without its `IRT` and `Popup`
+/// where they refer to one of `gone`; staged where it is its own object (12.5.2, 12.5.6.14).
+fn unlinked(
+    (job, stage): (&Job<'_>, &mut Stage),
+    (item, mut value, id): (Object, Object, Option<ObjectId>),
+    gone: &[ObjectId],
+) -> Result<Object, PdfError> {
+    let mut changed = false;
+    for key in [&b"IRT"[..], b"Popup"] {
+        if let Some(Object::Reference(found)) = value.get(key)
+            && gone.contains(&found)
+        {
+            value.set(key, None);
+            changed = true;
+        }
+    }
+    match id {
+        Some(found) if changed => {
+            stage.set(job, found, value)?;
+            Ok(item)
+        }
+        Some(_) | None => Ok(if changed { value } else { item }),
+    }
 }
 
 /// Removes `kid` from the array `key` of `owner`, staging the array where it is its own object;
@@ -226,12 +257,13 @@ fn rectangle(
     })
 }
 
-/// Walks the content of the page `dictionary` for what `marks` meet: what it found, the
-/// content rewritten when changed, and its streams; sets the resources a copy adds.
+/// Walks the content of the page `id`, `dictionary`, for what `marks` meet: what it found, the
+/// content rewritten when changed, and its streams; sets the resources a copy adds, and releases
+/// those it no longer uses.
 fn content(
     job: &Job<'_>,
     (marks, stage): (&[Mark], &mut Stage),
-    dictionary: &mut Object,
+    (id, dictionary): (ObjectId, &mut Object),
 ) -> Result<Walked, PdfError> {
     let (objects, reading) = (job.objects, &*job.overlay);
     let inherited = job.tolerate(
@@ -263,7 +295,7 @@ fn content(
     let mut cx = Context {
         marks,
         measured: BTreeSet::new(),
-        parents: structure::parents(job, dictionary)?,
+        parents: structure::key(job, dictionary, b"StructParents")?,
         procedures: BTreeMap::new(),
         stage,
     };
@@ -276,7 +308,8 @@ fn content(
         None
     };
     if !found.added.is_empty() || !found.removed.is_empty() {
-        let made = walk::resources_with(job, run.scope.resources.value(), &found)?;
+        let made = walk::resources_with(job, run.scope.resources.value(), &found, &cx.measured)?;
+        shared::release(&mut run, cx.stage, (id, dictionary), &found.removed)?;
         dictionary.set(b"Resources", Some(made));
     }
     Ok((found, rewritten, items))
@@ -292,33 +325,34 @@ fn filled(
 ) -> Result<(), PdfError> {
     let fill = marks::fill(marks);
     let stream = |bytes: Vec<u8>| Object::Stream(Vec::new(), Data::Bytes(Arc::from(bytes)));
+    let mut middle = match rewritten {
+        Some(bytes) => {
+            let mut coded = stream(bytes);
+            coded.set(b"Filter", Some(Object::Name(b"FlateDecode".to_vec())));
+            vec![Object::Reference(stage.add(job, coded)?)]
+        }
+        None if fill.is_empty() => return Ok(()),
+        None => items,
+    };
+    if fill.is_empty() {
+        dictionary.set(b"Contents", middle.pop());
+        return Ok(());
+    }
     // What the content leaves open is closed first.
     let before = "q\n".repeat(found.stray.saturating_add(1));
     let mut after = String::from(if found.texting { "\nET" } else { "" });
+    after.push_str(&"\nEMC".repeat(found.marked));
     after.push_str(&"\nQ".repeat(found.open.saturating_add(1)));
     after.push('\n');
     after.push_str(&fill);
-    let contents = match (rewritten, fill.is_empty()) {
-        (Some(bytes), true) => Object::Reference(stage.add(job, stream(bytes))?),
-        (Some(mut bytes), false) => {
-            let mut whole = before.into_bytes();
-            whole.append(&mut bytes);
-            whole.extend_from_slice(after.as_bytes());
-            Object::Reference(stage.add(job, stream(whole))?)
-        }
-        (None, false) => {
-            let mut all = vec![Object::Reference(
-                stage.add(job, stream(before.into_bytes()))?,
-            )];
-            all.extend(items);
-            all.push(Object::Reference(
-                stage.add(job, stream(after.into_bytes()))?,
-            ));
-            Object::Array(all)
-        }
-        (None, true) => return Ok(()),
-    };
-    dictionary.set(b"Contents", Some(contents));
+    let mut all = vec![Object::Reference(
+        stage.add(job, stream(before.into_bytes()))?,
+    )];
+    all.append(&mut middle);
+    all.push(Object::Reference(
+        stage.add(job, stream(after.into_bytes()))?,
+    ));
+    dictionary.set(b"Contents", Some(Object::Array(all)));
     Ok(())
 }
 
@@ -366,8 +400,11 @@ fn redact(
         let value = reading.direct(objects, item.clone())?;
         marks.extend(marks::read(objects, reading, &value)?);
     }
-    let walked = content(&job, (&marks, stage), &mut dictionary)?;
-    let kept = annotations(&job, &marks, listed)?;
+    let walked = content(&job, (&marks, stage), (id, &mut dictionary))?;
+    let mut kept = annotations((&job, &mut *stage), &marks, listed)?;
+    // A form a mark touched is one content item, as an annotation is (14.7.5.3).
+    kept.parents
+        .extend(walked.0.elements.iter().map(|&key| (key, None)));
     structure::clear(&job, stage, &walked.0.struck, &kept.parents)?;
     for widget in kept.widgets {
         detach(&job, stage, widget)?;

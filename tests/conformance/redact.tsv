@@ -52,10 +52,27 @@ redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=text	bytes=47484f5354494e4b	absent
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=text	bytes=4b4545505448524545	present
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=render	index=0	200x200 25,25=000000 25,77=ffffff 115,135=ffffff
+# Text shown outside a text object, which no reader agrees where to draw (9.4.1).
+redact_bytes	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
+redact_file	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
+# A stroked glyph reaches half the line width past its box (9.3.6).
+redact_bytes	tests/corpus/redact/text-stroked.pdf	marks=0@10,80,50,30	read=text	bytes=5354524f4b45534543524554	absent
+redact_file	tests/corpus/redact/text-stroked.pdf	marks=0@10,80,50,30	read=text	bytes=5354524f4b45534543524554	absent
 # A form XObject drawn under a mark and outside it, and a nested form under a mark (8.10).
 redact_bytes	tests/corpus/redact/form-shared.pdf	marks=0@15,100,110,20;0@15,150,110,20	read=text	bytes=4e455354454448494445	absent
 redact_bytes	tests/corpus/redact/form-shared.pdf	marks=0@15,100,110,20;0@15,150,110,20	read=text	bytes=464f524d534543524554	present
 redact_bytes	tests/corpus/redact/form-shared.pdf	marks=0@15,100,110,20;0@15,150,110,20	read=render	index=0	200x200 25,40=000000 25,110=ffffff 25,160=ffffff
+# A thousand uses of a form, each cut under its own matrix; forms nested 13 deep, each drawing the next twice, whose same copies are one within a 1 MiB limit (8.10.1).
+redact_bytes	tests/corpus/redact/forms-many.pdf	marks=0@10,0,50,200	read=points	index=0	0
+redact_file	tests/corpus/redact/forms-many.pdf	marks=0@10,0,50,200	read=points	index=0	0
+redact_bytes	tests/corpus/redact/forms-tree.pdf	decoded_limit=1048576	marks=0@50,0,100,200	read=points	index=0	0
+redact_file	tests/corpus/redact/forms-tree.pdf	decoded_limit=1048576	marks=0@50,0,100,200	read=points	index=0	0
+# What a mark removed leaves resources inherited from the page tree, shared with a page that does not use it, or shared with a form (7.7.3.4, 7.8.3).
+redact_bytes	tests/corpus/redact/resources-shared.pdf	marks=0@10,130,60,60;1@10,130,60,60;3@10,130,60,60	read=text	bytes=494e4845524954454453454352455431	absent
+redact_file	tests/corpus/redact/resources-shared.pdf	marks=0@10,130,60,60;1@10,130,60,60;3@10,130,60,60	read=text	bytes=494e4845524954454453454352455431	absent
+redact_bytes	tests/corpus/redact/resources-shared.pdf	marks=0@10,130,60,60;1@10,130,60,60;3@10,130,60,60	read=text	bytes=534841524544534543524554494d4731	absent
+redact_bytes	tests/corpus/redact/resources-shared.pdf	marks=0@10,130,60,60;1@10,130,60,60;3@10,130,60,60	read=text	bytes=464f524d534841524544534543524554	absent
+redact_bytes	tests/corpus/redact/resources-shared.pdf	marks=0@10,130,60,60;1@10,130,60,60;3@10,130,60,60	read=painted	index=2	images=1 inline=0
 # ActualText, Alt and E of marked content a mark touches, inline or named in Properties (14.6, 14.9.3, 14.9.4, 14.9.5).
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=41435455414c474f4e45	absent
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=414c54474f4e45	absent
@@ -68,6 +85,9 @@ redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=text	by
 redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=text	bytes=444f43414c54474f4e45	absent
 redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=text	bytes=5354525543544b455054	present
 redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=annotations	index=0	none
+# Of the element of a form that is one content item (14.7.5.3).
+redact_bytes	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
+redact_file	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
 # Images (8.9): one wholly under a mark is removed, an untouched one keeps its bytes. images= counts the Do of image XObjects, inline= the BI.
 redact_bytes	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
 redact_file	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
@@ -106,11 +126,18 @@ redact_bytes	tests/corpus/redact/path-stroke.pdf	marks=0@80,10,40,180	read=rende
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_file	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=points	index=0	0
+# Under a singular matrix a fill or clip paints nothing, so nothing is removed (8.4.4).
+redact_bytes	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
+redact_file	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
 # Overlapping marks are cut and clipped as their union: what lies between them stays (8.5.3, 8.5.4).
 redact_bytes	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=points	index=0	0
 redact_file	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=points	index=0	0
 redact_bytes	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=pixels	index=0	except=36,94,4,12;80,94,4,12	same
 redact_file	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=pixels	index=0	except=36,94,4,12;80,94,4,12	same
+# Four hundred marks over an image and paths, each meeting few (8.9.5, 8.5.3).
+redact_bytes	tests/corpus/redact/marks-many.pdf	read=pixels	index=0	same
+redact_file	tests/corpus/redact/marks-many.pdf	read=pixels	index=0	same
+redact_bytes	tests/corpus/redact/marks-many.pdf	read=points	index=0	0
 # Annotations whose Rect meets a mark go with their popups, a widget with its field; a redacted page loses its thumbnail (12.3.4, 12.5.6.14, 12.7.4).
 redact_bytes	tests/corpus/redact/annotations.pdf	read=annotations	index=0	Note 10,170,20,20
 redact_file	tests/corpus/redact/annotations.pdf	read=annotations	index=0	Note 10,170,20,20
@@ -124,6 +151,11 @@ redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4649454c4456414
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d425a45524f	absent
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4641524e4f54454b455054	present
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d424f4e4558	present
+# A kept annotation loses its IRT and Popup where they are removed (12.5.6.4, 12.5.6.14).
+redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
+redact_file	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
+redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=504f505550534543524554	absent
+redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=annotations	index=0	Note 150,30,20,20;Note 150,160,20,20
 # Each mark's area is filled with its IC, or left empty without one, and the marks are gone (12.5.6.23).
 redact_bytes	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
 redact_file	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
@@ -132,6 +164,9 @@ redact_file	tests/corpus/redact/mark-rect.pdf	read=annotations	index=0	none
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=render	index=0	200x200 15,95=ffffff 95,95=000000 95,135=ffffff
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=annotations	index=0	none
 redact_bytes	tests/corpus/redact/rotated.pdf	marks=0@75,45,20,100@00ff00	read=render	index=0	160x200 85,95=00ff00 125,55=000000 30,30=ffffff
+# Marked content left open, here of a hidden layer, is closed before the fill (14.6, 8.11.3).
+redact_bytes	tests/corpus/redact/marked-open.pdf	marks=0@50,50,100,100@ff0000	read=render	index=0	200x200 100,100=ff0000
+redact_file	tests/corpus/redact/marked-open.pdf	marks=0@50,50,100,100@ff0000	read=render	index=0	200x200 100,100=ff0000
 # Rendered before and after, pixels are the same outside the marks and except=: ink a mark removes whole, and within one line width of a cut stroke, whose coverage the renderer rounds anew.
 redact_bytes	tests/corpus/redact/mark-rect.pdf	read=pixels	index=0	same
 redact_file	tests/corpus/redact/mark-rect.pdf	read=pixels	index=0	same
@@ -180,4 +215,3 @@ redact_file	tests/corpus/redact/mark-rect.pdf	cancel	read=ok	Cancelled
 redact_bytes	tests/corpus/redact/pages.pdf	cancel	read=ok	Cancelled
 # An incremental save would keep the removed content in the old bytes (7.5.6).
 redact_bytes	tests/corpus/redact/mark-rect.pdf	mode=Incremental	read=ok	IncrementalRefused
-redact_bytes	tests/corpus/redact/mark-rect.pdf	read=ok	ok

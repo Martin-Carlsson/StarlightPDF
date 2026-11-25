@@ -244,15 +244,16 @@ fn number(job: &Job<'_>, tree: &Object, key: i64) -> Result<Object, PdfError> {
     Err(job.limit())
 }
 
-/// The `StructParents` key of `owner`, a page or a form (14.7.4.4).
+/// The parent tree key `key` of `owner`, a page or a form: `StructParents` or `StructParent`
+/// (14.7.4.4).
 ///
 /// # Errors
 ///
 /// As reading it.
-pub(super) fn parents(job: &Job<'_>, owner: &Object) -> Result<Option<i64>, PdfError> {
-    let found = data::entry(job, owner, b"StructParents")?;
-    Ok(if let Object::Integer(key) = *found.value() {
-        Some(key)
+pub(super) fn key(job: &Job<'_>, owner: &Object, key: &[u8]) -> Result<Option<i64>, PdfError> {
+    let found = data::entry(job, owner, key)?;
+    Ok(if let Object::Integer(number) = *found.value() {
+        Some(number)
     } else {
         None
     })

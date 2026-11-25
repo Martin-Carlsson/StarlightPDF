@@ -1,6 +1,7 @@
 //! What a redaction changes, held until all of it is known, then set at once.
 
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 
 use crate::PdfError;
 use crate::objects::ObjectId;
@@ -13,15 +14,31 @@ use crate::render::job::Job;
 pub(super) struct Stage {
     /// About the bytes they hold.
     bytes: u64,
+    /// The streams added, by dictionary and data, so that one made again is shared.
+    made: BTreeMap<(String, Arc<[u8]>), ObjectId>,
     /// They, by number.
     objects: BTreeMap<u32, (u16, Object)>,
 }
 
 impl Stage {
-    /// Adds `object` under a new number.
+    /// Adds `object` under a new number, or gives that of the same stream added before.
     pub(super) fn add(&mut self, job: &Job<'_>, object: Object) -> Result<ObjectId, PdfError> {
+        let key = if let Object::Stream(ref entries, Data::Bytes(ref bytes)) = object {
+            let mut text = String::new();
+            Object::Dictionary(entries.clone()).syntax(&mut text);
+            let found = (text, Arc::clone(bytes));
+            if let Some(&id) = self.made.get(&found) {
+                return Ok(id);
+            }
+            Some(found)
+        } else {
+            None
+        };
         let id = job.overlay.reserve()?;
         self.set(job, id, object)?;
+        if let Some(found) = key {
+            let _old: Option<ObjectId> = self.made.insert(found, id);
+        }
         Ok(id)
     }
 

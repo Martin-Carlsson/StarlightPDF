@@ -16,6 +16,7 @@ use crate::render::geometry::{Matrix, Point};
 use crate::render::interpret::state::State;
 use crate::render::interpret::{self, Run, content, inline, name_operand, numbers, paint, state};
 use crate::render::job;
+use crate::render::output::deflate::Deflate;
 use crate::render::redact::cut::{self, Outline};
 use crate::render::redact::marks::{self, Mark};
 use crate::render::redact::stage::Stage;
@@ -27,7 +28,10 @@ use crate::syntax::write_name;
 /// The bytes of an operator's operands held uncounted while it runs.
 const OPERANDS_LENT: usize = 0x4000;
 
-/// Keys of a stream copy leaves out: its data is new and unfiltered (7.3.8.2).
+/// The resource categories copies replace entries of.
+const REPLACED: [&[u8]; 3] = [b"ExtGState", b"Properties", b"XObject"];
+
+/// Keys of a stream copy leaves out: its data is new (7.3.8.2).
 const UNFILTERED: [&[u8]; 7] = [
     b"DL",
     b"DecodeParms",
@@ -81,10 +85,16 @@ pub(super) struct Found {
     pub damaged: bool,
     /// Its changes, in order.
     pub edits: Vec<Edit>,
+    /// The `StructParent` keys of the forms a mark touched in it (14.7.5.3).
+    pub elements: Vec<i64>,
     /// Where damage ended its operations, which its copy ends at.
     pub end: Option<u64>,
     /// Where it paints, when measured.
     pub ink: Ink,
+    /// The marked-content levels open at its end.
+    pub marked: usize,
+    /// The number of the last name its copy adds.
+    pub named: u32,
     /// The `q` open at its end.
     pub open: usize,
     /// The resources its copy leaves out, by category and name: only used where it uses copies.
@@ -197,8 +207,8 @@ impl Ink {
     }
 }
 
-/// The stream `owner` with `data`, unfiltered, and `resources` where given.
-fn copied(owner: &Object, data: Vec<u8>, resources: Option<Object>) -> Object {
+/// The stream `owner` with `data`, Flate-coded, and `resources`.
+fn copied(owner: &Object, data: Vec<u8>, resources: Object) -> Object {
     let entries = data::pairs(owner).map_or_else(Vec::new, |listed| {
         listed
             .iter()
@@ -207,9 +217,8 @@ fn copied(owner: &Object, data: Vec<u8>, resources: Option<Object>) -> Object {
             .collect()
     });
     let mut made = Object::Stream(entries, Data::Bytes(Arc::from(data)));
-    if resources.is_some() {
-        made.set(b"Resources", resources);
-    }
+    made.set(b"Filter", Some(Object::Name(b"FlateDecode".to_vec())));
+    made.set(b"Resources", Some(resources));
     made
 }
 
@@ -221,7 +230,7 @@ pub(super) fn corners(matrix: &Matrix, corners: [Fixed; 4]) -> Vec<Point> {
         .collect()
 }
 
-/// `data` with `found`'s edits made, cut where damage ended it, within `room` bytes.
+/// `data` with `found`'s edits made, cut where damage ended it, Flate-coded within `room` bytes.
 pub(super) fn emit(
     job: &job::Job<'_>,
     data: Box<dyn Pull + '_>,
@@ -232,7 +241,8 @@ pub(super) fn emit(
     let mut reader = content::Ending::new(job, data);
     let mut edits = found.edits.iter().peekable();
     let end = found.end.unwrap_or(u64::MAX);
-    let (mut out, mut buffer) = (Vec::new(), vec![0; 0x4000]);
+    let (mut out, mut buffer, mut plain) = (Vec::new(), vec![0; 0x4000], Vec::new());
+    let mut deflate = Deflate::new(&mut out);
     let (mut at, mut skipped) = (0_u64, 0_u64);
     'read: loop {
         let count = reader.pull(&mut buffer)?;
@@ -244,30 +254,34 @@ pub(super) fn emit(
                 break 'read;
             }
             while let Some(edit) = edits.next_if(|edit| edit.from <= at) {
-                out.push(b'\n');
-                out.extend_from_slice(edit.text.as_bytes());
+                plain.push(b'\n');
+                plain.extend_from_slice(edit.text.as_bytes());
                 skipped = skipped.max(edit.to);
             }
             if at >= skipped {
-                out.push(*byte);
+                plain.push(*byte);
             }
             at = at.saturating_add(1);
         }
+        deflate.write(&plain, &mut out);
+        plain.clear();
         if u64::try_from(out.len()).unwrap_or(u64::MAX) > room {
             return Err(job.limit());
         }
     }
     for edit in edits {
-        out.push(b'\n');
-        out.extend_from_slice(edit.text.as_bytes());
+        plain.push(b'\n');
+        plain.extend_from_slice(edit.text.as_bytes());
     }
+    deflate.write(&plain, &mut out);
+    deflate.finish(&mut out);
     job.damaged.set(outer);
     Ok(out)
 }
 
 /// `Do` of the `XObject` `made`, under a name `frame`'s copy adds.
 fn drawn(run: &Run<'_, '_>, frame: &mut Frame, made: ObjectId) -> Result<String, PdfError> {
-    let name = fresh(run, &frame.found.added, (Category::XObject, b"XObject"))?;
+    let name = fresh(run, &mut frame.found.named, Category::XObject)?;
     let mut text = String::new();
     write_name(&mut text, &name);
     text.push_str(" Do");
@@ -278,17 +292,14 @@ fn drawn(run: &Run<'_, '_>, frame: &mut Frame, made: ObjectId) -> Result<String,
     Ok(text)
 }
 
-/// A name of `category`, `key` in resources, that neither `run`'s resources nor `added` have.
-fn fresh(
-    run: &Run<'_, '_>,
-    added: &[(&'static [u8], Vec<u8>, Object)],
-    (category, key): (Category, &'static [u8]),
-) -> Result<Vec<u8>, PdfError> {
+/// A name of `category` that `run`'s resources lack, numbered past `named`, which becomes its
+/// number.
+fn fresh(run: &Run<'_, '_>, named: &mut u32, category: Category) -> Result<Vec<u8>, PdfError> {
     let job = run.job;
-    for number in 1..=u32::MAX {
+    while let Some(number) = named.checked_add(1) {
+        *named = number;
         let name = format!("Redacted{number}").into_bytes();
-        let taken = added.iter().any(|entry| entry.0 == key && entry.1 == name);
-        if !taken && data::named(job, &run.scope, category, &name)?.is_none() {
+        if data::named(job, &run.scope, category, &name)?.is_none() {
             return Ok(name);
         }
     }
@@ -322,7 +333,8 @@ fn form(
     job.spend(job::NESTING_WORK)?;
     let matrix = data::matrix(job, owner, b"Matrix")?;
     let resources = data::entry(job, owner, b"Resources")?;
-    let own_parents = structure::parents(job, owner)?;
+    let own_parents = structure::key(job, owner, b"StructParents")?;
+    let element = structure::key(job, owner, b"StructParent")?;
     let opened = data::open(job, &mut run.caches.streams, found)?;
     let (saved, scope) = (Box::new(run.state.clone()), Rc::clone(&run.scope));
     run.state.matrix = matrix.then(&run.state.matrix);
@@ -343,11 +355,13 @@ fn form(
     (run.state, run.scope) = (*saved, scope);
     let walked = result?;
     frame.found.struck.extend_from_slice(&walked.struck);
+    frame.found.elements.extend_from_slice(&walked.elements);
     if walked.touched {
         touched(run, frame)?;
     }
     if shared {
         frame.found.used.extend(walked.used.iter().cloned());
+        frame.replaced.extend(walked.removed.iter().cloned());
     }
     if frame.mode == Mode::Measure {
         frame.found.ink.merge(walked.ink);
@@ -356,13 +370,10 @@ fn form(
     if !walked.changed() {
         return Ok(Copied::Kept);
     }
+    frame.found.elements.extend(element);
     let reopened = data::open(job, &mut run.caches.streams, found)?;
     let bytes = emit(job, reopened, &walked, cx.stage.room(job))?;
-    let own = if walked.added.is_empty() && walked.removed.is_empty() {
-        None
-    } else {
-        Some(resources_with(job, inner.resources.value(), &walked)?)
-    };
+    let own = resources_with(job, inner.resources.value(), &walked, &cx.measured)?;
     Ok(Copied::Made(cx.stage.add(job, copied(owner, bytes, own))?))
 }
 
@@ -414,7 +425,7 @@ fn graphics(
     changed_mask.set(b"G", Some(Object::Reference(made)));
     let mut state = found.value().clone();
     state.set(b"SMask", Some(changed_mask));
-    let name = fresh(run, &frame.found.added, (Category::ExtGState, b"ExtGState"))?;
+    let name = fresh(run, &mut frame.found.named, Category::ExtGState)?;
     let mut text = String::new();
     write_name(&mut text, &name);
     text.push_str(" gs");
@@ -461,11 +472,7 @@ fn ended(
     let made = structure::stripped(&list);
     if let Some(entry) = named {
         frame.replaced.push(entry);
-        let name = fresh(
-            run,
-            &frame.found.added,
-            (Category::Properties, b"Properties"),
-        )?;
+        let name = fresh(run, &mut frame.found.named, Category::Properties)?;
         write_name(&mut text, &name);
         frame.found.added.push((b"Properties", name, made));
     } else {
@@ -490,6 +497,11 @@ fn marked(
             Some(level) => ended(run, cx, frame, level)?,
             None => run.job.warn("14.6", "EMC without BMC or BDC")?,
         },
+        b"DP" => {
+            if let Some(key) = operands.get(1).and_then(data::name) {
+                let _new: bool = frame.found.used.insert((b"Properties", key.to_vec()));
+            }
+        }
         b"BDC" | b"BMC" => {
             // As deep as states are saved.
             if frame.marked.len() >= job::SAVED {
@@ -526,7 +538,9 @@ fn painted(
         area
     };
     let shape = marks::rectangle(inked);
-    if name == b"n" && frame.mode == Mode::Measure {
+    // Under a singular matrix only a stroke paints, as a hairline (8.4.4).
+    let singular = !stroked && run.state.matrix.inverse().is_none();
+    if (name == b"n" && frame.mode == Mode::Measure) || singular {
         return Ok(None);
     }
     if !frame.reach(cx.marks, Some(&shape)) {
@@ -543,7 +557,7 @@ fn painted(
             cut::cell(run, paint)?;
         }
     }
-    let text = cut::path(run, cx.marks, outline, name)?;
+    let text = cut::path(run, (cx.marks, &shape), outline, name)?;
     for (from, to) in pieces {
         frame.found.edits.push(Edit {
             from,
@@ -602,35 +616,44 @@ fn path(
     Ok(())
 }
 
-/// The resources `base` with what `found` adds and without what it leaves out (7.8.3).
+/// The resources `base` with what `found` adds, of the categories copies replace keeping only
+/// what it uses unchanged or `measured` holds (7.8.3).
 pub(super) fn resources_with(
     job: &job::Job<'_>,
     base: &Object,
     found: &Found,
+    measured: &BTreeSet<(&'static [u8], Vec<u8>)>,
 ) -> Result<Object, PdfError> {
     let mut made = if matches!(*base, Object::Dictionary(_)) {
         base.clone()
     } else {
         Object::Dictionary(Vec::new())
     };
-    let removed = found
-        .removed
-        .iter()
-        .map(|entry| (entry.0, entry.1.clone(), None));
-    let added = found
-        .added
-        .iter()
-        .map(|entry| (entry.0, entry.1.clone(), Some(entry.2.clone())));
-    for (key, name, value) in removed.chain(added) {
-        let listed = job
-            .overlay
-            .direct(job.objects, made.get(key).unwrap_or(Object::Null))?;
-        let mut category = if matches!(listed, Object::Dictionary(_)) {
-            listed
-        } else {
-            Object::Dictionary(Vec::new())
+    let direct = |owner: &Object, key: &[u8]| {
+        job.overlay
+            .direct(job.objects, owner.get(key).unwrap_or(Object::Null))
+    };
+    for key in REPLACED {
+        let listed = direct(&made, key)?;
+        let Some(entries) = data::pairs(&listed) else {
+            continue;
         };
-        category.set(&name, value);
+        let kept = entries
+            .iter()
+            .filter(|entry| {
+                let named = (key, entry.0.clone());
+                found.used.contains(&named) || measured.contains(&named)
+            })
+            .cloned()
+            .collect();
+        made.set(key, Some(Object::Dictionary(kept)));
+    }
+    for &(key, ref name, ref value) in &found.added {
+        let mut category = direct(&made, key)?;
+        if !matches!(category, Object::Dictionary(_)) {
+            category = Object::Dictionary(Vec::new());
+        }
+        category.set(name, Some(value.clone()));
         made.set(key, Some(category));
     }
     Ok(made)
@@ -647,7 +670,12 @@ fn shown(
     let job = run.job;
     let Some(mut block) = frame.text.take() else {
         job.warn("9.4.1", "a text operator outside a text object")?;
-        return Ok(None);
+        if frame.mode == Mode::Measure {
+            return Ok(None);
+        }
+        // Drawn nowhere here, and where others would draw it is not known.
+        touched(run, frame)?;
+        return Ok(Some(String::new()));
     };
     let mut before = String::new();
     if name == b"\"" {
@@ -759,9 +787,11 @@ fn step(
         b"Do" => return xobject(run, cx, frame, name_operand(job, given, 0)?),
         b"sh" => {
             let shape = frame.clip.map(marks::rectangle);
-            if frame.reach(cx.marks, shape.as_deref()) {
+            // Under a singular matrix it paints nothing (8.7.4.2).
+            if run.state.matrix.inverse().is_some() && frame.reach(cx.marks, shape.as_deref()) {
                 touched(run, frame)?;
-                return cut::shading(run, cx.marks, name_operand(job, given, 0)?).map(Some);
+                let key = name_operand(job, given, 0)?;
+                return cut::shading(run, (cx.marks, shape.as_deref()), key).map(Some);
             }
         }
         b"gs" => return graphics(run, cx, frame, name_operand(job, given, 0)?),
@@ -841,6 +871,7 @@ pub(super) fn stream(
         from = to;
     }
     frame.found.damaged |= job.damaged.replace(outer);
+    frame.found.marked = frame.marked.len();
     while let Some(level) = frame.marked.pop() {
         ended(run, cx, &mut frame, level)?;
     }

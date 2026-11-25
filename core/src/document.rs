@@ -418,10 +418,10 @@ impl Document {
         ))
     }
 
-    /// Removes what lies under the redaction marks of the pages `options` name: the glyphs whose
-    /// boxes meet a mark, the annotations that do and the pages' thumbnails; fills each mark's area
-    /// with its interior colour, then removes the marks (ISO 32000-2:2020, 12.5.6.23). All or
-    /// nothing: a failure leaves the document unchanged. Once applied, only a rewrite saves.
+    /// Removes the content under the redaction marks of the pages `options` name, and their
+    /// thumbnails; fills each mark's area with its interior colour, then removes the marks
+    /// (ISO 32000-2:2020, 12.5.6.23). All or nothing: a failure leaves the document unchanged.
+    /// Once applied, only a rewrite saves.
     ///
     /// # Errors
     ///

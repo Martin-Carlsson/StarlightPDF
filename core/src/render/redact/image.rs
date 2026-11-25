@@ -41,8 +41,9 @@ type Entry = (&'static [u8], Option<Object>);
 /// Where samples lie: bits per sample, samples per pixel and bytes per row.
 type Packing = (u32, usize, usize);
 
-/// The columns, then the rows, a box of samples spans, past the last excluded.
-type Span = [u32; 4];
+/// The columns, then the rows, a box of samples spans, past the last excluded, and the area of a
+/// mark it holds.
+type Span<'marks> = ([u32; 4], &'marks [Point]);
 
 /// How the samples a mark meets become transparent.
 enum Veil {
@@ -69,14 +70,15 @@ fn covered(
     each: &mut dyn FnMut(u32, u32),
 ) -> Result<u64, PdfError> {
     let spans = spanned(marks, matrix, size);
-    let first = spans.iter().map(|span| span[2]).min().unwrap_or(0);
-    let last = spans.iter().map(|span| span[3]).max().unwrap_or(0);
+    let first = spans.iter().map(|span| span.0[2]).min().unwrap_or(0);
+    let last = spans.iter().map(|span| span.0[3]).max().unwrap_or(0);
     let mut count = 0_u64;
     for row in first..last {
-        for (from, to) in across(&spans, row) {
+        let near = at(&spans, row);
+        for (from, to) in across(&near) {
             for column in from..to {
                 job.spend(CELL_WORK)?;
-                if marks::meets(marks, &cell(matrix, size, column, row)) {
+                if meets(&near, column, &cell(matrix, size, column, row)) {
                     each(column, row);
                     count = count.saturating_add(1);
                 }
@@ -86,13 +88,9 @@ fn covered(
     Ok(count)
 }
 
-/// The columns of `spans` at `row`, joined where they overlap.
-fn across(spans: &[Span], row: u32) -> Vec<(u32, u32)> {
-    let mut found: Vec<(u32, u32)> = spans
-        .iter()
-        .filter(|span| span[2] <= row && row < span[3])
-        .map(|span| (span[0], span[1]))
-        .collect();
+/// The columns of `spans`, joined where they overlap.
+fn across(spans: &[&Span<'_>]) -> Vec<(u32, u32)> {
+    let mut found: Vec<(u32, u32)> = spans.iter().map(|span| (span.0[0], span.0[1])).collect();
     found.sort_unstable();
     let mut joined: Vec<(u32, u32)> = Vec::new();
     for (from, to) in found {
@@ -102,6 +100,14 @@ fn across(spans: &[Span], row: u32) -> Vec<(u32, u32)> {
         }
     }
     joined
+}
+
+/// The spans of `spans` at `row`.
+fn at<'spans, 'marks>(spans: &'spans [Span<'marks>], row: u32) -> Vec<&'spans Span<'marks>> {
+    spans
+        .iter()
+        .filter(|span| span.0[2] <= row && row < span.0[3])
+        .collect()
 }
 
 /// The area of the sample at `column`, `row` of an image of `size` under `matrix`; row 0 is at
@@ -221,6 +227,13 @@ fn masked(
     })?;
     let set = sizes(&found);
     copy(job, stage, mask.value(), &found.data, set)
+}
+
+/// Whether the area of a span of `spans` holding `column` meets `shape`.
+fn meets(spans: &[&Span<'_>], column: u32, shape: &[Point]) -> bool {
+    spans
+        .iter()
+        .any(|&&(span, area)| span[0] <= column && column < span[1] && marks::overlap(area, shape))
 }
 
 /// The largest sample of `bits`.
@@ -407,7 +420,11 @@ fn spelled(
 
 /// The columns and rows of samples each mark's area may meet in an image of `size` under
 /// `matrix`, a sample wider each way.
-fn spanned(marks: &[Mark], matrix: &Matrix, [columns, rows]: [u32; 2]) -> Vec<Span> {
+fn spanned<'marks>(
+    marks: &'marks [Mark],
+    matrix: &Matrix,
+    [columns, rows]: [u32; 2],
+) -> Vec<Span<'marks>> {
     let Some(inverse) = matrix.inverse() else {
         return Vec::new();
     };
@@ -437,12 +454,15 @@ fn spanned(marks: &[Mark], matrix: &Matrix, [columns, rows]: [u32; 2]) -> Vec<Sp
             ));
         }
         if let Some([left, right, top, bottom]) = bounds {
-            found.push([
-                clamp(left.saturating_sub(1), columns),
-                clamp(right.saturating_add(2), columns),
-                clamp(top.saturating_sub(1), rows),
-                clamp(bottom.saturating_add(2), rows),
-            ]);
+            found.push((
+                [
+                    clamp(left.saturating_sub(1), columns),
+                    clamp(right.saturating_add(2), columns),
+                    clamp(top.saturating_sub(1), rows),
+                    clamp(bottom.saturating_add(2), rows),
+                ],
+                area.as_slice(),
+            ));
         }
     }
     found
@@ -611,12 +631,13 @@ fn whole(
     let spans = spanned(marks, matrix, size);
     let [columns, rows] = size;
     for row in 0..rows {
-        if across(&spans, row) != [(0, columns)] {
+        let near = at(&spans, row);
+        if across(&near) != [(0, columns)] {
             return Ok(false);
         }
         for column in 0..columns {
             job.spend(CELL_WORK)?;
-            if !marks::meets(marks, &cell(matrix, size, column, row)) {
+            if !meets(&near, column, &cell(matrix, size, column, row)) {
                 return Ok(false);
             }
         }
@@ -630,16 +651,6 @@ fn within(marks: &[Mark], matrix: &Matrix) -> bool {
     let (none, one) = (Fixed::default(), Fixed::from_i64(1));
     let corners = [(none, none), (one, none), (one, one), (none, one)]
         .map(|(across, down)| matrix.apply(Point { across, down }));
-    let cross = |origin: Point, first: Point, second: Point| {
-        let along = |to: Point| {
-            (
-                i128::from(to.across.bits()).saturating_sub(i128::from(origin.across.bits())),
-                i128::from(to.down.bits()).saturating_sub(i128::from(origin.down.bits())),
-            )
-        };
-        let ((ax, ay), (bx, by)) = (along(first), along(second));
-        ax.saturating_mul(by).saturating_sub(ay.saturating_mul(bx))
-    };
     marks.iter().flat_map(|mark| mark.areas.iter()).any(|area| {
         area.len() >= 3
             && area.iter().enumerate().all(|(at, start)| {
@@ -647,7 +658,7 @@ fn within(marks: &[Mark], matrix: &Matrix) -> bool {
                 end.is_some_and(|stop| {
                     corners
                         .iter()
-                        .all(|corner| cross(*start, *stop, *corner) >= 0)
+                        .all(|corner| marks::cross(*start, *stop, *corner) >= 0)
                 })
             })
     })

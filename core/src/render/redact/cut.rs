@@ -359,12 +359,13 @@ fn along(from: Point, to: Point, part: Fixed) -> Point {
     }
 }
 
-/// The areas of `marks` in the user space `inverse` maps default user space to: convex and
-/// counterclockwise.
-fn areas(marks: &[Mark], inverse: &Matrix) -> Vec<Vec<Point>> {
+/// The areas of `marks` that meet `near`, none being anywhere, in the user space `inverse` maps
+/// default user space to: convex and counterclockwise.
+fn areas(marks: &[Mark], near: Option<&[Point]>, inverse: &Matrix) -> Vec<Vec<Point>> {
     marks
         .iter()
         .flat_map(|mark| mark.areas.iter())
+        .filter(|area| near.is_none_or(|shape| marks::overlap(area, shape)))
         .map(|area| marks::hull(area.iter().map(|point| inverse.apply(*point)).collect()))
         .filter(|area| area.len() >= 3)
         .collect()
@@ -528,11 +529,11 @@ fn holds(area: &[Point], point: Point) -> bool {
     sides(area).all(|(corner, next)| marks::cross(corner, next, point) > 0)
 }
 
-/// What paints `outline` as `name` does, cut where the areas of `marks` are and clipped out of
-/// them, then clips as it did (8.5.3, 8.5.4).
+/// What paints `outline` as `name` does, cut where the areas of `marks` that meet `shape`, where
+/// it paints, are and clipped out of them, then clips as it did (8.5.3, 8.5.4).
 pub(super) fn path(
     run: &Run<'_, '_>,
-    marks: &[Mark],
+    (marks, shape): (&[Mark], &[Point]),
     outline: Outline,
     name: &[u8],
 ) -> Result<String, PdfError> {
@@ -542,7 +543,7 @@ pub(super) fn path(
     }
     let matrix = run.state.matrix;
     let inverse = matrix.inverse().ok_or_else(|| job.unsupported())?;
-    let areas = areas(marks, &inverse);
+    let areas = areas(marks, Some(shape), &inverse);
     let mut subpaths = outline.subpaths;
     if outline
         .matrix
@@ -657,15 +658,20 @@ fn polygon(out: &mut String, corners: &[Point]) {
     out.push_str(" h");
 }
 
-/// `sh` of the shading `key`, clipped out of the areas of `marks` (8.7.4.2).
-pub(super) fn shading(run: &Run<'_, '_>, marks: &[Mark], key: &[u8]) -> Result<String, PdfError> {
+/// `sh` of the shading `key`, clipped out of the areas of `marks` that meet `clip`, none being
+/// anywhere (8.7.4.2).
+pub(super) fn shading(
+    run: &Run<'_, '_>,
+    (marks, clip): (&[Mark], Option<&[Point]>),
+    key: &[u8],
+) -> Result<String, PdfError> {
     let inverse = run
         .state
         .matrix
         .inverse()
         .ok_or_else(|| run.job.unsupported())?;
     let mut out = String::from("q");
-    excluded(&mut out, &areas(marks, &inverse), &inverse);
+    excluded(&mut out, &areas(marks, clip, &inverse), &inverse);
     out.push(' ');
     write_name(&mut out, key);
     out.push_str(" sh Q");

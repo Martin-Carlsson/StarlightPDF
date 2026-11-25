@@ -1,0 +1,45 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R 8 0 R] >>
+endobj
+4 0 obj
+<< /Length 0 >>
+stream
+
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (REPLIEDSECRET) /P 3 0 R >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Text /Rect [150 150 170 170] /IRT 5 0 R /Contents (REPLYKEPT) /P 3 0 R >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Text /Rect [150 20 170 40] /Popup 8 0 R /P 3 0 R >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Popup /Rect [20 100 60 140] /Parent 7 0 R /Contents (POPUPSECRET) /P 3 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000242 00000 n 
+0000000291 00000 n 
+0000000395 00000 n 
+0000000510 00000 n 
+0000000603 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+722
+%%EOF
