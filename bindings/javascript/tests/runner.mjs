@@ -1122,19 +1122,16 @@ async function annotate(api, environment, file, args) {
     });
   }
   if (given.has("delete")) {
-    const nth = integer(given.get("delete"));
-    let at = 0;
-    let deleted = false;
+    const listed = [];
     for await (const annotation of await shown.annotations()) {
-      if (at === nth) {
-        await annotation.delete();
-        deleted = true;
-        break;
-      }
-      at += 1;
+      listed.push(annotation);
     }
-    if (!deleted) {
-      throw new Error(`no annotation ${nth}`);
+    for (const nth of (given.get("delete") ?? "").split(",").map(integer)) {
+      const annotation = listed[nth];
+      if (annotation === undefined) {
+        throw new Error(`no annotation ${nth}`);
+      }
+      await annotation.delete();
     }
   }
   if (given.has("saved")) {

@@ -17,7 +17,7 @@ use crate::{ErrorCode, PdfError};
 const ADD: &str = "Page::add_annotation";
 
 /// Half a point in fixed point, for rounding.
-const HALF: i128 = 500_000_000_000;
+const HALF: i128 = SCALE >> 1_u32;
 
 /// Options for [`Page::add_annotation`](crate::page::Page::add_annotation).
 #[derive(Clone, Debug, Default)]
@@ -165,10 +165,7 @@ impl Annotation {
         let page = page_dictionary(objects, &self.overlay, self.page)?;
         let annots = annots(objects, &self.overlay, &page)?;
         let at = match self.key {
-            Key::Direct(at) => annots
-                .get(at)
-                .is_some_and(|item| matches!(*item, Object::Dictionary(_)))
-                .then_some(at),
+            Key::Direct(ref annotation) => annots.iter().position(|item| same(item, annotation)),
             Key::Indirect(id) => annots
                 .iter()
                 .position(|item| matches!(*item, Object::Reference(found) if found == id)),
@@ -336,10 +333,10 @@ pub struct GenerateAppearancesOptions {
 }
 
 /// Where a page's `Annots` lists an annotation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Key {
-    /// Directly, at this index.
-    Direct(usize),
+    /// Directly, as this dictionary.
+    Direct(Object),
     /// By reference.
     Indirect(ObjectId),
 }
@@ -385,6 +382,7 @@ pub struct SetAnnotationInfoOptions {
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct WriteAnnotationOptions;
+
 /// Adds to page `page` the annotation `options` describe: a redaction mark over `quads`, else
 /// the rectangle, with `color` its interior colour (ISO 32000-2:2020, 12.5.6.23); `data` must be
 /// `None`.
@@ -593,9 +591,9 @@ pub(crate) fn list(
     let objects = store.objects("Page::annotations");
     let items = annots(objects, overlay, &page_dictionary(objects, overlay, page)?)?;
     let mut rest = VecDeque::new();
-    for (at, item) in items.into_iter().enumerate() {
+    for item in items {
         let key = match item {
-            Object::Dictionary(_) => Key::Direct(at),
+            Object::Dictionary(_) => Key::Direct(item),
             Object::Reference(id)
                 if matches!(overlay.resolve(objects, id)?, Object::Dictionary(_)) =>
             {
@@ -682,6 +680,27 @@ fn page_dictionary(
 /// The fixed-point product of `left` and `right`.
 fn product(left: i128, right: i128) -> Option<i128> {
     left.checked_mul(right)?.checked_div(SCALE)
+}
+
+/// Whether the direct objects `first` and `second` are equal; streams never are.
+fn same(first: &Object, second: &Object) -> bool {
+    match *first {
+        Object::Array(ref left) => matches!(*second, Object::Array(ref right)
+            if left.len() == right.len() && left.iter().zip(right).all(|(one, other)| same(one, other))),
+        Object::Boolean(left) => matches!(*second, Object::Boolean(right) if left == right),
+        Object::Dictionary(ref left) => matches!(*second, Object::Dictionary(ref right)
+            if left.len() == right.len()
+                && left.iter().zip(right).all(|(one, other)| one.0 == other.0 && same(&one.1, &other.1))),
+        Object::Integer(left) => matches!(*second, Object::Integer(right) if left == right),
+        Object::Name(ref left) => matches!(*second, Object::Name(ref right) if left == right),
+        Object::Null => matches!(*second, Object::Null),
+        Object::Real(left) => {
+            matches!(*second, Object::Real(right) if left.to_bits() == right.to_bits())
+        }
+        Object::Reference(left) => matches!(*second, Object::Reference(right) if left == right),
+        Object::Stream(..) => false,
+        Object::String(ref left) => matches!(*second, Object::String(ref right) if left == right),
+    }
 }
 
 /// The fixed-point `units` as a float, from their shortest decimal.

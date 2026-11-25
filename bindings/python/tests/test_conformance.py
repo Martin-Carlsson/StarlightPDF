@@ -1066,12 +1066,12 @@ def annotate(kind: str, args: list[str]) -> str:
             color=given.get("color", ""),
         )
     if "delete" in given:
-        nth = int(given["delete"])
-        found = next(itertools.islice(shown.annotations, nth, None), None)
-        if found is None:
-            msg = f"no annotation {nth}"
-            raise ValueError(msg)
-        found.delete()
+        listed = list(shown.annotations)
+        for nth in map(int, given["delete"].split(",")):
+            if nth >= len(listed):
+                msg = f"no annotation {nth}"
+                raise ValueError(msg)
+            listed[nth].delete()
     if "saved" in given:
         document = reopen(twice(document, {}), given)
     return listing(document, index)[0]

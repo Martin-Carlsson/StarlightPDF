@@ -118,7 +118,7 @@ struct Request {
     /// `cancel` (0) or `cancel=N`: the progress calls let through.
     cancel: Option<u64>,
     /// `delete=`.
-    delete: Option<usize>,
+    delete: Vec<usize>,
     /// `except=`.
     except: Vec<Area>,
     /// `do=`.
@@ -241,7 +241,12 @@ impl Request {
             ("cancel", None) => self.cancel = Some(0),
             ("cancel", Some(count)) => self.cancel = Some(count.parse().ok()?),
             ("color", Some(colour)) => colour.clone_into(&mut self.adding().color),
-            ("delete", Some(at)) => self.delete = Some(at.parse().ok()?),
+            ("delete", Some(at)) => {
+                self.delete = at
+                    .split(',')
+                    .map(|nth| nth.parse().ok())
+                    .collect::<Option<_>>()?;
+            }
             ("height", Some(text)) => self.adding().height = real(text)?,
             ("width", Some(text)) => self.adding().width = real(text)?,
             ("x", Some(text)) => self.adding().x = real(text)?,
@@ -445,13 +450,14 @@ fn annotated(document: &Document, request: &Request, case: &Case) -> Result<Stri
     if let Some(adding) = request.options.as_ref() {
         drop(page.add_annotation(None, adding)?);
     }
-    if let Some(nth) = request.delete {
-        let all = page.annotations()?;
-        let mut found = None;
-        for _ in 0..=nth {
-            found = all.next()?;
-        }
-        found
+    let all = page.annotations()?;
+    let mut listed = Vec::new();
+    while let Some(found) = all.next()? {
+        listed.push(found);
+    }
+    for &nth in &request.delete {
+        listed
+            .get(nth)
             .ok_or_else(|| Failure::Case(format!("no annotation {nth}")))?
             .delete(&DeleteAnnotationOptions::default())?;
     }
