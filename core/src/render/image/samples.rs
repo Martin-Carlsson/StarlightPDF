@@ -268,7 +268,7 @@ impl Layout {
     }
 
     /// The texels that `bytes` of a row hold whole.
-    fn present(&self, bytes: usize) -> u32 {
+    pub(super) fn present(&self, bytes: usize) -> u32 {
         if bytes >= self.stride {
             return self.columns;
         }

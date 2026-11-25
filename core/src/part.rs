@@ -79,10 +79,10 @@ struct Level {
 /// A document's pages in page tree order, its kids read a batch at a time (ISO 32000-2:2020,
 /// 7.7.3.2).
 pub(crate) struct Leaves {
-    /// The numbers of the nodes reached.
-    reached: BTreeSet<u32>,
-    /// The kids left, the root's first.
-    stack: Vec<Level>,
+    /// The pages it may still give, one per object: more come only through a node reached twice.
+    left: u32,
+    /// The nodes descended through, the root's first, and their kids left.
+    stack: Vec<(ObjectId, Level)>,
 }
 
 /// Named destinations, sorted by key (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
@@ -258,33 +258,37 @@ impl Leaves {
             return Err(objects.malformed());
         };
         Ok(Self {
-            reached: BTreeSet::from([top.number]),
-            stack: vec![Level::new(objects, overlay, top)?],
+            left: overlay.next().max(objects.size()),
+            stack: vec![(top, Level::new(objects, overlay, top)?)],
         })
     }
 
-    /// The next page; a node reached twice is malformed.
+    /// The next page; more than the document has objects, or a node within itself, is malformed.
     pub(crate) fn next(
         &mut self,
         objects: Objects<'_>,
         overlay: &Overlay,
     ) -> Result<Option<ObjectId>, PdfError> {
         let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
-        while let Some(level) = self.stack.last_mut() {
+        while let Some(&mut (_, ref mut level)) = self.stack.last_mut() {
             let Some(id) = level.next(objects)? else {
                 drop(self.stack.pop());
                 continue;
             };
             if !kind(objects, overlay, id)?.0 {
+                self.left = self
+                    .left
+                    .checked_sub(1)
+                    .ok_or_else(|| objects.malformed())?;
                 return Ok(Some(id));
             }
             if self.stack.len() >= depth {
                 return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
             }
-            if !self.reached.insert(id.number) {
+            if self.stack.iter().any(|entry| entry.0 == id) {
                 return Err(objects.malformed());
             }
-            self.stack.push(Level::new(objects, overlay, id)?);
+            self.stack.push((id, Level::new(objects, overlay, id)?));
         }
         Ok(None)
     }

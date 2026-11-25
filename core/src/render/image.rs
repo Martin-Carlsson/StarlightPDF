@@ -713,20 +713,22 @@ impl Unpacked<'_> {
 }
 
 impl Rows<'_> {
-    /// Reads row `index` into `out`, of its bytes per row; rows come in order.
+    /// Reads row `index` into `out`, of its bytes per row, 0 past its data; rows come in order.
+    /// The pixels its data holds whole.
     pub(crate) fn row(
         &mut self,
         job: &Job<'_>,
         index: u32,
         out: &mut Vec<u8>,
-    ) -> Result<(), PdfError> {
+    ) -> Result<u32, PdfError> {
         self.cursor.seek(job, index)?;
         let got = self.cursor.row();
+        let present = self.cursor.layout().present(got.len());
         out.clear();
         out.extend_from_slice(got.get(..self.stride).unwrap_or(got));
         out.resize(self.stride, 0);
         let Some((count, alpha)) = self.ycc else {
-            return Ok(());
+            return Ok(present);
         };
         let skipped = alpha.unwrap_or(usize::MAX);
         let at = |place: usize| place.saturating_add(usize::from(place >= skipped));
@@ -742,7 +744,7 @@ impl Rows<'_> {
                 }
             }
         }
-        Ok(())
+        Ok(present)
     }
 }
 

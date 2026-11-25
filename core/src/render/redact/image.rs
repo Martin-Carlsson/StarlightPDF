@@ -92,18 +92,18 @@ impl Coder {
     }
 }
 
-/// The samples of row `row` of an image of `size` under `matrix` whose area meets a span of
-/// `spans`, given to `each`; how many.
+/// The samples of row `row` of an image of `size` under `matrix`, before column `present`, whose
+/// area meets a span of `spans`, given to `each`; how many.
 fn covered(
     job: &Job<'_>,
     (spans, matrix): (&[Span<'_>], &Matrix),
-    (size, row): ([u32; 2], u32),
+    (size, row, present): ([u32; 2], u32, u32),
     each: &mut dyn FnMut(u32),
 ) -> Result<u64, PdfError> {
     let near = at(spans, row);
     let mut count = 0_u64;
     for (from, to) in across(&near) {
-        for column in from..to {
+        for column in from..to.min(present) {
             job.spend(CELL_WORK)?;
             if meets(&near, column, &cell(matrix, size, column, row)) {
                 each(column);
@@ -488,7 +488,8 @@ fn spanned<'marks>(
 /// The samples of `base` row by row, each sample a mark meets under `matrix` `blank`, without
 /// its channel that is no colour, and beside them a plane where one is given: its packing, and
 /// the sample those a mark meets take; its rows are that channel where it is opacity, else 0.
-/// Both Flate-coded within `room` bytes, and how many samples a mark meets (7.4.9).
+/// Both Flate-coded within `room` bytes, the samples ending where the data does, and how many
+/// samples a mark meets or the data lacks (7.4.9, 8.9.5).
 fn streamed(
     job: &Job<'_>,
     (marks, matrix): (&[Mark], &Matrix),
@@ -503,9 +504,9 @@ fn streamed(
     let packing = (bits, colours, stride(base.columns, colours, bits));
     let (mut main, mut beside) = (Coder::new(), plane.map(|_given| Coder::new()));
     let (mut raw, mut kept, mut extra) = (Vec::new(), Vec::new(), Vec::new());
-    let mut total = 0_u64;
+    let (mut total, mut ended) = (0_u64, false);
     for row in 0..base.height {
-        base.rows.row(job, row, &mut raw)?;
+        let present = base.rows.row(job, row, &mut raw)?;
         job.spend(u64::try_from(raw.len()).unwrap_or(u64::MAX))?;
         let samples = if let Some(skipped) = channel {
             kept.clear();
@@ -540,7 +541,7 @@ fn streamed(
         total = total.saturating_add(covered(
             job,
             (&spans, matrix),
-            (size, row),
+            (size, row, present),
             &mut |column| {
                 for (component, value) in blank.iter().enumerate() {
                     put(samples, packing, (column, 0, component), *value);
@@ -550,7 +551,18 @@ fn streamed(
                 }
             },
         )?);
-        main.write(samples);
+        // What the data lacks stays unpainted: the copy's data lacks it too.
+        let lacking = base.columns.saturating_sub(present);
+        total = total.saturating_add(u64::from(lacking));
+        if !ended {
+            let length = if lacking > 0 {
+                stride(present, colours, bits)
+            } else {
+                packing.2
+            };
+            main.write(samples.get(..length).unwrap_or_default());
+            ended = lacking > 0;
+        }
         let mut held = main.out.len();
         if let (Some(coder), Some(found)) = (beside.as_mut(), veil) {
             coder.write(&found.0);

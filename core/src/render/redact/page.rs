@@ -36,14 +36,19 @@ const OPERATION: &str = "Document::apply_redactions";
 /// What walking a page's content found, the content rewritten when changed, and its streams.
 type Walked = (Found, Option<Vec<u8>>, Vec<Object>);
 
+/// Objects by number and generation.
+type Ids = BTreeSet<(u32, u16)>;
+
 /// What the annotations of a page become.
 struct Kept {
     /// Those left.
     left: Vec<Object>,
     /// The `StructParent` keys of those removed, and them; then of forms a mark touched.
     parents: Vec<(i64, Option<ObjectId>)>,
-    /// The widgets removed, and their dictionaries.
-    widgets: Vec<(ObjectId, Object)>,
+    /// Those removed that are objects.
+    removed: Vec<ObjectId>,
+    /// The widgets removed, and their parents.
+    widgets: Vec<(ObjectId, Option<ObjectId>)>,
 }
 
 /// Redacts the pages of `pages`, of `count`, none being all, and removes their marks; all or
@@ -77,7 +82,8 @@ pub(crate) fn apply(
     };
     let objects = unbounded.within(&bounds).paced(&pace);
     pace.report()?;
-    let (mut stage, mut released) = (Stage::default(), Released::default());
+    let (mut stage, mut released, mut widgets) =
+        (Stage::default(), Released::default(), Vec::new());
     let mut listed = pages.map(<[u32]>::iter);
     let mut all = if listed.is_none() {
         Some(Leaves::new(objects, overlay)?)
@@ -100,7 +106,7 @@ pub(crate) fn apply(
             break;
         };
         let job = job(objects, (overlay, &pace));
-        changed |= redact(&job, (&mut stage, &mut released), id)?;
+        changed |= redact(&job, (&mut stage, &mut released, &mut widgets), id)?;
         pace.done.set(pace.done.get().saturating_add(1));
         pace.report()?;
     }
@@ -110,6 +116,7 @@ pub(crate) fn apply(
     bounds.work.set(work);
     pace.checkpoint.set(work.saturating_sub(WORK_STEP));
     let job = job(objects, (overlay, &pace));
+    detach(&job, &mut stage, widgets)?;
     let mut caches = Caches::default();
     let mut surface = Surface::new(&job, Area::default(), None)?;
     let mut run = Run {
@@ -159,7 +166,7 @@ fn annotations(
 ) -> Result<Kept, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
     let mut read = Vec::new();
-    let mut gone = Vec::new();
+    let mut gone = BTreeSet::new();
     let mut parents = Vec::new();
     for item in listed {
         let (value, id) = overlay.ended(objects, item.clone())?;
@@ -175,9 +182,9 @@ fn annotations(
             if let Object::Integer(key) = overlay.entry(objects, &value, b"StructParent")? {
                 parents.push((key, id));
             }
-            gone.extend(id);
+            gone.extend(id.map(held));
             if let Some(Object::Reference(popup)) = value.get(b"Popup") {
-                gone.push(popup);
+                let _new: bool = gone.insert(held(popup));
             }
         }
         read.push((item, value, id, meets, meets && named(b"Widget")));
@@ -185,6 +192,7 @@ fn annotations(
     let mut kept = Kept {
         left: Vec::new(),
         parents,
+        removed: Vec::new(),
         widgets: Vec::new(),
     };
     for (item, value, id, meets, widget) in read {
@@ -192,15 +200,16 @@ fn annotations(
             Some(Object::Reference(found)) => Some(found),
             Some(_) | None => None,
         };
-        let removed = id.map_or(meets, |found| gone.contains(&found))
-            || parent.is_some_and(|found| gone.contains(&found));
+        let removed = id.map_or(meets, |found| gone.contains(&held(found)))
+            || parent.is_some_and(|found| gone.contains(&held(found)));
         if !removed {
             kept.left
                 .push(unlinked((job, &mut *stage), (item, value, id), &gone)?);
             continue;
         }
+        kept.removed.extend(id);
         if widget && let Some(found) = id {
-            kept.widgets.push((found, value));
+            kept.widgets.push((found, parent));
         }
     }
     Ok(kept)
@@ -211,12 +220,12 @@ fn annotations(
 fn unlinked(
     (job, stage): (&Job<'_>, &mut Stage),
     (item, mut value, id): (Object, Object, Option<ObjectId>),
-    gone: &[ObjectId],
+    gone: &Ids,
 ) -> Result<Object, PdfError> {
     let mut changed = false;
     for key in [&b"IRT"[..], b"Popup"] {
         if let Some(Object::Reference(found)) = value.get(key)
-            && gone.contains(&found)
+            && gone.contains(&held(found))
         {
             value.set(key, None);
             changed = true;
@@ -231,29 +240,32 @@ fn unlinked(
     }
 }
 
-/// Removes `kid` from the array `key` of `owner`, staging the array where it is its own object;
-/// whether it is empty after.
+/// Removes `removed` from the array `key` of `owner`, staging the array where it is its own
+/// object; whether it is empty after.
 fn detached(
     job: &Job<'_>,
     stage: &mut Stage,
     owner: &mut Object,
-    (key, kid): (&[u8], ObjectId),
+    (key, removed): (&[u8], &Ids),
 ) -> Result<bool, PdfError> {
-    let keep = |items: &mut Vec<Object>| {
-        items.retain(|item| !matches!(*item, Object::Reference(found) if found == kid));
-        items.is_empty()
+    let keep = |items: &mut Vec<Object>| -> Result<bool, PdfError> {
+        job.spend(u64::try_from(items.len()).unwrap_or(u64::MAX))?;
+        items.retain(
+            |item| !matches!(*item, Object::Reference(found) if removed.contains(&held(found))),
+        );
+        Ok(items.is_empty())
     };
     match owner.get(key) {
         Some(Object::Reference(array)) => {
             let Object::Array(mut items) = stage.get(job, array)? else {
                 return Ok(false);
             };
-            let empty = keep(&mut items);
+            let empty = keep(&mut items)?;
             stage.set(job, array, Object::Array(items))?;
             Ok(empty)
         }
         Some(Object::Array(mut items)) => {
-            let empty = keep(&mut items);
+            let empty = keep(&mut items)?;
             owner.set(key, Some(Object::Array(items)));
             Ok(empty)
         }
@@ -261,30 +273,46 @@ fn detached(
     }
 }
 
-/// Removes the widget `widget` from its field, and a field left without widgets from its parent
-/// or the form's `Fields`; what is removed leaves the form's `CO` (12.7.3.3, 12.7.4).
-fn detach(job: &Job<'_>, stage: &mut Stage, widget: (ObjectId, Object)) -> Result<(), PdfError> {
-    let (mut kid, mut value) = widget;
-    let mut gone = vec![kid];
-    let mut top = None;
-    let mut ended = false;
+/// Removes `widgets`, each with its parent, from their fields, and fields left without widgets
+/// from their parents or the form's `Fields`; what is removed leaves the form's `CO`; each array
+/// read once a level (12.7.3.3, 12.7.4).
+fn detach(
+    job: &Job<'_>,
+    stage: &mut Stage,
+    widgets: Vec<(ObjectId, Option<ObjectId>)>,
+) -> Result<(), PdfError> {
+    let mut gone: Ids = widgets.iter().map(|widget| held(widget.0)).collect();
+    let mut tops = Ids::new();
+    let mut level = widgets;
     for _ in 0..=job.objects.depth_limit() {
-        let Some(Object::Reference(parent)) = value.get(b"Parent") else {
-            (top, ended) = (Some(kid), true);
-            break;
-        };
-        let mut node = stage.get(job, parent)?;
-        let empty = detached(job, stage, &mut node, (b"Kids", kid))?;
-        stage.set(job, parent, node.clone())?;
-        if !empty {
-            ended = true;
+        if level.is_empty() {
             break;
         }
-        (kid, value) = (parent, node);
-        gone.push(kid);
+        let mut parents = Ids::new();
+        for (kid, parent) in level {
+            let (set, id) = parent.map_or((&mut tops, kid), |found| (&mut parents, found));
+            let _new: bool = set.insert(held(id));
+        }
+        level = Vec::new();
+        for (number, generation) in parents {
+            let parent = ObjectId { generation, number };
+            let mut node = stage.get(job, parent)?;
+            if detached(job, stage, &mut node, (b"Kids", &gone))? {
+                let above = match node.get(b"Parent") {
+                    Some(Object::Reference(found)) => Some(found),
+                    Some(_) | None => None,
+                };
+                level.push((parent, above));
+            }
+            stage.set(job, parent, node)?;
+        }
+        gone.extend(level.iter().map(|field| held(field.0)));
     }
-    if !ended {
+    if !level.is_empty() {
         return Err(job.limit());
+    }
+    if gone.is_empty() {
+        return Ok(());
     }
     let trailer = Object::Dictionary(job.overlay.trailer(job.objects)?);
     let Some(Object::Reference(root)) = trailer.get(b"Root") else {
@@ -296,11 +324,7 @@ fn detach(job: &Job<'_>, stage: &mut Stage, widget: (ObjectId, Object)) -> Resul
         Some(found @ Object::Dictionary(_)) => (found, None),
         Some(_) | None => return Ok(()),
     };
-    for (key, removed) in top
-        .map(|field| (&b"Fields"[..], field))
-        .into_iter()
-        .chain(gone.into_iter().map(|field| (&b"CO"[..], field)))
-    {
+    for (key, removed) in [(&b"Fields"[..], &tops), (b"CO", &gone)] {
         let _empty: bool = detached(job, stage, &mut form, (key, removed))?;
     }
     if let Some(found) = place {
@@ -309,6 +333,11 @@ fn detach(job: &Job<'_>, stage: &mut Stage, widget: (ObjectId, Object)) -> Resul
         catalog.set(b"AcroForm", Some(form));
         stage.set(job, root, catalog)
     }
+}
+
+/// `id` as [`Ids`] hold it.
+const fn held(id: ObjectId) -> (u32, u16) {
+    (id.number, id.generation)
 }
 
 /// The normalized `Rect` of `annotation`; none when it has none (7.9.5).
@@ -437,10 +466,15 @@ fn filled(
     Ok(())
 }
 
-/// Redacts the page `id` where it has a mark, staging what changes; whether it had one.
+/// Redacts the page `id` where it has a mark, staging what changes and adding the widgets it
+/// removes to `widgets`; whether it had one.
 fn redact(
     job: &Job<'_>,
-    (stage, released): (&mut Stage, &mut Released),
+    (stage, released, widgets): (
+        &mut Stage,
+        &mut Released,
+        &mut Vec<(ObjectId, Option<ObjectId>)>,
+    ),
     id: ObjectId,
 ) -> Result<bool, PdfError> {
     let (objects, reading) = (job.objects, &*job.overlay);
@@ -476,8 +510,10 @@ fn redact(
         .extend(walked.0.elements.iter().map(|&key| (key, None)));
     structure::clear(job, stage, &walked.0.struck, &kept.parents)?;
     structure::moved(job, stage, &walked.0.moved)?;
-    for widget in kept.widgets {
-        detach(job, stage, widget)?;
+    widgets.append(&mut kept.widgets);
+    // What still refers to them, on any page, finds null (7.3.10).
+    for removed in kept.removed {
+        stage.set(job, removed, Object::Null)?;
     }
     dictionary.set(
         b"Annots",

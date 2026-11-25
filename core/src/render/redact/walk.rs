@@ -407,7 +407,8 @@ fn form(
 }
 
 /// `gs` of the `ExtGState` resource `key`: its parameters, and its soft mask's group walked as a
-/// form, in a copy where a mark meets it (8.4.5, 11.6.5.2).
+/// form, in a copy where a mark meets it or without the mask where the group cannot be walked
+/// (8.4.5, 11.6.5.2).
 fn graphics(
     run: &mut Run<'_, '_>,
     cx: &mut Context<'_>,
@@ -430,24 +431,26 @@ fn graphics(
     let mask = data::entry(job, found.value(), b"SMask")?;
     let group = data::entry(job, mask.value(), b"G")?;
     let walked = if frame.mode == Mode::Rewrite && matches!(*group.value(), Object::Stream(..)) {
-        form(run, cx, frame, &group)?
+        // As the renderer, which then has no soft mask.
+        let done = form(run, cx, frame, &group);
+        job.tolerate(done, "8.4.5", "a graphics state parameter is malformed")?
+            .unwrap_or(Copied::Out)
     } else {
         Copied::Kept
     };
-    let made = match walked {
+    let changed_mask = match walked {
         Copied::Kept => {
             let _new: bool = frame.found.used.insert((b"ExtGState", key.to_vec()));
             return Ok(None);
         }
-        Copied::Made(made) => made,
-        Copied::Out => {
-            frame.replaced.push((b"ExtGState", key.to_vec()));
-            return Ok(Some(String::new()));
+        Copied::Made(made) => {
+            let mut copy = mask.value().clone();
+            copy.set(b"G", Some(Object::Reference(made)));
+            copy
         }
+        Copied::Out => Object::Name(b"None".to_vec()),
     };
     frame.replaced.push((b"ExtGState", key.to_vec()));
-    let mut changed_mask = mask.value().clone();
-    changed_mask.set(b"G", Some(Object::Reference(made)));
     let mut state = found.value().clone();
     state.set(b"SMask", Some(changed_mask));
     let name = fresh(run, &mut frame.found.named, Category::ExtGState)?;
@@ -702,6 +705,20 @@ fn shown(
         touched(run, frame)?;
         return Ok(Some(String::new()));
     };
+    let result = showing(run, cx, frame, &mut block, (name, operands));
+    frame.text = Some(block);
+    result
+}
+
+/// A text showing operator `name` within the text object `block`, as the renderer runs it.
+fn showing(
+    run: &mut Run<'_, '_>,
+    cx: &mut Context<'_>,
+    frame: &mut Frame,
+    block: &mut Block,
+    (name, operands): (&[u8], &[Object]),
+) -> Result<Option<String>, PdfError> {
+    let job = run.job;
     let mut before = String::new();
     if name == b"\"" {
         let [word, character] = numbers(job, operands.get(..2).unwrap_or_default())?;
@@ -713,7 +730,7 @@ fn shown(
         }
     }
     if name == b"'" || name == b"\"" {
-        text::operator(run, &mut block, b"T*", &[])?;
+        text::operator(run, block, b"T*", &[])?;
         before.push_str("T* ");
     }
     let items = if name == b"TJ" {
@@ -723,7 +740,17 @@ fn shown(
             .ok_or_else(|| job.objects.malformed())?
             .to_vec()
     } else {
-        operands.last().cloned().into_iter().collect()
+        let Some(string) = operands.last().filter(|item| data::text(item).is_some()) else {
+            // What it set stays; it shows nothing.
+            let malformed = Err::<(), _>(job.objects.malformed());
+            let _shown: Option<()> = job.tolerate(
+                malformed,
+                "7.8.2",
+                "an operator or its objects are malformed",
+            )?;
+            return Ok(Some(before));
+        };
+        vec![string.clone()]
     };
     let marks = (frame.mode == Mode::Rewrite).then_some(cx.marks);
     let clipping = run.state.text.mode >= 4
@@ -733,9 +760,7 @@ fn shown(
             .font
             .as_ref()
             .is_some_and(|font| font.procedures().is_none());
-    let result = glyph::show(run, cx, &mut block, &items, marks);
-    frame.text = Some(block);
-    let (array, ink, kept) = result?;
+    let (array, ink, kept) = glyph::show(run, cx, block, &items, marks)?;
     frame.found.ink.merge(ink);
     if clipping
         && items
@@ -801,6 +826,8 @@ fn step(
             }
         }
         b"BDC" | b"BMC" | b"DP" | b"EMC" | b"MP" => marked(run, cx, frame, name, given)?,
+        // As the renderer, which keeps the text object open (9.4.1).
+        b"BT" if frame.text.is_some() => job.warn("9.4.1", "BT within a text object")?,
         b"BT" => {
             frame.text = Some(text::begin(run, (None, 0))?);
             frame.clips = (false, false);
@@ -913,7 +940,7 @@ pub(super) fn stream(
         drop(lent);
         let changed = job.tolerate(stepped, "7.8.2", "an operator or its objects are malformed")?;
         let to = operations.input().position();
-        // One unread goes: what it holds is not known.
+        // An unreadable operator is dropped: what it shows is not known.
         if mode == Mode::Rewrite
             && let Some(text) = changed.unwrap_or_else(|| Some(String::new()))
         {

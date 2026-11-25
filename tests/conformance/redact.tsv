@@ -69,6 +69,14 @@ redact_file	tests/corpus/redact/text-clip.pdf	marks=0@5,85,110,20	read=pixels	in
 # Text shown outside a text object, which no reader agrees where to draw (9.4.1).
 redact_bytes	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
 redact_file	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
+# A show whose last operand is no string shows and moves nothing, BT within a text object begins none, and a TJ of no array leaves the text object open (9.4.1, 9.4.3).
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=text	bytes=53454352455441	absent
+redact_file	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=text	bytes=53454352455441	absent
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=text	bytes=53454352455442	absent
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=text	bytes=53454352455443	absent
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=text	bytes=4b45455043	present
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=pixels	index=0	except=15,38,80,25	same
+redact_bytes	tests/corpus/redact/text-show-malformed.pdf	marks=0@15,38,80,25;1@15,38,80,25;2@100,150,50,30	read=pixels	index=2	except=100,150,50,30	same
 # An operator that cannot be read, and an XObject neither image nor form, which no reader draws, go from a redacted page (7.8.2, 8.8).
 redact_bytes	tests/corpus/redact/operator-malformed.pdf	read=text	bytes=4f50455241544f52534543524554	absent
 redact_file	tests/corpus/redact/operator-malformed.pdf	read=text	bytes=4f50455241544f52534543524554	absent
@@ -140,6 +148,9 @@ redact_file	tests/corpus/redact/image-partial.pdf	marks=0@62,15,43,90;0@172,162,
 redact_bytes	tests/corpus/redact/image-partial.pdf	marks=0@62,15,43,90;0@172,162,23,23	read=mask_samples	do=0	30303030
 redact_bytes	tests/corpus/redact/image-partial.pdf	marks=0@62,15,43,90;0@172,162,23,23	read=image_samples	do=1	101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c000000
 redact_bytes	tests/corpus/redact/image-partial.pdf	marks=0@62,15,43,90;0@172,162,23,23	read=mask_samples	do=1	c0c1c2c3c4c5c6c7c8c9cacbcccdce00
+# Samples an image's data lacks stay unpainted (8.9.5).
+redact_bytes	tests/corpus/redact/image-short.pdf	marks=0@51,51,8,8	read=pixels	index=0	except=50,50,10,10	same
+redact_file	tests/corpus/redact/image-short.pdf	marks=0@51,51,8,8	read=pixels	index=0	except=50,50,10,10	same
 # Inline images (8.9.7): one wholly under goes, one partly under becomes an image XObject.
 redact_bytes	tests/corpus/redact/image-inline.pdf	marks=0@10,10,60,60;0@95,95,23,90	read=painted	index=0	images=1 inline=0
 redact_file	tests/corpus/redact/image-inline.pdf	marks=0@10,10,60,60;0@95,95,23,90	read=painted	index=0	images=1 inline=0
@@ -181,6 +192,9 @@ redact_file	tests/corpus/redact/path-curve-control.pdf	marks=0@50,10,20,20	read=
 # A move alone under a mark goes (8.5.2.1).
 redact_bytes	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
 redact_file	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
+# A graphics state whose soft mask cannot be read keeps its other parameters (8.4.5, 11.6.5.2).
+redact_bytes	tests/corpus/redact/graphics-mask-damaged.pdf	marks=0@10,40,180,20	read=pixels	index=0	except=10,40,180,20	same
+redact_file	tests/corpus/redact/graphics-mask-damaged.pdf	marks=0@10,40,180,20	read=pixels	index=0	except=10,40,180,20	same
 # Under a singular matrix a fill or clip paints nothing, so nothing is removed (8.4.4).
 redact_bytes	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
 redact_file	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
@@ -220,6 +234,9 @@ redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	rea
 redact_file	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
 redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=504f505550534543524554	absent
 redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=annotations	index=0	Note 150,30,20,20;Note 150,160,20,20
+# So does one on another page (12.5.6.4).
+redact_bytes	tests/corpus/redact/annotations-reply-page.pdf	marks=0@10,150,40,40	read=text	bytes=5245504c4945444f4e4f5448455250414745	absent
+redact_file	tests/corpus/redact/annotations-reply-page.pdf	marks=0@10,150,40,40	read=text	bytes=5245504c4945444f4e4f5448455250414745	absent
 # So do annotations and marks written in Annots (12.5.2).
 redact_bytes	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
 redact_file	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
@@ -273,6 +290,9 @@ redact_bytes	tests/corpus/redact/pages.pdf	pages=3	read=ok	InvalidArgument
 # A page tree node reached twice is malformed: its pages would be visited without end (7.7.3.2).
 redact_bytes	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
 redact_file	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
+# A root Count below the pages the tree holds still reaches every page (7.7.3.2).
+redact_bytes	tests/corpus/redact/pages-count-low.pdf	read=text	bytes=434f554e54534543524554	absent
+redact_file	tests/corpus/redact/pages-count-low.pdf	read=text	bytes=434f554e54534543524554	absent
 # What cannot be removed fails and leaves the document unchanged: a font not embedded (9.6.2.2), an image of an unknown filter (7.4), text in a pattern cell (8.7.3); so does a cancel.
 redact_bytes	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported
 redact_file	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported
