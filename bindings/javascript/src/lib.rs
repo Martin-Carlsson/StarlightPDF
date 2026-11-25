@@ -9,12 +9,14 @@ use std::io::{self, ErrorKind};
 use std::sync::{Mutex, PoisonError};
 
 use js_sys::{Array, BigInt, Error, Number, Object, RangeError, Reflect, TypeError, Uint8Array};
+use starlightpdf::annotations::{AddAnnotationOptions, AnnotationKind, DeleteAnnotationOptions};
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::compliance::Standard;
 use starlightpdf::document::{
     CreateOptions, OpenOptions, Optimization, PageOptions, SaveMode, SaveOptions,
 };
 use starlightpdf::drawing::DrawImageOptions;
+use starlightpdf::edit::ApplyRedactionsOptions;
 use starlightpdf::images::{ImageFormat, RasterFormat};
 use starlightpdf::input::{ReadAt, ReadAtSourceOptions};
 use starlightpdf::limits::ResourcePolicyOptions;
@@ -26,7 +28,7 @@ use starlightpdf::progress::Progress;
 use starlightpdf::rendering::{ColorSpace, RenderOptions, RenderUsage};
 use starlightpdf::security::{Cipher, Permission};
 use starlightpdf::{
-    Capability, ErrorCode, Version, compliance, document, input, limits, output, page,
+    Capability, ErrorCode, Version, annotations, compliance, document, input, limits, output, page,
 };
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
@@ -48,6 +50,31 @@ extern "C" {
     #[wasm_bindgen(catch)]
     fn update(id: u32, done: u64, total: u64) -> Result<bool, JsValue>;
 }
+
+/// Each annotation kind and its name.
+const ANNOTATION_KINDS: [(AnnotationKind, &str); 21] = [
+    (AnnotationKind::Ellipse, "Ellipse"),
+    (AnnotationKind::FileAttachment, "FileAttachment"),
+    (AnnotationKind::FreeText, "FreeText"),
+    (AnnotationKind::Highlight, "Highlight"),
+    (AnnotationKind::Ink, "Ink"),
+    (AnnotationKind::Line, "Line"),
+    (AnnotationKind::Link, "Link"),
+    (AnnotationKind::Media, "Media"),
+    (AnnotationKind::Model3d, "Model3d"),
+    (AnnotationKind::Note, "Note"),
+    (AnnotationKind::Other, "Other"),
+    (AnnotationKind::Polygon, "Polygon"),
+    (AnnotationKind::Polyline, "Polyline"),
+    (AnnotationKind::Popup, "Popup"),
+    (AnnotationKind::Rectangle, "Rectangle"),
+    (AnnotationKind::Redact, "Redact"),
+    (AnnotationKind::RubberStamp, "RubberStamp"),
+    (AnnotationKind::Squiggly, "Squiggly"),
+    (AnnotationKind::Strikeout, "Strikeout"),
+    (AnnotationKind::Underline, "Underline"),
+    (AnnotationKind::Widget, "Widget"),
+];
 
 /// Each capability and its name.
 const CAPABILITIES: [(Capability, &str); 5] = [
@@ -302,10 +329,74 @@ impl Source {
             .map_err(|error| to_js(&error))
     }
 
-    /// The same source, for `Page::draw_image` to take.
+    /// The same source, for `Page::draw_image` or `Page::add_annotation` to take.
     #[must_use]
     pub fn share(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+/// An annotation on a page.
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct Annotation(annotations::Annotation);
+
+#[wasm_bindgen]
+impl Annotation {
+    /// Removes the annotation and its popup from the page.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details.
+    pub fn delete(&self) -> Result<(), JsValue> {
+        self.0
+            .delete(&DeleteAnnotationOptions::default())
+            .map_err(|error| to_js(&error))
+    }
+
+    /// Its kind, place in points from the top-left, colour (a redaction mark's interior colour) and quadrilaterals.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details.
+    #[wasm_bindgen(
+        unchecked_return_type = "{ color: string; height: number; kind: string; quads: number[]; width: number; x: number; y: number }"
+    )]
+    pub fn info(&self) -> Result<JsValue, JsValue> {
+        let found = self.0.info().map_err(|error| to_js(&error))?;
+        let quads: Array = found.quads.into_iter().map(JsValue::from).collect();
+        record([
+            ("color", found.color.into()),
+            ("height", found.height.into()),
+            (
+                "kind",
+                named(&ANNOTATION_KINDS, found.kind, "annotation kind")?.into(),
+            ),
+            ("quads", quads.into()),
+            ("width", found.width.into()),
+            ("x", found.x.into()),
+            ("y", found.y.into()),
+        ])
+    }
+}
+
+/// A cursor over a page's annotations.
+#[wasm_bindgen]
+#[derive(Debug)]
+pub struct Annotations(annotations::Annotations);
+
+#[wasm_bindgen]
+impl Annotations {
+    /// The next annotation; `undefined` after the last.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details.
+    pub fn next(&self) -> Result<Option<Annotation>, JsValue> {
+        self.0
+            .next()
+            .map(|found| found.map(Annotation))
+            .map_err(|error| to_js(&error))
     }
 }
 
@@ -373,6 +464,40 @@ impl Documents {
 
 #[wasm_bindgen]
 impl Document {
+    /// Removes the content under redaction marks, then the marks, reporting to callback `progress` of the
+    /// JavaScript table; `pages` of `options` unset is all, empty none.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details; a `TypeError` or `RangeError` for a wrong option.
+    #[wasm_bindgen(js_name = applyRedactions)]
+    pub fn apply_redactions(
+        &self,
+        progress: Option<u32>,
+        options: &JsValue,
+    ) -> Result<(), JsValue> {
+        // First, so the table forgets the callback whatever fails.
+        let callback = progress.map(|id| Callback { id });
+        let mut made = ApplyRedactionsOptions::default();
+        made.pages = if field(options, "pages")?.is_some() {
+            let items = list(options, "pages")?;
+            Some(
+                items
+                    .iter()
+                    .map(|page| integer(page, "pages"))
+                    .collect::<Result<_, _>>()?,
+            )
+        } else {
+            None
+        };
+        self.0
+            .apply_redactions(
+                callback.as_ref().map::<&dyn Progress, _>(|held| held),
+                &made,
+            )
+            .map_err(|error| to_js(&error))
+    }
+
     /// The catalog's id.
     ///
     /// # Errors
@@ -646,6 +771,53 @@ pub struct Page(page::Page);
 
 #[wasm_bindgen]
 impl Page {
+    /// Adds an annotation with `data`, which it takes (see `Source::share`), and the `AddAnnotationOptions` fields
+    /// `color`, `height`, `kind`, `quads`, `width`, `x` and `y` of `options`; only `kind` `Redact` is implemented.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details; a `TypeError` or `RangeError` for a wrong option.
+    #[wasm_bindgen(js_name = addAnnotation)]
+    pub fn add_annotation(
+        &self,
+        data: Option<Source>,
+        options: &JsValue,
+    ) -> Result<Annotation, JsValue> {
+        let mut made = AddAnnotationOptions::default();
+        made.color = text(options, "color")?.unwrap_or_default();
+        made.height = real(options, "height")?.unwrap_or_default();
+        made.kind =
+            choice(options, "kind", &ANNOTATION_KINDS, "annotation kind")?.unwrap_or_default();
+        made.quads = list(options, "quads")?
+            .iter()
+            .map(|value| {
+                value
+                    .as_f64()
+                    .ok_or_else(|| wrong("quads", "an array of numbers"))
+            })
+            .collect::<Result<_, _>>()?;
+        made.width = real(options, "width")?.unwrap_or_default();
+        made.x = real(options, "x")?.unwrap_or_default();
+        made.y = real(options, "y")?.unwrap_or_default();
+        let core_data = data.map(|held| held.0);
+        self.0
+            .add_annotation(core_data.as_ref(), &made)
+            .map(Annotation)
+            .map_err(|error| to_js(&error))
+    }
+
+    /// The annotations, links included.
+    ///
+    /// # Errors
+    ///
+    /// The core's, as details.
+    pub fn annotations(&self) -> Result<Annotations, JsValue> {
+        self.0
+            .annotations()
+            .map(Annotations)
+            .map_err(|error| to_js(&error))
+    }
+
     /// Boundary `kind`, a `Boundary` name.
     ///
     /// # Errors
