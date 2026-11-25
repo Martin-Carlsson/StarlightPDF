@@ -140,6 +140,14 @@ redact_file	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=t
 # So does one a form on another page draws through resources of its own that the redacted page shared (7.8.3, 8.10.1).
 redact_bytes	tests/corpus/redact/resources-form-elsewhere.pdf	marks=0@10,130,60,60	read=pixels	index=2	same
 redact_file	tests/corpus/redact/resources-form-elsewhere.pdf	marks=0@10,130,60,60	read=pixels	index=2	same
+# So does one only a graphics state or a form's own resources on another page name (7.3.10, 8.10.1, 11.6.5.2).
+redact_bytes	tests/corpus/redact/resources-mask-elsewhere.pdf	marks=0@10,130,100,60	read=text	bytes=4d41534b47524f5550534543524554	absent
+redact_file	tests/corpus/redact/resources-mask-elsewhere.pdf	marks=0@10,130,100,60	read=text	bytes=4d41534b47524f5550534543524554	absent
+redact_bytes	tests/corpus/redact/resources-form-inline.pdf	marks=0@10,130,60,60	read=text	bytes=494e4c494e454e414d45534543524554	absent
+redact_file	tests/corpus/redact/resources-form-inline.pdf	marks=0@10,130,60,60	read=text	bytes=494e4c494e454e414d45534543524554	absent
+# Or one drawn content uses as it is drawn, here the soft mask of an image outside the mark (7.3.10, 11.6.5.3).
+redact_bytes	tests/corpus/redact/image-mask-shared.pdf	marks=0@10,130,60,60	read=pixels	index=0	same
+redact_file	tests/corpus/redact/image-mask-shared.pdf	marks=0@10,130,60,60	read=pixels	index=0	same
 # ActualText, Alt and E of marked content a mark touches, inline or named in Properties (14.6, 14.9.3, 14.9.4, 14.9.5).
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=41435455414c474f4e45	absent
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=414c54474f4e45	absent

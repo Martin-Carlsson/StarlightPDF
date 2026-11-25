@@ -386,8 +386,8 @@ fn rectangle(
 }
 
 /// Walks the content of the page `id`, `dictionary`, for what `marks` meet: what it found, the
-/// content rewritten when changed, and its streams; sets the resources a copy adds, and adds
-/// those it and the appearances of the annotations `kept` no longer use to `released`.
+/// content rewritten when changed, and its streams; sets the resources a copy adds, and adds what
+/// it touched and draws as it is to `released`.
 fn content(
     job: &Job<'_>,
     (marks, stage, released): (&Marks, &mut Stage, &mut Released),
@@ -421,6 +421,7 @@ fn content(
         surface: &mut surface,
     };
     let mut cx = Context {
+        drawn: BTreeSet::new(),
         marks,
         measured: BTreeSet::new(),
         parents: structure::key(job, dictionary, b"StructParents")?,
@@ -429,11 +430,11 @@ fn content(
     };
     let joined = Box::new(Joined::new(job, listing.clone()));
     let mut found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
-    released.gone(&found.moved);
+    released.add(id, &found.moved, &cx.drawn);
     if !found.removed.is_empty() {
         let damaged = job.damaged.get();
         let shown = shared::appearances(job, kept)?;
-        let used = shared::drawn(&mut run, cx.stage, id, (&shown, &found.removed))?;
+        let used = shared::drawn(&mut run, (&shown, &found.removed))?;
         job.damaged.set(damaged);
         found.removed.retain(|name| !used.contains(name));
         cx.measured.extend(used);
@@ -446,7 +447,6 @@ fn content(
     };
     if !found.added.is_empty() || !found.removed.is_empty() {
         let made = walk::resources_with(job, run.scope.resources.value(), &found, &cx.measured)?;
-        released.add(job, cx.stage, (id, dictionary), &found.removed)?;
         dictionary.set(b"Resources", Some(made));
     }
     Ok((found, rewritten, items))

@@ -1,5 +1,5 @@
-//! Resources redacted pages share with other pages: those they no longer use leave them where no
-//! other page uses them either (ISO 32000-2:2020, 7.7.3.4, 7.8.3).
+//! Objects a redaction removed or replaced by copies: those nothing left draws become null, so
+//! that what still names them finds nothing (ISO 32000-2:2020, 7.3.10, 7.8.3).
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
@@ -20,22 +20,14 @@ use crate::{ErrorCode, PdfError};
 /// Work of a page or of content it runs.
 const NODE_WORK: u64 = 64;
 
-/// What holds resources of a category.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Holder {
-    /// A category dictionary that is its own object.
-    Category(ObjectId),
-    /// A page or page tree node whose resources are a dictionary within it.
-    Node(ObjectId),
-    /// A resource dictionary that is its own object.
-    Resources(ObjectId),
-}
-
-/// The names of a category.
+/// Names.
 type Names = BTreeSet<Vec<u8>>;
 
 /// Objects by number and generation.
 type Ids = BTreeSet<(u32, u16)>;
+
+/// Names of resources and the objects of those it draws.
+type Naming = BTreeMap<Vec<u8>, Ids>;
 
 /// A resource's category and name.
 type Named = (&'static [u8], Vec<u8>);
@@ -46,161 +38,72 @@ type Opened<'data> = Result<Box<dyn Pull + 'data>, PdfError>;
 /// An appearance stream and its own resources, where it has them.
 type Shown = (Resolved, Option<Resolved>);
 
-/// What holds names, ordered, and their category.
-type Place = ((u8, u32, u16), &'static [u8]);
-
-/// Names redacted pages no longer use, with what holds them and their category, by both.
+/// The forms and images a mark touched, and what still draws them.
 #[derive(Default)]
 pub(super) struct Released {
-    /// The names, what holds them and their category.
-    entries: BTreeMap<Place, (Holder, Names)>,
-    /// What holds each category for the parent of the page asked last: siblings come in turn.
-    last: Vec<(ObjectId, &'static [u8], Option<Holder>)>,
-    /// The forms and images a mark touched: names to them go wherever nothing draws them.
+    /// Of them, those drawn.
+    drawn: Ids,
+    /// What each of them with resources of its own draws of them.
+    edges: BTreeMap<(u32, u16), Ids>,
+    /// They, soft mask groups included.
     objects: Ids,
-}
-
-impl Holder {
-    /// It, ordered.
-    const fn key(self) -> (u8, u32, u16) {
-        match self {
-            Self::Category(id) => (0, id.number, id.generation),
-            Self::Node(id) => (1, id.number, id.generation),
-            Self::Resources(id) => (2, id.number, id.generation),
-        }
-    }
+    /// The redacted pages.
+    pages: Ids,
+    /// The content with resources of its own already read.
+    seen: Ids,
 }
 
 impl Released {
-    /// Adds `removed`, the resources the page `page`, read as `dictionary`, no longer uses,
-    /// where it shares them.
+    /// Adds the redacted page `page`, the originals of `moved`, which a mark touched there, and
+    /// `drawn`, what it draws as it is.
     pub(super) fn add(
         &mut self,
-        job: &Job<'_>,
-        stage: &Stage,
-        (page, dictionary): (ObjectId, &Object),
-        removed: &[(&'static [u8], Vec<u8>)],
-    ) -> Result<(), PdfError> {
-        let keys: BTreeSet<&'static [u8]> = removed.iter().map(|entry| entry.0).collect();
-        for key in keys {
-            let Some(held) = self.holder(job, stage, (page, dictionary), key)? else {
-                continue;
+        page: ObjectId,
+        moved: &[(ObjectId, Option<ObjectId>, Vec<i64>)],
+        drawn: &Ids,
+    ) {
+        let _new: bool = self.pages.insert(held(page));
+        self.objects.extend(moved.iter().map(|entry| held(entry.0)));
+        self.drawn.extend(drawn.iter().copied());
+    }
+
+    /// Of the objects, the names `resources` gives those, or what uses them as it is drawn.
+    fn naming(&self, job: &Job<'_>, resources: &Resolved) -> Result<Naming, PdfError> {
+        let mut named = Naming::new();
+        for category in [&b"XObject"[..], b"ExtGState", b"Font", b"Pattern"] {
+            let listed = match data::entry(job, resources.value(), category) {
+                Err(error) if error.code() == ErrorCode::Malformed => continue,
+                other => other?,
             };
-            if held == Holder::Node(page) {
-                continue;
+            for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
+                job.spend(1)?;
+                let mut found =
+                    match data::resolve(job, &pair.1).and_then(|given| referenced(job, &given)) {
+                        Err(error) if error.code() == ErrorCode::Malformed => continue,
+                        other => other?,
+                    };
+                found.retain(|id| self.objects.contains(id));
+                if !found.is_empty() {
+                    named.entry(pair.0.clone()).or_default().extend(found);
+                }
             }
-            let names = &mut self
-                .entries
-                .entry((held.key(), key))
-                .or_insert_with(|| (held, Names::new()))
-                .1;
-            names.extend(
-                removed
-                    .iter()
-                    .filter(|entry| entry.0 == key)
-                    .map(|entry| entry.1.clone()),
-            );
         }
-        Ok(())
+        Ok(named)
     }
 
-    /// Adds to the names `held` holds of the category `key` those of objects a mark touched, the
-    /// first time `examined` meets it.
-    fn examine(
-        &mut self,
-        job: &Job<'_>,
-        stage: &Stage,
-        (held, key): (Option<Holder>, &'static [u8]),
-        examined: &mut BTreeSet<Place>,
-    ) -> Result<(), PdfError> {
-        let Some(found) = held else {
-            return Ok(());
-        };
-        if self.objects.is_empty() || !examined.insert((found.key(), key)) {
-            return Ok(());
-        }
-        let category = match found {
-            Holder::Category(id) => stage.get(job, id)?,
-            Holder::Node(id) => stage
-                .get(job, id)?
-                .get(b"Resources")
-                .and_then(|resources| resources.get(key))
-                .unwrap_or(Object::Null),
-            Holder::Resources(id) => stage.get(job, id)?.get(key).unwrap_or(Object::Null),
-        };
-        let pairs = data::pairs(&category).map_or(&[][..], Vec::as_slice);
-        job.spend(u64::try_from(pairs.len()).unwrap_or(u64::MAX))?;
-        let names: Names = pairs
-            .iter()
-            .filter(|pair| {
-                matches!(pair.1, Object::Reference(id)
-                    if self.objects.contains(&(id.number, id.generation)))
-            })
-            .map(|pair| pair.0.clone())
-            .collect();
-        if !names.is_empty() {
-            self.entries
-                .entry((found.key(), key))
-                .or_insert_with(|| (found, Names::new()))
-                .1
-                .extend(names);
-        }
-        Ok(())
-    }
-
-    /// Adds the originals of `moved`, the forms and images a mark touched.
-    pub(super) fn gone(&mut self, moved: &[(ObjectId, Option<ObjectId>, Vec<i64>)]) {
-        self.objects.extend(
-            moved
-                .iter()
-                .map(|entry| (entry.0.number, entry.0.generation)),
-        );
-    }
-
-    /// What holds the resources of the category `key` of the page `id`, `node`, through its
-    /// parents; none where it has none.
-    fn holder(
-        &mut self,
-        job: &Job<'_>,
-        stage: &Stage,
-        (id, node): (ObjectId, &Object),
-        key: &'static [u8],
-    ) -> Result<Option<Holder>, PdfError> {
-        if let Some(found @ (Object::Reference(_) | Object::Dictionary(_))) = node.get(b"Resources")
-        {
-            return holding(job, stage, found, Some(Holder::Node(id)), key);
-        }
-        let Some(Object::Reference(parent)) = node.get(b"Parent") else {
-            return Ok(None);
-        };
-        if let Some(entry) = self
-            .last
-            .iter()
-            .find(|entry| entry.0 == parent && entry.1 == key)
-        {
-            return Ok(entry.2);
-        }
-        let found = holder(job, stage, (parent, stage.get(job, parent)?), key)?;
-        self.last.retain(|entry| entry.1 != key);
-        self.last.push((parent, key, found));
-        Ok(found)
-    }
-
-    /// Scans what `resources` names that runs through resources of its own, each once by `seen`,
-    /// for the names wanted of those, examined first; and so on within them, `depth` deep; past
-    /// the deepest, all are kept (7.8.3, 8.10.1).
+    /// Reads what `resources` names that runs content: where it has resources of its own, or
+    /// where `all`, through `resources`, each once, what it draws of the objects is drawn, or
+    /// drawn where it is drawn when one of them; and so on within them, `depth` deep; past the
+    /// deepest, all are drawn (7.8.3, 8.10.1).
     fn owners(
         &mut self,
         run: &mut Run<'_, '_>,
-        stage: &Stage,
-        (keys, resources, depth): (&[&'static [u8]], &Resolved, u8),
-        (examined, seen, left): (&mut BTreeSet<Place>, &mut Ids, &mut usize),
+        resources: &Resolved,
+        (all, depth): (bool, u8),
     ) -> Result<(), PdfError> {
         let job = run.job;
         if depth >= job::NESTING {
-            for entry in self.entries.values_mut() {
-                entry.1.clear();
-            }
+            self.drawn.clone_from(&self.objects);
             return Ok(());
         }
         for category in [&b"XObject"[..], b"Pattern", b"Font", b"ExtGState"] {
@@ -216,60 +119,54 @@ impl Released {
                     other => other?,
                 };
                 for (owner, streams) in made {
-                    if owner
-                        .id()
-                        .is_some_and(|id| !seen.insert((id.number, id.generation)))
+                    let own = match data::entry(job, owner.value(), b"Resources") {
+                        Err(error) if error.code() == ErrorCode::Malformed => continue,
+                        other => other?,
+                    };
+                    let inherits = !matches!(*own.value(), Object::Dictionary(_));
+                    if (inherits && !all)
+                        || owner.id().is_some_and(|id| !self.seen.insert(held(id)))
                     {
                         continue;
                     }
                     job.spend(NODE_WORK)?;
-                    let own = match data::entry(job, owner.value(), b"Resources") {
-                        Ok(found) if matches!(*found.value(), Object::Dictionary(_)) => found,
-                        Err(error) if error.code() != ErrorCode::Malformed => return Err(error),
-                        Ok(_) | Err(_) => continue,
-                    };
-                    let stored = owner.value().get(b"Resources").unwrap_or(Object::Null);
-                    for &key in keys {
-                        let held = holding(job, stage, stored.clone(), None, key)?;
-                        self.examine(job, stage, (held, key), examined)?;
-                        let Some(found) = held.filter(|_| self.wanted(held, key)) else {
-                            continue;
-                        };
-                        for stream in &streams {
-                            let opened = data::open(job, &mut run.caches.streams, stream);
-                            let scope = Rc::new(Scope::new(own.clone()));
-                            self.scan(run, stage, (found, key, &mut *left), (opened, scope, 1))?;
-                        }
+                    let given = if inherits { resources } else { &own };
+                    let named = self.naming(job, given)?;
+                    let mut found = referenced(job, &owner)?;
+                    found.retain(|id| self.objects.contains(id));
+                    for stream in streams.iter().filter(|_| !named.is_empty()) {
+                        let opened = data::open(job, &mut run.caches.streams, stream);
+                        let scope = Rc::new(Scope::new(given.clone()));
+                        found.extend(scanned(run, (opened, scope, 1), &named)?);
                     }
-                    let inner = (keys, &own, depth.saturating_add(1));
-                    self.owners(run, stage, inner, (&mut *examined, &mut *seen, &mut *left))?;
+                    match owner.id().map(held).filter(|id| self.objects.contains(id)) {
+                        Some(id) => self.edges.entry(id).or_default().extend(found),
+                        None => self.drawn.extend(found),
+                    }
+                    if !inherits {
+                        self.owners(run, &own, (all, depth.saturating_add(1)))?;
+                    }
                 }
             }
         }
         Ok(())
     }
 
-    /// Removes the names from what holds them, and names to objects a mark touched from what holds
-    /// those, where no page, appearance of an annotation kept or content with resources of its own
-    /// that they name uses them, reading each page once (7.8.3, 12.5.5).
+    /// Stages as null the objects that no page, appearance of an annotation kept or content with
+    /// resources of its own draws, reading each page once (7.3.10, 12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
         stage: &mut Stage,
     ) -> Result<(), PdfError> {
-        let mut categories: BTreeSet<&'static [u8]> =
-            self.entries.keys().map(|place| place.1).collect();
-        if !self.objects.is_empty() {
-            let _new: bool = categories.insert(b"XObject");
-        }
-        let keys: Vec<&'static [u8]> = categories.into_iter().collect();
-        let mut left = self.entries.len();
-        let (mut examined, mut seen) = (BTreeSet::new(), Ids::new());
         let job = run.job;
         let (objects, overlay) = (job.objects, &*job.overlay);
         let damaged = job.damaged.get();
+        let wanted = mem::take(&mut self.objects);
+        self.drawn.retain(|id| wanted.contains(id));
+        self.objects = wanted;
         let mut pages = Leaves::new(objects, overlay)?;
-        while (left > 0 || !self.objects.is_empty())
+        while self.drawn.len() < self.objects.len()
             && let Some(id) = pages.next(objects, overlay)?
         {
             job.spend(NODE_WORK)?;
@@ -278,135 +175,58 @@ impl Released {
                 Err(error) if error.code() == ErrorCode::Malformed => Vec::new(),
                 other => appearances(job, data::items(other?.value()).unwrap_or_default())?,
             };
-            // As stored: a redacted page's content uses no more than it did.
+            // A redacted page's content is known: what it draws as it is was added.
+            let redacted = self.pages.contains(&held(id));
             let stored = overlay.resolve(objects, id)?;
             let inherited = display::inherited(objects, overlay, &stored, b"Resources")?;
             let within = Rc::new(Scope::new(data::made(job, inherited, None)?));
-            for &key in &keys {
-                let held = self.holder(job, stage, (id, &node), key)?;
-                self.examine(job, stage, (held, key), &mut examined)?;
-                let mut owners = Vec::new();
-                for entry in &shown {
-                    let (stream, own) = (&entry.0, &entry.1);
-                    let found = if own.is_some() {
-                        let given = stream.value().get(b"Resources");
-                        holding(job, stage, given.unwrap_or(Object::Null), None, key)?
-                    } else {
-                        held
-                    };
-                    self.examine(job, stage, (found, key), &mut examined)?;
-                    if self.wanted(found, key) {
-                        owners.push((stream, found, own));
-                    }
-                }
-                if let Some(found) = held
-                    && self.wanted(held, key)
-                {
-                    let streams = display::streams(objects, overlay, stored.get(b"Contents"))?;
-                    let listing = data::made(job, Object::Array(streams), None)?;
-                    let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
-                    let scoped = (Ok(joined), Rc::clone(&within), 0);
-                    self.scan(run, stage, (found, key, &mut left), scoped)?;
-                }
-                for (stream, found, own) in owners {
-                    if let Some(owner) = found
-                        && self.wanted(found, key)
-                    {
-                        job.spend(NODE_WORK)?;
-                        let opened = data::open(job, &mut run.caches.streams, stream);
-                        let inner = own.as_ref().map_or_else(
-                            || Rc::clone(&within),
-                            |resources| Rc::new(Scope::new(resources.clone())),
-                        );
-                        self.scan(run, stage, (owner, key, &mut left), (opened, inner, 1))?;
-                    }
+            let named = self.naming(job, &within.resources)?;
+            if !named.is_empty() && !redacted {
+                let streams = display::streams(objects, overlay, stored.get(b"Contents"))?;
+                let listing = data::made(job, Object::Array(streams), None)?;
+                let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
+                let found = scanned(run, (Ok(joined), Rc::clone(&within), 0), &named)?;
+                self.drawn.extend(found);
+            }
+            for entry in &shown {
+                let (stream, own) = (&entry.0, &entry.1);
+                let target = stream
+                    .id()
+                    .map(held)
+                    .filter(|found| self.objects.contains(found));
+                self.drawn.extend(target);
+                let (scope, given) = match *own {
+                    Some(ref resources) => (
+                        Rc::new(Scope::new(resources.clone())),
+                        self.naming(job, resources)?,
+                    ),
+                    None => (Rc::clone(&within), named.clone()),
+                };
+                if !given.is_empty() {
+                    job.spend(NODE_WORK)?;
+                    let opened = data::open(job, &mut run.caches.streams, stream);
+                    self.drawn.extend(scanned(run, (opened, scope, 1), &given)?);
                 }
             }
-            // Content with resources of its own that the page's or an appearance's name.
-            let mut named = vec![within.resources.clone()];
-            named.extend(shown.iter().filter_map(|entry| entry.1.clone()));
-            for given in &named {
-                let walked = (&mut examined, &mut seen, &mut left);
-                self.owners(run, stage, (&keys, given, 0), walked)?;
+            self.owners(run, &within.resources, (redacted, 0))?;
+            for resources in shown.iter().filter_map(|entry| entry.1.as_ref()) {
+                self.owners(run, resources, (redacted, 0))?;
             }
         }
         job.damaged.set(damaged);
-        for ((_, key), (held, names)) in self.entries {
-            if !names.is_empty() {
-                dropped(job, stage, (held, key), &names)?;
+        let mut next: Vec<(u32, u16)> = self.drawn.iter().copied().collect();
+        while let Some(found) = next.pop() {
+            for reached in self.edges.remove(&found).unwrap_or_default() {
+                job.spend(1)?;
+                if self.drawn.insert(reached) {
+                    next.push(reached);
+                }
             }
         }
-        Ok(())
-    }
-
-    /// Removes from the names `held` holds of the category `key` those `data`, run `depth` deep
-    /// within `scope`, names; all where it cannot be read. Counts down `left` where none are left.
-    fn scan(
-        &mut self,
-        run: &mut Run<'_, '_>,
-        stage: &Stage,
-        (held, key, left): (Holder, &'static [u8], &mut usize),
-        (data, scope, depth): (Opened<'_>, Rc<Scope>, u8),
-    ) -> Result<(), PdfError> {
-        let Some(&mut (_, ref mut names)) = self.entries.get_mut(&(held.key(), key)) else {
-            return Ok(());
-        };
-        let outer = mem::replace(&mut run.scope, scope);
-        let result = data
-            .and_then(|opened| mentioned(run, stage, (held, key), opened, (&mut *names, depth)));
-        run.scope = outer;
-        match result {
-            // Content that cannot be read may use any of them.
-            Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
-            other => other?,
-        }
-        if names.is_empty() {
-            *left = left.saturating_sub(1);
+        for &(number, generation) in self.objects.difference(&self.drawn) {
+            stage.set(job, ObjectId { generation, number }, Object::Null)?;
         }
         Ok(())
-    }
-
-    /// Whether names that `held` holds of the category `key` are still to be found.
-    fn wanted(&self, held: Option<Holder>, key: &[u8]) -> bool {
-        held.and_then(|found| self.entries.get(&(found.key(), key)))
-            .is_some_and(|entry| !entry.1.is_empty())
-    }
-}
-
-/// Removes `names` from the category `key` that `held` holds.
-fn dropped(
-    job: &Job<'_>,
-    stage: &mut Stage,
-    (held, key): (Holder, &[u8]),
-    names: &Names,
-) -> Result<(), PdfError> {
-    let without = |mut category: Object| {
-        for name in names {
-            category.set(name, None);
-        }
-        category
-    };
-    let within = |mut resources: Object| {
-        let category = resources.get(key).map(without);
-        if category.is_some() {
-            resources.set(key, category);
-        }
-        resources
-    };
-    match held {
-        Holder::Category(id) => {
-            let category = stage.get(job, id)?;
-            stage.set(job, id, without(category))
-        }
-        Holder::Node(id) => {
-            let mut node = stage.get(job, id)?;
-            node.set(b"Resources", node.get(b"Resources").map(within));
-            stage.set(job, id, node)
-        }
-        Holder::Resources(id) => {
-            let resources = stage.get(job, id)?;
-            stage.set(job, id, within(resources))
-        }
     }
 }
 
@@ -456,99 +276,44 @@ pub(super) fn appearances(job: &Job<'_>, listed: &[Object]) -> Result<Vec<Shown>
 }
 
 /// Of `removed`, by category and name, those that the appearance streams `shown` without
-/// resources of their own name, run within the resources of the page `page`; all where one
-/// cannot be read (12.5.5).
+/// resources of their own name, run within the resources of their page; all where one cannot be
+/// read (12.5.5).
 pub(super) fn drawn(
     run: &mut Run<'_, '_>,
-    stage: &Stage,
-    page: ObjectId,
     (shown, removed): (&[Shown], &[Named]),
 ) -> Result<Vec<Named>, PdfError> {
     let job = run.job;
-    let mut used = Vec::new();
-    let keys: BTreeSet<&'static [u8]> = removed.iter().map(|entry| entry.0).collect();
-    for key in keys {
-        let all: Names = removed
-            .iter()
-            .filter(|entry| entry.0 == key)
-            .map(|entry| entry.1.clone())
-            .collect();
-        let mut names = all.clone();
-        for entry in shown.iter().filter(|entry| entry.1.is_none()) {
-            if names.is_empty() {
-                break;
-            }
-            let stream = &entry.0;
-            job.spend(NODE_WORK)?;
-            // The page's own resources: no form with its own holds them.
-            let result = data::open(job, &mut run.caches.streams, stream).and_then(|opened| {
-                mentioned(
-                    run,
-                    stage,
-                    (Holder::Node(page), key),
-                    opened,
-                    (&mut names, 1),
-                )
-            });
-            match result {
-                Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
-                other => other?,
-            }
+    let mut names: Names = removed.iter().map(|entry| entry.1.clone()).collect();
+    for entry in shown.iter().filter(|entry| entry.1.is_none()) {
+        if names.is_empty() {
+            break;
         }
-        used.extend(all.difference(&names).map(|name| (key, name.clone())));
+        job.spend(NODE_WORK)?;
+        let result = data::open(job, &mut run.caches.streams, &entry.0)
+            .and_then(|opened| mentioned(run, opened, (&mut names, 1)));
+        match result {
+            Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
+            other => other?,
+        }
     }
-    Ok(used)
+    Ok(removed
+        .iter()
+        .filter(|entry| !names.contains(&entry.1))
+        .cloned()
+        .collect())
 }
 
-/// What holds the resources of the category `key` of the page tree node `id`, `node`, through
-/// its parents; none where it has none.
-fn holder(
-    job: &Job<'_>,
-    stage: &Stage,
-    (mut id, mut node): (ObjectId, Object),
-    key: &[u8],
-) -> Result<Option<Holder>, PdfError> {
-    for _ in 0..=job.objects.depth_limit() {
-        if let Some(found @ (Object::Reference(_) | Object::Dictionary(_))) = node.get(b"Resources")
-        {
-            return holding(job, stage, found, Some(Holder::Node(id)), key);
-        }
-        let Some(Object::Reference(parent)) = node.get(b"Parent") else {
-            return Ok(None);
-        };
-        (id, node) = (parent, stage.get(job, parent)?);
-    }
-    Err(job.limit())
-}
-
-/// What holds the category `key` of `resources`, as stored: `within` where it is a dictionary
-/// that holds it within; none where nothing that may be shared does.
-fn holding(
-    job: &Job<'_>,
-    stage: &Stage,
-    resources: Object,
-    within: Option<Holder>,
-    key: &[u8],
-) -> Result<Option<Holder>, PdfError> {
-    let (found, held) = if let Object::Reference(id) = resources {
-        (stage.get(job, id)?, Some(Holder::Resources(id)))
-    } else {
-        (resources, within)
-    };
-    Ok(match found.get(key) {
-        Some(Object::Reference(id)) => Some(Holder::Category(id)),
-        Some(_) | None => held,
-    })
+/// `id` as [`Ids`] hold it.
+const fn held(id: ObjectId) -> (u32, u16) {
+    (id.number, id.generation)
 }
 
 /// Removes from `names` those that `data` names, `depth` deep, or content it runs through the
 /// same resources names: forms, Type 3 glyph procedures, soft mask groups and tiling pattern
-/// cells that have none of their own or those `held` holds; all past the deepest (7.8.2, 8.7.3.1,
-/// 8.10.1, 9.6.4, 11.6.5.2).
+/// cells that have none of their own; all past the deepest (7.8.2, 8.7.3.1, 8.10.1, 9.6.4,
+/// 11.6.5.2).
 fn mentioned(
     run: &mut Run<'_, '_>,
-    stage: &Stage,
-    (held, key): (Holder, &[u8]),
     data: Box<dyn Pull + '_>,
     (names, depth): (&mut Names, u8),
 ) -> Result<(), PdfError> {
@@ -589,33 +354,13 @@ fn mentioned(
         for (owner, streams) in runs(job, &found)? {
             job.spend(NODE_WORK)?;
             let own = data::entry(job, owner.value(), b"Resources")?;
-            let inherits = !matches!(*own.value(), Object::Dictionary(_));
-            if !inherits {
-                let stored = owner.value().get(b"Resources").unwrap_or(Object::Null);
-                if holding(job, stage, stored, None, key)? != Some(held) {
-                    continue;
-                }
+            if matches!(*own.value(), Object::Dictionary(_)) {
+                continue;
             }
-            let scope = Rc::clone(&run.scope);
-            if !inherits {
-                run.scope = Rc::new(Scope::new(own));
-            }
-            let mut result = Ok(());
             for stream in streams {
                 let opened = data::open(job, &mut run.caches.streams, &stream)?;
-                result = mentioned(
-                    run,
-                    stage,
-                    (held, key),
-                    opened,
-                    (&mut *names, depth.saturating_add(1)),
-                );
-                if result.is_err() {
-                    break;
-                }
+                mentioned(run, opened, (&mut *names, depth.saturating_add(1)))?;
             }
-            run.scope = scope;
-            result?;
         }
     }
     Ok(())
@@ -668,4 +413,60 @@ pub(super) fn runs(
         made.extend(procedures(job, &data::resolve(job, first)?)?);
     }
     Ok(made)
+}
+
+/// `found`, a resource, and what it uses as it is drawn: an image's soft mask and mask, a graphics
+/// state's soft mask group, a pattern's shading, a Type 3 font's glyph procedures (8.7.4.3,
+/// 8.9.6, 9.6.4, 11.6.5.2).
+pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Ids, PdfError> {
+    let mut ids: Ids = found.id().map(held).into_iter().collect();
+    let value = found.value();
+    let group =
+        data::entry(job, value, b"SMask").and_then(|mask| data::entry(job, mask.value(), b"G"));
+    let used = [
+        data::entry(job, value, b"SMask"),
+        data::entry(job, value, b"Mask"),
+        data::entry(job, value, b"Shading"),
+        group,
+    ];
+    for given in used {
+        match given {
+            Ok(entry) => ids.extend(entry.id().map(held)),
+            Err(error) if error.code() != ErrorCode::Malformed => return Err(error),
+            Err(_) => {}
+        }
+    }
+    let listed = match data::entry(job, value, b"CharProcs") {
+        Err(error) if error.code() == ErrorCode::Malformed => return Ok(ids),
+        other => other?,
+    };
+    for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
+        job.spend(1)?;
+        if let Object::Reference(id) = pair.1 {
+            let _new: bool = ids.insert(held(id));
+        }
+    }
+    Ok(ids)
+}
+
+/// Of `named`, the objects of the names that `data`, run `depth` deep within `scope`, draws;
+/// all where it cannot be read.
+fn scanned(
+    run: &mut Run<'_, '_>,
+    (data, scope, depth): (Opened<'_>, Rc<Scope>, u8),
+    named: &Naming,
+) -> Result<Ids, PdfError> {
+    let mut left: Names = named.keys().cloned().collect();
+    let outer = mem::replace(&mut run.scope, scope);
+    let result = data.and_then(|opened| mentioned(run, opened, (&mut left, depth)));
+    run.scope = outer;
+    match result {
+        Err(error) if error.code() == ErrorCode::Malformed => left.clear(),
+        other => other?,
+    }
+    Ok(named
+        .iter()
+        .filter(|entry| !left.contains(entry.0))
+        .flat_map(|entry| entry.1.iter().copied())
+        .collect())
 }

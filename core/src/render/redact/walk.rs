@@ -19,6 +19,7 @@ use crate::render::job;
 use crate::render::output::deflate::Deflate;
 use crate::render::redact::cut::{self, Outline};
 use crate::render::redact::marks::{self, Marks};
+use crate::render::redact::shared;
 use crate::render::redact::stage::Stage;
 use crate::render::redact::structure::{self, Level};
 use crate::render::redact::{glyph, image};
@@ -44,6 +45,8 @@ const UNFILTERED: [&[u8]; 7] = [
 
 /// What a walk needs beside the run.
 pub(super) struct Context<'cx> {
+    /// The objects content draws as they are, by number and generation.
+    pub drawn: BTreeSet<(u32, u16)>,
     /// The marks.
     pub marks: &'cx Marks,
     /// The `XObject` names content that is measured draws, which no copy leaves out.
@@ -440,6 +443,7 @@ fn graphics(
     };
     let changed_mask = match walked {
         Copied::Kept => {
+            cx.drawn.extend(shared::referenced(job, &found)?);
             let _new: bool = frame.found.used.insert((b"ExtGState", key.to_vec()));
             return Ok(None);
         }
@@ -1046,6 +1050,7 @@ fn xobject(
     let entry = (&b"XObject"[..], key.to_vec());
     let copied = match copy {
         Copied::Kept => {
+            cx.drawn.extend(shared::referenced(job, &found)?);
             if frame.mode == Mode::Measure {
                 let _new: bool = cx.measured.insert(entry);
             } else {
