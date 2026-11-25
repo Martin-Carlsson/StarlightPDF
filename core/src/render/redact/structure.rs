@@ -376,8 +376,8 @@ pub(super) fn key(job: &Job<'_>, owner: &Object, key: &[u8]) -> Result<Option<i6
 }
 
 /// `list` without its words.
-pub(super) fn stripped(list: &Resolved) -> Object {
-    let mut made = list.value().clone();
+pub(super) fn stripped(list: &Object) -> Object {
+    let mut made = list.clone();
     for key in WORDS {
         made.set(key, None);
     }

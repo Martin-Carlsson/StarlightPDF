@@ -15,6 +15,7 @@ use crate::render::interpret::content::{self, Joined};
 use crate::render::interpret::{Run, inline};
 use crate::render::job::{self, Job};
 use crate::render::redact::stage::Stage;
+use crate::render::redact::structure;
 use crate::render::redact::walk::Found;
 use crate::{ErrorCode, PdfError};
 
@@ -69,6 +70,8 @@ pub(super) struct Released {
     edges: BTreeMap<Key, Keys>,
     /// The resources the page read last uses.
     inherited: Option<Inherited>,
+    /// Of them, the property lists that are objects.
+    lists: Ids,
     /// They, soft mask groups included.
     objects: Keys,
     /// The redacted pages.
@@ -91,6 +94,13 @@ impl Released {
         self.objects
             .extend(found.moved.iter().map(|entry| key(entry.0)));
         self.objects.extend(found.lists.iter().cloned());
+        self.lists.extend(
+            found
+                .lists
+                .iter()
+                .filter(|entry| entry.1.is_none())
+                .map(|entry| entry.0),
+        );
         self.objects.extend(references(replaced));
         self.drawn.extend(drawn.iter().cloned());
     }
@@ -318,9 +328,9 @@ impl Released {
     }
 
     /// Stages as null the objects that no page, template page, appearance or icon of an
-    /// annotation kept or content with resources of its own draws, and removes such property
-    /// lists from what holds them, reading each page once; all are drawn where the templates
-    /// cannot be read (7.3.10, 7.7.4, 12.5.5).
+    /// annotation kept or content with resources of its own draws, removes such property lists
+    /// from what holds them directly and their words from the others, reading each page once; all
+    /// are drawn where the templates cannot be read (7.3.10, 7.7.4, 12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
@@ -375,7 +385,13 @@ impl Released {
         for &((number, generation), ref list) in self.objects.difference(&self.drawn) {
             let id = ObjectId { generation, number };
             let Some((depth, ref name)) = *list else {
-                stage.set(job, id, Object::Null)?;
+                // A list keeps its number, which may be named elsewhere.
+                let made = if self.lists.contains(&(number, generation)) {
+                    structure::stripped(&stage.get(job, id)?)
+                } else {
+                    Object::Null
+                };
+                stage.set(job, id, made)?;
                 continue;
             };
             job.spend(NODE_WORK)?;

@@ -1203,13 +1203,19 @@ function streams(saved) {
     }
     from = end + "endstream".length;
     let data = saved.subarray(after + eol, end);
-    const tail = data.length >= 2 && data[data.length - 2] === 13 && data[data.length - 1] === 10 ? 2 : 0;
-    data = data.subarray(
-      0,
-      data.length - (tail || (data[data.length - 1] === 10 || data[data.length - 1] === 13 ? 1 : 0)),
-    );
     const opened = head.lastIndexOf("obj");
     const dictionary = parseObject(tokens(head.slice(opened < 0 ? 0 : opened + "obj".length)), 0)[0];
+    // A direct Length ends the data, which may itself end in an end-of-line byte (7.3.8.1).
+    const length = entry(dictionary, "Length");
+    if (length !== undefined && "other" in length && /^\d+$/u.test(length.other)) {
+      data = data.subarray(0, Number(length.other));
+    } else {
+      const tail = data.length >= 2 && data[data.length - 2] === 13 && data[data.length - 1] === 10 ? 2 : 0;
+      data = data.subarray(
+        0,
+        data.length - (tail || (data[data.length - 1] === 10 || data[data.length - 1] === 13 ? 1 : 0)),
+      );
+    }
     found.push(unfiltered(filters(entry(dictionary, "Filter")), data));
   }
   return found;

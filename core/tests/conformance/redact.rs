@@ -1106,11 +1106,6 @@ fn streams(saved: &[u8]) -> Result<Vec<Vec<u8>>, Failure> {
             .ok_or_else(|| Failure::Case(String::from("a stream without endstream")))?;
         from = end.saturating_add(9);
         let raw = saved.get(start..end).unwrap_or_default();
-        let data = raw
-            .strip_suffix(b"\r\n")
-            .or_else(|| raw.strip_suffix(b"\n"))
-            .or_else(|| raw.strip_suffix(b"\r"))
-            .unwrap_or(raw);
         let opened = trimmed
             .windows(3)
             .rposition(|window| window == b"obj")
@@ -1122,6 +1117,19 @@ fn streams(saved: &[u8]) -> Result<Vec<Vec<u8>>, Failure> {
         let dictionary = parse_object(&refs)
             .map(|pair| pair.0)
             .ok_or_else(|| Failure::Case(format!("cannot parse {syntax}")))?;
+        // A direct Length ends the data, which may itself end in an end-of-line byte (7.3.8.1).
+        let length = match entry(dictionary.clone(), "Length") {
+            Some(Object::Other(number)) => number.parse::<usize>().ok(),
+            _ => None,
+        };
+        let data = length
+            .and_then(|count| raw.get(..count))
+            .unwrap_or_else(|| {
+                raw.strip_suffix(b"\r\n")
+                    .or_else(|| raw.strip_suffix(b"\n"))
+                    .or_else(|| raw.strip_suffix(b"\r"))
+                    .unwrap_or(raw)
+            });
         found.push(unfiltered(
             &filter(entry(dictionary, "Filter"))?,
             data.to_vec(),

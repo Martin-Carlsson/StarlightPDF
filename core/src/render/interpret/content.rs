@@ -51,6 +51,8 @@ pub(crate) struct Name {
 
 /// One stream's operations.
 pub(crate) struct Operations<'data> {
+    /// Where the last operation starts.
+    begun: u64,
     /// The bytes of the operands held.
     held: usize,
     /// The tokens.
@@ -156,6 +158,11 @@ impl Name {
 }
 
 impl<'data> Operations<'data> {
+    /// Where the last operation starts: its first operand, or else its operator.
+    pub(crate) const fn begun(&self) -> u64 {
+        self.begun
+    }
+
     /// The bytes the operator's operands hold.
     pub(crate) const fn held(&self) -> usize {
         self.held
@@ -209,6 +216,7 @@ impl<'data> Operations<'data> {
         reader.set_keep_limit(job::OPERANDS_HELD);
         reader.set_dropping();
         Self {
+            begun: 0,
             held: 0,
             reader,
             weights: Vec::new(),
@@ -228,6 +236,8 @@ impl<'data> Operations<'data> {
         // Past the most operands, each replaces the oldest, here.
         let mut oldest = 0_usize;
         let mut warned = false;
+        self.reader.skip_space()?;
+        self.begun = self.reader.position();
         while let Some(token) = self.reader.next_token()? {
             match token {
                 Token::Keyword(

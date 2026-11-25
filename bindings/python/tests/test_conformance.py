@@ -1121,13 +1121,18 @@ def streams(saved: bytes) -> list[bytes]:
             raise ValueError(msg)
         start_at = end + len(b"endstream")
         data = saved[begin:end]
-        for eol in (b"\r\n", b"\n", b"\r"):
-            if data.endswith(eol):
-                data = data[: -len(eol)]
-                break
         opened = head.rfind(b"obj")
         syntax = head[opened + len(b"obj") if opened >= 0 else 0 :].decode("latin-1")
         dictionary = parse_object(tokens(syntax), 0)[0]
+        # A direct Length ends the data, which may itself end in an end-of-line byte (7.3.8.1).
+        length = entry(dictionary, "Length")
+        if isinstance(length, str) and length.isdigit():
+            data = data[: int(length)]
+        else:
+            for eol in (b"\r\n", b"\n", b"\r"):
+                if data.endswith(eol):
+                    data = data[: -len(eol)]
+                    break
         found.append(unfiltered(filters(entry(dictionary, "Filter")), data))
     return found
 

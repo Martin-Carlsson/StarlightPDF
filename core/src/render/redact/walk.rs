@@ -504,13 +504,24 @@ fn ended(
         _ => None,
     };
     let named = level.name.map(|key| (&b"Properties"[..], key));
-    let rewritten = level.properties.filter(|_list| level.touched);
+    let mut rewritten = level
+        .properties
+        .filter(|_list| level.touched && frame.mode == Mode::Rewrite);
     if level.touched
         && let (Some(key), Some(id)) = (cx.parents, level.id)
     {
         frame.found.struck.push((key, id));
     }
-    let Some(list) = rewritten.filter(|_list| frame.mode == Mode::Rewrite) else {
+    // Visibility goes by an optional content object, so it keeps its number (8.11.4).
+    if let Some(list) = rewritten.as_ref()
+        && let Some(id) = list.id()
+        && optional(run, list)?
+    {
+        cx.stage
+            .set(run.job, id, structure::stripped(list.value()))?;
+        rewritten = None;
+    }
+    let Some(list) = rewritten else {
         let _new: Option<bool> = named.map(|entry| frame.found.used.insert(entry));
         cx.drawn.extend(listed);
         return Ok(());
@@ -519,7 +530,7 @@ fn ended(
     let mut text = String::new();
     write_name(&mut text, &level.tag);
     text.push(' ');
-    let made = structure::stripped(&list);
+    let made = structure::stripped(list.value());
     if let Some(entry) = named {
         frame.replaced.push(entry);
         let name = fresh(run, &mut frame.found.named, Category::Properties)?;
@@ -577,6 +588,12 @@ fn marked(
         _ => {}
     }
     Ok(())
+}
+
+/// Whether `list` is an optional content group or membership dictionary (8.11.2).
+fn optional(run: &Run<'_, '_>, list: &Resolved) -> Result<bool, PdfError> {
+    let kind = data::entry(run.job, list.value(), b"Type")?;
+    Ok(matches!(data::name(kind.value()), Some(b"OCG" | b"OCMD")))
 }
 
 /// A path painted, clipped or ended: `name` (8.5.3, 8.5.4).
@@ -989,7 +1006,8 @@ pub(super) fn stream(
         } else {
             None
         };
-        frame.span = (from, operations.input().position());
+        let begun = operations.begun();
+        frame.span = (begun, operations.input().position());
         let stepped = step(
             run,
             cx,
@@ -1004,7 +1022,11 @@ pub(super) fn stream(
         if mode == Mode::Rewrite
             && let Some(text) = changed.unwrap_or_else(|| Some(String::new()))
         {
-            frame.found.edits.push(Edit { from, text, to });
+            frame.found.edits.push(Edit {
+                from: begun,
+                text,
+                to,
+            });
         }
         from = to;
     }

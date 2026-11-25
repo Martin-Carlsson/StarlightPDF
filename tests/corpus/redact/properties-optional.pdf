@@ -1,0 +1,47 @@
+%PDF-2.0
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] /D << /OFF [5 0 R] >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 100 100] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /Properties << /L1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 58 >>
+stream
+/OC /L1 BDC 0 0 1 rg 20 20 20 20 re f 60 60 20 20 re f EMC
+endstream
+endobj
+5 0 obj
+<< /Type /OCG /Name (L) /Alt (LAYERSECRET1) >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /Properties << /M1 8 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 41 >>
+stream
+/OC /M1 BDC 0 0 1 rg 60 60 20 20 re f EMC
+endstream
+endobj
+8 0 obj
+<< /Type /OCMD /OCGs [5 0 R] >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000114 00000 n 
+0000000201 00000 n 
+0000000309 00000 n 
+0000000417 00000 n 
+0000000479 00000 n 
+0000000587 00000 n 
+0000000678 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+725
+%%EOF
