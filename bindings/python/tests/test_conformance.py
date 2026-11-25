@@ -1124,7 +1124,7 @@ def streams(saved: bytes) -> list[bytes]:
         opened = head.rfind(b"obj")
         syntax = head[opened + len(b"obj") if opened >= 0 else 0 :].decode("latin-1")
         dictionary = parse_object(tokens(syntax), 0)[0]
-        # A direct Length ends the data, which may itself end in an end-of-line byte (7.3.8.1).
+        # A direct Length ends the data; else it may end in an end-of-line (7.3.8.1).
         length = entry(dictionary, "Length")
         if isinstance(length, str) and length.isdigit():
             data = data[: int(length)]
@@ -1138,7 +1138,7 @@ def streams(saved: bytes) -> list[bytes]:
 
 
 def found_text(saved: bytes, needle: bytes) -> str:
-    """Whether `needle` or its hex is in `saved`, a stream of it decoded or what it shows."""
+    """Tell if `needle` or its hex is in `saved`, a decoded stream or its text."""
     lower = needle.hex().encode()
     forms = (needle, lower, lower.upper())
     places_ = [saved]
@@ -1154,7 +1154,7 @@ def content_tokens(content: bytes) -> list[str]:
 
 
 def shown_text(content: bytes) -> bytes:
-    """The strings the operands of Tj, TJ, ' and " in `content` hold, joined (9.4.3)."""
+    """Join the strings that Tj, TJ, ' and " in `content` show (9.4.3)."""
     joined = bytearray()
     strings: list[str] = []
     for word in content_tokens(content):
