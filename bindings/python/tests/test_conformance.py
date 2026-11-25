@@ -933,6 +933,9 @@ INLINE = re.compile(
 COORDINATES = {"m": 2, "l": 2, "v": 4, "y": 4, "c": 6}
 Matrix: TypeAlias = tuple[float, float, float, float, float, float]
 IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+NUMBER = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)")
+HEX = re.compile("(?:[0-9A-Fa-f]{2})+")
+STRING = re.compile(r"\(.*\)|<[0-9A-Fa-f\0\t\n\f\r ]*>", re.DOTALL)
 
 
 class Area(NamedTuple):
@@ -1130,10 +1133,12 @@ def streams(saved: bytes) -> list[bytes]:
 
 
 def found_text(saved: bytes, needle: bytes) -> str:
-    """Whether `needle` or its hex is in `saved` or a stream of it decoded."""
+    """Whether `needle` or its hex is in `saved`, a stream of it decoded or what it shows."""
     lower = needle.hex().encode()
     forms = (needle, lower, lower.upper())
-    places_ = [saved, *streams(saved)]
+    places_ = [saved]
+    for stream in streams(saved):
+        places_ += [shown_text(stream), stream]
     present = any(form in place for place in places_ for form in forms)
     return "present" if present else "absent"
 
@@ -1141,6 +1146,20 @@ def found_text(saved: bytes, needle: bytes) -> str:
 def content_tokens(content: bytes) -> list[str]:
     """Split `content` into tokens, inline images' data left out (8.9.7)."""
     return tokens(INLINE.sub(b"ID EI", content).decode("latin-1"))
+
+
+def shown_text(content: bytes) -> bytes:
+    """The strings the operands of Tj, TJ, ' and " in `content` hold, joined (9.4.3)."""
+    joined = bytearray()
+    strings: list[str] = []
+    for word in content_tokens(content):
+        if is_operator(word):
+            if word in {"Tj", "TJ", "'", '"'}:
+                joined += b"".join(string_bytes(found) for found in strings)
+            strings.clear()
+        elif STRING.fullmatch(word):
+            strings.append(word)
+    return bytes(joined)
 
 
 def is_operator(word: str) -> bool:
@@ -1197,6 +1216,14 @@ def product(first: Matrix, second: Matrix) -> Matrix:
         me * ca + mf * cc + ce,
         me * cb + mf * cd + cf,
     )
+
+
+def real(token: str) -> float:
+    """Return the number `token` (7.3.3)."""
+    if not NUMBER.fullmatch(token):
+        msg = f"not a number: {token}"
+        raise ValueError(msg)
+    return float(token)
 
 
 def matrix_of(values: list[float]) -> Matrix:
@@ -1269,7 +1296,7 @@ def form(
     given = entry(dictionary, "Matrix")
     matrix = IDENTITY
     if isinstance(given, list):
-        matrix = matrix_of([float(text(item)) for item in given])
+        matrix = matrix_of([real(text(item)) for item in given])
     own = entry(dictionary, "Resources")
     inner = own if own is not None else resources
     content = decoded(scene.document, found)
@@ -1411,7 +1438,7 @@ def redact_given(options: list[str], expected: str) -> tuple[dict[str, str], int
         read not in REDACT_READS
         or ("index" in given and not REDACT_READS[read])
         or ("bytes" in given) != (read == "text")
-        or given.get("bytes") == ""
+        or not HEX.fullmatch(given.get("bytes", "00"))
         or ("do" in given) != (read in IMAGE_SAMPLES)
         or ("except" in given and read != "pixels")
         or (read == "render" and not code and not re.fullmatch(PIXELS, expected))

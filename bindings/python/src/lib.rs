@@ -558,9 +558,7 @@ struct Page(page::Page);
 
 #[pymethods]
 impl Page {
-    /// Adds an annotation; only `kind` `"Redact"` is implemented, a redaction mark over `quads`,
-    /// else the rectangle, `color` its interior colour, `data` `None`; `x`, `y` in points from the
-    /// top-left.
+    /// Adds an annotation; only `kind="Redact"` is implemented.
     #[pyo3(signature = (data, **keywords))]
     fn add_annotation(
         &self,

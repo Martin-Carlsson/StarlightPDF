@@ -102,6 +102,29 @@ export interface Rect {
 
 export type Boundary = "Art" | "Bleed" | "Crop" | "Media" | "Trim";
 
+export type AnnotationKind =
+  | "Ellipse"
+  | "FileAttachment"
+  | "FreeText"
+  | "Highlight"
+  | "Ink"
+  | "Line"
+  | "Link"
+  | "Media"
+  | "Model3d"
+  | "Note"
+  | "Other"
+  | "Polygon"
+  | "Polyline"
+  | "Popup"
+  | "Rectangle"
+  | "Redact"
+  | "RubberStamp"
+  | "Squiggly"
+  | "Strikeout"
+  | "Underline"
+  | "Widget";
+
 export interface Encryption {
   readonly certificate: boolean;
   readonly cipher: string;
@@ -115,7 +138,7 @@ export interface Deviation {
 export interface AnnotationInfo {
   readonly color: string;
   readonly height: number;
-  readonly kind: string;
+  readonly kind: AnnotationKind;
   readonly quads: readonly number[];
   readonly width: number;
   readonly x: number;
@@ -130,7 +153,7 @@ export interface Annotation {
 export interface AddAnnotationOptions {
   readonly color?: string;
   readonly height?: number;
-  readonly kind?: string;
+  readonly kind?: AnnotationKind;
   readonly quads?: readonly number[];
   readonly width?: number;
   readonly x?: number;

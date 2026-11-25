@@ -52,6 +52,7 @@ redact_bytes	tests/corpus/redact/text-hidden.pdf	marks=0@10,35,120,80	read=text	
 redact_bytes	tests/corpus/redact/text-embedded.pdf	marks=0@65,85,80,20	read=text	bytes=53454352455442	absent
 redact_bytes	tests/corpus/redact/text-embedded.pdf	marks=0@65,85,80,20	read=text	bytes=4b45455042	present
 redact_bytes	tests/corpus/redact/text-embedded.pdf	marks=0@65,85,80,20	read=text	bytes=5441494c42	present
+redact_bytes	tests/corpus/redact/text-embedded.pdf	marks=0@65,85,80,20	read=text	bytes=4b454550425441494c42	present
 redact_bytes	tests/corpus/redact/text-embedded.pdf	marks=0@65,85,80,20	read=render	index=0	220x200 15,95=000000 155,95=000000 105,95=ffffff
 # Type 3 glyphs: one partly under the mark, and ones that draw only outside their advance (9.6.4).
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=text	bytes=48414c465345454e	absent
@@ -68,6 +69,11 @@ redact_file	tests/corpus/redact/text-clip.pdf	marks=0@5,85,110,20	read=pixels	in
 # Text shown outside a text object, which no reader agrees where to draw (9.4.1).
 redact_bytes	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
 redact_file	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
+# An operator that cannot be read, and an XObject neither image nor form, which no reader draws, go from a redacted page (7.8.2, 8.8).
+redact_bytes	tests/corpus/redact/operator-malformed.pdf	read=text	bytes=4f50455241544f52534543524554	absent
+redact_file	tests/corpus/redact/operator-malformed.pdf	read=text	bytes=4f50455241544f52534543524554	absent
+redact_bytes	tests/corpus/redact/xobject-untyped.pdf	read=text	bytes=554e5459504544534543524554	absent
+redact_file	tests/corpus/redact/xobject-untyped.pdf	read=text	bytes=554e5459504544534543524554	absent
 # A stroked glyph reaches half the line width past its box (9.3.6).
 redact_bytes	tests/corpus/redact/text-stroked.pdf	marks=0@10,80,50,30	read=text	bytes=5354524f4b45534543524554	absent
 redact_file	tests/corpus/redact/text-stroked.pdf	marks=0@10,80,50,30	read=text	bytes=5354524f4b45534543524554	absent
@@ -119,6 +125,9 @@ redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32342e3536
 redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=5041525449414c494d41474553454352	absent
 redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=57484f4c45494d414745534543524554	absent
 redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=494d414745414c54474f4e45	absent
+# A parent tree leaf without its required Limits is still read (7.9.7).
+redact_bytes	tests/corpus/redact/structure-no-limits.pdf	read=text	bytes=4e4f4c494d495453534543524554	absent
+redact_file	tests/corpus/redact/structure-no-limits.pdf	read=text	bytes=4e4f4c494d495453534543524554	absent
 # Images (8.9): one wholly under a mark is removed, an untouched one keeps its bytes. images= counts the Do of image XObjects, inline= the BI.
 redact_bytes	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
 redact_file	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
@@ -211,6 +220,10 @@ redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	rea
 redact_file	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
 redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=504f505550534543524554	absent
 redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=annotations	index=0	Note 150,30,20,20;Note 150,160,20,20
+# So do annotations and marks written in Annots (12.5.2).
+redact_bytes	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
+redact_file	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
+redact_bytes	tests/corpus/redact/annotations-direct-marked.pdf	read=text	bytes=4c494e4b534543524554	absent
 # Each mark's area is filled with its IC, or left empty without one, and the marks are gone (12.5.6.23).
 redact_bytes	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
 redact_file	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
@@ -257,6 +270,9 @@ redact_bytes	tests/corpus/redact/pages.pdf	pages=1	read=annotations	index=1	none
 redact_bytes	tests/corpus/redact/pages.pdf	pages=0,2	read=text	bytes=5345435245545041474531	present
 redact_bytes	tests/corpus/redact/pages.pdf	pages=0,2	read=text	bytes=5345435245545041474532	absent
 redact_bytes	tests/corpus/redact/pages.pdf	pages=3	read=ok	InvalidArgument
+# A page tree node reached twice is malformed: its pages would be visited without end (7.7.3.2).
+redact_bytes	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
+redact_file	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
 # What cannot be removed fails and leaves the document unchanged: a font not embedded (9.6.2.2), an image of an unknown filter (7.4), text in a pattern cell (8.7.3); so does a cancel.
 redact_bytes	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported
 redact_file	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported

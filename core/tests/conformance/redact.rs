@@ -16,8 +16,8 @@ use crate::decode::{Image, inflate};
 use crate::render::{is_code, matched, pixels};
 use crate::{
     Case, Failure, MODES, OPEN, Object, entry, filter, hex, lookup, name, number, object_at, open,
-    parse, parse_object, reopen, resolve, round, save_bytes, sha256, source, stream_bytes, tokens,
-    twice, unhex,
+    parse, parse_object, reopen, resolve, round, save_bytes, sha256, source, stream_bytes,
+    string_bytes, tokens, twice, unhex,
 };
 
 /// The keys of an annotate case besides those of open.
@@ -257,7 +257,9 @@ impl Request {
                 self.adding().quads = text.split(',').map(real).collect::<Option<Vec<f64>>>()?;
             }
             ("bytes", Some(text)) => {
-                self.bytes = unhex(text).filter(|found| !found.is_empty())?;
+                let pairs = !text.is_empty() && text.len().is_multiple_of(2);
+                self.bytes = unhex(text)
+                    .filter(|_found| pairs && text.bytes().all(|byte| byte.is_ascii_hexdigit()))?;
             }
             ("do", Some(at)) => self.image = at.parse().ok()?,
             ("except", Some(text)) => {
@@ -377,7 +379,7 @@ impl Walk<'_> {
         if let Some(Object::Array(items)) = entry(dictionary.clone(), "Matrix") {
             let given = items
                 .into_iter()
-                .map(|item| number(Some(item)).map(|value| value.parse::<f64>().unwrap_or(0.0_f64)))
+                .map(|item| real(&crate::text(Some(item))?))
                 .collect::<Result<Vec<f64>, Failure>>()?;
             if given.len() != 6 {
                 return Err(Failure::Case(String::from("a Matrix not of 6 numbers")));
@@ -494,7 +496,7 @@ fn content_tokens(content: &[u8]) -> Vec<String> {
         }
     }
     kept.extend_from_slice(content.get(from..).unwrap_or_default());
-    tokens(&String::from_utf8_lossy(&kept))
+    tokens(&kept.into_iter().map(char::from).collect::<String>())
 }
 
 /// The decoded data of the contents `value` names, each stream followed by a newline.
@@ -539,11 +541,14 @@ fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .checked_add(from)
 }
 
-/// `present` when `needle`, its bytes or their hexadecimal form, is in `saved` or in any stream of it once decoded,
-/// else `absent`.
+/// `present` when `needle`, its bytes or their hexadecimal form, is in `saved`, in any stream of it once decoded or
+/// in the strings that stream shows, else `absent`.
 fn found(saved: &[u8], needle: &[u8]) -> Result<String, Failure> {
     let mut places = vec![saved.to_vec()];
-    places.extend(streams(saved)?);
+    for stream in streams(saved)? {
+        places.push(shown_text(&stream)?);
+        places.push(stream);
+    }
     let lower = hex(needle);
     let forms = [
         needle.to_vec(),
@@ -558,6 +563,44 @@ fn found(saved: &[u8], needle: &[u8]) -> Result<String, Failure> {
         })
     });
     Ok(String::from(if present { "present" } else { "absent" }))
+}
+
+/// The strings the operands of `Tj`, `TJ`, `'` and `"` in `content` hold, joined in order (ISO 32000-2:2020, 9.4.3).
+fn shown_text(content: &[u8]) -> Result<Vec<u8>, Failure> {
+    let mut joined = Vec::new();
+    let mut strings: Vec<String> = Vec::new();
+    for token in content_tokens(content) {
+        if !is_operator(&token) {
+            if is_string(&token) {
+                strings.push(token);
+            }
+            continue;
+        }
+        if matches!(token.as_str(), "Tj" | "TJ" | "'" | "\"") {
+            for string in &strings {
+                joined.extend(string_bytes(string)?);
+            }
+        }
+        strings.clear();
+    }
+    Ok(joined)
+}
+
+/// Whether `token` is a whole string: literal, or hexadecimal of hex digits and white space (ISO 32000-2:2020, 7.3.4).
+fn is_string(token: &str) -> bool {
+    if token.starts_with('(') {
+        return token.len() > 1 && token.ends_with(')');
+    }
+    token
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .is_some_and(|inner| {
+            inner.chars().all(|character| {
+                character.is_ascii_hexdigit()
+                    || character.is_ascii_whitespace()
+                    || character == '\0'
+            })
+        })
 }
 
 /// Whether `token` is an operator (ISO 32000-2:2020, 7.8.2).
@@ -748,6 +791,21 @@ fn painted(document: &Document, index: u32) -> Result<(Vec<(ObjectId, Object)>, 
         }
     }
     Ok((images, inline))
+}
+
+/// The number `token` (ISO 32000-2:2020, 7.3.3).
+fn real(token: &str) -> Result<f64, Failure> {
+    let digits = token.strip_prefix(['+', '-']).unwrap_or(token);
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let valid = !(whole.is_empty() && fraction.is_empty())
+        && whole
+            .bytes()
+            .chain(fraction.bytes())
+            .all(|byte| byte.is_ascii_digit());
+    valid
+        .then(|| token.parse::<f64>().ok())
+        .flatten()
+        .ok_or_else(|| Failure::Case(format!("not a number: {token}")))
 }
 
 /// The numbers of `x,y,w,h`.

@@ -1360,8 +1360,12 @@ fn string_bytes(token: &str) -> Result<Vec<u8>, Failure> {
     let mut characters = inner.chars().peekable();
     while let Some(character) = characters.next() {
         if character != '\\' {
-            let mut buffer = [0; 4];
-            bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            if let Ok(byte) = u8::try_from(character) {
+                bytes.push(byte);
+            } else {
+                let mut buffer = [0; 4];
+                bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            }
             continue;
         }
         let Some(escaped) = characters.next() else {

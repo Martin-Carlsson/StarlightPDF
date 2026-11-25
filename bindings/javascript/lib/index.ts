@@ -346,6 +346,30 @@ export interface Rect {
 /** A page boundary (ISO 32000-2:2020, 14.11.2). */
 export type Boundary = "Art" | "Bleed" | "Crop" | "Media" | "Trim";
 
+/** An annotation's kind (ISO 32000-2:2020, 12.5.6.1). */
+export type AnnotationKind =
+  | "Ellipse"
+  | "FileAttachment"
+  | "FreeText"
+  | "Highlight"
+  | "Ink"
+  | "Line"
+  | "Link"
+  | "Media"
+  | "Model3d"
+  | "Note"
+  | "Other"
+  | "Polygon"
+  | "Polyline"
+  | "Popup"
+  | "Rectangle"
+  | "Redact"
+  | "RubberStamp"
+  | "Squiggly"
+  | "Strikeout"
+  | "Underline"
+  | "Widget";
+
 /** How a document is protected. */
 export interface Encryption {
   /** Certificate-based rather than password-based. */
@@ -481,8 +505,7 @@ export interface AnnotationInfo {
   /** A redaction mark's interior colour, else the colour; empty for none. */
   readonly color: string;
   readonly height: number;
-  /** An `AnnotationKind` name, such as `Redact`. */
-  readonly kind: string;
+  readonly kind: AnnotationKind;
   /** Eight numbers per quadrilateral. */
   readonly quads: readonly number[];
   readonly width: number;
@@ -495,8 +518,8 @@ export interface AddAnnotationOptions {
   /** For `Redact`, its interior colour: `#rgb`, `#rrggbb` or `device-cmyk()`; unset or empty none. */
   readonly color?: string;
   readonly height?: number;
-  /** An `AnnotationKind` name; only `Redact` is implemented. Unset: `Note`. */
-  readonly kind?: string;
+  /** Only `Redact` is implemented. Unset: `Note`. */
+  readonly kind?: AnnotationKind;
   /** Eight numbers per quadrilateral; unset or empty: the rectangle. */
   readonly quads?: readonly number[];
   readonly width?: number;

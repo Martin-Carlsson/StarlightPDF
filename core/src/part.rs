@@ -79,6 +79,8 @@ struct Level {
 /// A document's pages in page tree order, its kids read a batch at a time (ISO 32000-2:2020,
 /// 7.7.3.2).
 pub(crate) struct Leaves {
+    /// The numbers of the nodes reached.
+    reached: BTreeSet<u32>,
     /// The kids left, the root's first.
     stack: Vec<Level>,
 }
@@ -256,11 +258,12 @@ impl Leaves {
             return Err(objects.malformed());
         };
         Ok(Self {
+            reached: BTreeSet::from([top.number]),
             stack: vec![Level::new(objects, overlay, top)?],
         })
     }
 
-    /// The next page.
+    /// The next page; a node reached twice is malformed.
     pub(crate) fn next(
         &mut self,
         objects: Objects<'_>,
@@ -277,6 +280,9 @@ impl Leaves {
             }
             if self.stack.len() >= depth {
                 return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+            }
+            if !self.reached.insert(id.number) {
+                return Err(objects.malformed());
             }
             self.stack.push(Level::new(objects, overlay, id)?);
         }

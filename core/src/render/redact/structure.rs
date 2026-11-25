@@ -338,17 +338,20 @@ fn numbers(
         for kid in kids {
             job.spend(1)?;
             let child = overlay.direct(objects, kid)?;
-            let Object::Array(limits) = overlay.entry(objects, &child, b"Limits")? else {
-                continue;
-            };
             let mut bounds = Vec::new();
-            for limit in limits {
-                bounds.push(overlay.direct(objects, limit)?);
+            if let Object::Array(limits) = overlay.entry(objects, &child, b"Limits")? {
+                for limit in limits {
+                    bounds.push(overlay.direct(objects, limit)?);
+                }
             }
-            if let [Object::Integer(low), Object::Integer(high)] = *bounds.as_slice()
-                && low <= high
-                && keys.range(low..=high).next().is_some()
-            {
+            let held = if let [Object::Integer(low), Object::Integer(high)] = *bounds.as_slice() {
+                low <= high && keys.range(low..=high).next().is_some()
+            } else {
+                // Required, yet searched without (7.9.7).
+                job.warn("7.9.7", "a number tree node lacks Limits")?;
+                true
+            };
+            if held {
                 taken.push((child, depth.saturating_add(1)));
             }
         }

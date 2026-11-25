@@ -475,7 +475,7 @@ async function perform(api, environment, file, name, args) {
     given = parse(options, new Set([...OPEN, ...family.takes, "saved", "part", ...SAVE, ...SPLIT]), family.needs);
     combine(given);
   }
-  const made = file ? await environment.file(path) : await api.Source.fromBytes(await environment.bytes(path));
+  const made = await sourceOf(api, environment, file, path);
   if (typeof made === "string") {
     return made;
   }
@@ -571,7 +571,7 @@ async function rendered(api, environment, file, args, expected) {
     ...(given.has("resolution") ? { resolution: integer(given.get("resolution")) } : {}),
     ...(given.has("usage") ? { usage: given.get("usage") ?? "" } : {}),
   };
-  const made = file ? await environment.file(path) : await api.Source.fromBytes(await environment.bytes(path));
+  const made = await sourceOf(api, environment, file, path);
   if (typeof made === "string") {
     return made;
   }
@@ -961,11 +961,11 @@ async function drawn(api, environment, args) {
   return imageRead(api, await reopen(api, await twice(api, document, new Map()), given), index, read);
 }
 
-/** The keys ±annotate± takes besides those of open. */
+/** The keys `annotate` takes besides those of open. */
 const ANNOTATE = ["color", "delete", "height", "index", "kind", "quads", "saved", "width", "x", "y"];
-/** The keys ±redact± takes besides those of open. */
+/** The keys `redact` takes besides those of open. */
 const REDACT = ["bytes", "cancel", "do", "except", "index", "marks", "mode", "pages", "read"];
-/** Each ±read=± of ±redact±, and whether it takes ±index=±. */
+/** Each `read=` of `redact`, and whether it takes `index=`. */
 const REDACT_READS = new Map([
   ["annotations", true],
   ["image_raw", false],
@@ -979,7 +979,7 @@ const REDACT_READS = new Map([
   ["text", false],
   ["thumb", true],
 ]);
-/** The reads of the ±do=±-th image. */
+/** The reads of the `do=`-th image. */
 const IMAGE_SAMPLES = new Set(["image_raw", "image_samples", "mask_samples"]);
 /** Deepest nesting of forms whose points are counted. */
 const DEPTH = 16;
@@ -993,6 +993,12 @@ const COORDINATES = new Map([
 ]);
 /** An inline image's data, from ID to EI (ISO 32000-2:2020, 8.9.7). */
 const INLINE = /(?:(?<=[\0\t\n\f\r ])|^)ID[\0\t\n\f\r ][^]*?(?<=[\0\t\n\f\r ])EI(?=[\0\t\n\f\r ]|$)/gu;
+/** A number (ISO 32000-2:2020, 7.3.3). */
+const NUMBER = /^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)$/u;
+/** Whole bytes in hexadecimal. */
+const HEX = /^(?:[0-9A-Fa-f]{2})+$/u;
+/** A whole string token: literal, or hexadecimal (ISO 32000-2:2020, 7.3.4). */
+const STRING = /^(?:\([^]*\)|<[0-9A-Fa-f\0\t\n\f\r ]*>)$/u;
 
 /**
  * @typedef {{ high: number, left: number, low: number, right: number }} Area An axis-aligned area between two x and two y.
@@ -1000,17 +1006,17 @@ const INLINE = /(?:(?<=[\0\t\n\f\r ])|^)ID[\0\t\n\f\r ][^]*?(?<=[\0\t\n\f\r ])EI
  * @typedef {{ before: import("./decode.mjs").Image | undefined, document: Document, marks: Area[], saved: Uint8Array }} Applied
  */
 
-/** Whether ±x±, ±y± is inside ±area±, not on its edge. @type {(area: Area, x: number, y: number) => boolean} */
+/** Whether `x`, `y` is inside `area`, not on its edge. @type {(area: Area, x: number, y: number) => boolean} */
 function holds(area, x, y) {
   return area.left < x && x < area.right && area.low < y && y < area.high;
 }
 
-/** Whether the unit square from ±column±, ±row± overlaps ±area±. @type {(area: Area, column: number, row: number) => boolean} */
+/** Whether the unit square from `column`, `row` overlaps `area`. @type {(area: Area, column: number, row: number) => boolean} */
 function overlaps(area, column, row) {
   return column + 1 > area.left && column < area.right && row + 1 > area.low && row < area.high;
 }
 
-/** The numbers of ±x,y,w,h±. @type {(text: string) => number[]} */
+/** The numbers of `x,y,w,h`. @type {(text: string) => number[]} */
 function places(text) {
   const values = text.split(",").map(real);
   if (values.length !== 4) {
@@ -1019,13 +1025,13 @@ function places(text) {
   return values;
 }
 
-/** The area ±x,y,w,h±. @type {(place: number[]) => Area} */
+/** The area `x,y,w,h`. @type {(place: number[]) => Area} */
 function area(place) {
   const [x = 0, y = 0, width = 0, height = 0] = place;
   return { high: y + height, left: x, low: y, right: x + width };
 }
 
-/** The page, area and colour, ±#rrggbb± or empty, of ±page@x,y,w,h[@rrggbb]±. @type {(text: string) => { colour: string, page: number, place: number[] }} */
+/** The page, area and colour, `#rrggbb` or empty, of `page@x,y,w,h[@rrggbb]`. @type {(text: string) => { colour: string, page: number, place: number[] }} */
 function mark(text) {
   const [page = "", place = "", ...colour] = text.split("@");
   if (colour.length > 1 || (colour[0] !== undefined && !/^[0-9a-f]{6}$/u.test(colour[0]))) {
@@ -1034,12 +1040,12 @@ function mark(text) {
   return { colour: colour[0] === undefined ? "" : `#${colour[0]}`, page: integer(page), place: places(place) };
 }
 
-/** ±values± rounded and comma-separated. @type {(values: readonly number[]) => string} */
+/** `values` rounded and comma-separated. @type {(values: readonly number[]) => string} */
 function joined(values) {
   return values.map(rounded).join(",");
 }
 
-/** Page ±index±'s annotations as a case gives them, and its marks' areas (ISO 32000-2:2020, 12.5.6.23). @type {(document: Document, index: number) => Promise<[string, Area[]]>} */
+/** Page `index`'s annotations as a case gives them, and its marks' areas (ISO 32000-2:2020, 12.5.6.23). @type {(document: Document, index: number) => Promise<[string, Area[]]>} */
 async function listing(document, index) {
   const items = [];
   /** @type {Area[]} */
@@ -1084,12 +1090,12 @@ async function survey(document) {
   return [shown.join("|"), marks];
 }
 
-/** The source of the file at ±path±, or the outcome when there is none. @type {(api: Api, environment: Environment, file: boolean, path: string) => Promise<Source | string>} */
+/** The source of the file at `path`, or the outcome when there is none. @type {(api: Api, environment: Environment, file: boolean, path: string) => Promise<Source | string>} */
 async function sourceOf(api, environment, file, path) {
   return file ? environment.file(path) : api.Source.fromBytes(await environment.bytes(path));
 }
 
-/** Adds and deletes as ±args± say, saving if ±saved±; page ±index=±'s annotations. @type {(api: Api, environment: Environment, file: boolean, args: string[]) => Promise<string>} */
+/** Adds and deletes as `args` say, saving if `saved`; page `index=`'s annotations. @type {(api: Api, environment: Environment, file: boolean, args: string[]) => Promise<string>} */
 async function annotate(api, environment, file, args) {
   const [path, ...options] = args;
   if (path === undefined) {
@@ -1140,7 +1146,7 @@ async function annotate(api, environment, file, args) {
   return (await listing(document, index))[0];
 }
 
-/** ±raw± decoded through the filters ±names±: none or FlateDecode (RFC 1950). @type {(names: string, raw: Uint8Array) => Uint8Array} */
+/** `raw` decoded through the filters `names`: none or FlateDecode (RFC 1950). @type {(names: string, raw: Uint8Array) => Uint8Array} */
 function unfiltered(names, raw) {
   if (names === "none") {
     return raw;
@@ -1151,7 +1157,7 @@ function unfiltered(names, raw) {
   throw new Error(`a stream filtered by ${names}`);
 }
 
-/** The data of the stream ±id±, inflated by the runner. @type {(api: Api, document: Document, id: ObjectId) => Promise<Uint8Array>} */
+/** The data of the stream `id`, inflated by the runner. @type {(api: Api, document: Document, id: ObjectId) => Promise<Uint8Array>} */
 async function decoded(api, document, id) {
   const dictionary = await objectAt(document, id);
   if (entry(dictionary, "DecodeParms") !== undefined) {
@@ -1160,7 +1166,7 @@ async function decoded(api, document, id) {
   return unfiltered(filters(entry(dictionary, "Filter")), await streamBytes(api, document, id, false));
 }
 
-/** The index of ±needle± in ±haystack± from ±from± on, or -1. @type {(haystack: Uint8Array, needle: Uint8Array, from: number) => number} */
+/** The index of `needle` in `haystack` from `from` on, or -1. @type {(haystack: Uint8Array, needle: Uint8Array, from: number) => number} */
 function find(haystack, needle, from) {
   for (let at = from; at + needle.length <= haystack.length; at += 1) {
     if (needle.every((byte, offset) => haystack[at + offset] === byte)) {
@@ -1170,12 +1176,12 @@ function find(haystack, needle, from) {
   return -1;
 }
 
-/** The bytes of ±text±, a character each. @type {(text: string) => Uint8Array} */
+/** The bytes of `text`, a character each. @type {(text: string) => Uint8Array} */
 function latin1(text) {
   return Uint8Array.from(text, (character) => character.charCodeAt(0) & 0xff);
 }
 
-/** The data of each stream of the file ±saved±, decoded by the runner (ISO 32000-2:2020, 7.3.8). @type {(saved: Uint8Array) => Uint8Array[]} */
+/** The data of each stream of the file `saved`, decoded by the runner (ISO 32000-2:2020, 7.3.8). @type {(saved: Uint8Array) => Uint8Array[]} */
 function streams(saved) {
   const decoder = new TextDecoder("latin1");
   const found = [];
@@ -1209,32 +1215,58 @@ function streams(saved) {
   return found;
 }
 
-/** ±present± when ±needle± or its hex is in ±saved± or a stream of it decoded, else ±absent±. @type {(saved: Uint8Array, needle: Uint8Array) => string} */
+/** `present` when `needle` or its hex is in `saved`, a stream of it decoded or what it shows, else `absent`. @type {(saved: Uint8Array, needle: Uint8Array) => string} */
 function foundText(saved, needle) {
   const lower = hex(needle);
   const forms = [needle, latin1(lower), latin1(lower.toUpperCase())];
-  const placesFound = [saved, ...streams(saved)];
+  const placesFound = [saved, ...streams(saved).flatMap((stream) => [shownText(stream), stream])];
   return placesFound.some((place) => forms.some((form) => find(place, form, 0) >= 0)) ? "present" : "absent";
 }
 
-/** The tokens of ±content±, inline images' data left out (ISO 32000-2:2020, 8.9.7). @type {(content: Uint8Array) => string[]} */
+/** The tokens of `content`, inline images' data left out (ISO 32000-2:2020, 8.9.7). @type {(content: Uint8Array) => string[]} */
 function contentTokens(content) {
   return tokens(new TextDecoder("latin1").decode(content).replace(INLINE, "ID EI"));
 }
 
-/** Whether ±word± is an operator (ISO 32000-2:2020, 7.8.2). @type {(word: string) => boolean} */
+/** The strings the operands of Tj, TJ, ' and " in `content` hold, joined in order (ISO 32000-2:2020, 9.4.3). @type {(content: Uint8Array) => Uint8Array} */
+function shownText(content) {
+  const joined = [];
+  /** @type {string[]} */
+  const strings = [];
+  for (const word of contentTokens(content)) {
+    if (isOperator(word)) {
+      if (["Tj", "TJ", "'", '"'].includes(word)) {
+        joined.push(...strings.flatMap((found) => [...stringBytes(found)]));
+      }
+      strings.length = 0;
+    } else if (STRING.test(word)) {
+      strings.push(word);
+    }
+  }
+  return Uint8Array.from(joined);
+}
+
+/** The number `token` (ISO 32000-2:2020, 7.3.3). @type {(token: string) => number} */
+function pdfNumber(token) {
+  if (!NUMBER.test(token)) {
+    throw new Error(`not a number: ${token}`);
+  }
+  return Number(token);
+}
+
+/** Whether `word` is an operator (ISO 32000-2:2020, 7.8.2). @type {(word: string) => boolean} */
 function isOperator(word) {
   return /^[A-Za-z'"]/u.test(word);
 }
 
-/** The page object of kid ±index± of the root page tree node. @type {(document: Document, index: number) => Promise<Obj>} */
+/** The page object of kid `index` of the root page tree node. @type {(document: Document, index: number) => Promise<Obj>} */
 async function kid(document, index) {
   const root = await objectAt(document, await document.catalog());
   const kids = await resolve(document, entry(await resolve(document, entry(root, "Pages")), "Kids"));
   return resolve(document, "array" in kids ? kids.array[index] : undefined);
 }
 
-/** The contents ±value± names, decoded, each followed by a newline. @type {(api: Api, document: Document, value: Obj | undefined) => Promise<Uint8Array>} */
+/** The contents `value` names, decoded, each followed by a newline. @type {(api: Api, document: Document, value: Obj | undefined) => Promise<Uint8Array>} */
 async function contents(api, document, value) {
   const items = value !== undefined && "array" in value ? value.array : [value];
   const parts = [];
@@ -1246,7 +1278,7 @@ async function contents(api, document, value) {
   return Uint8Array.from(parts);
 }
 
-/** The value ±key± names in ±category± of ±resources±, if any. @type {(document: Document, resources: Obj | undefined, category: string, key: string) => Promise<Obj | undefined>} */
+/** The value `key` names in `category` of `resources`, if any. @type {(document: Document, resources: Obj | undefined, category: string, key: string) => Promise<Obj | undefined>} */
 async function named(document, resources, category, key) {
   if (resources === undefined) {
     return undefined;
@@ -1255,7 +1287,7 @@ async function named(document, resources, category, key) {
   return items === undefined ? undefined : entry(await resolve(document, items), key);
 }
 
-/** The last ±count± of ±operands± as numbers. @type {(operands: string[], count: number) => number[]} */
+/** The last `count` of `operands` as numbers. @type {(operands: string[], count: number) => number[]} */
 function numbers(operands, count) {
   if (operands.length < count) {
     throw new Error(`an operator takes ${count} numbers`);
@@ -1263,7 +1295,7 @@ function numbers(operands, count) {
   return operands.slice(operands.length - count).map(real);
 }
 
-/** The product of ±first± and ±second± (ISO 32000-2:2020, 8.3.4). @type {(first: number[], second: number[]) => number[]} */
+/** The product of `first` and `second` (ISO 32000-2:2020, 8.3.4). @type {(first: number[], second: number[]) => number[]} */
 function product(first, second) {
   const [ma = 0, mb = 0, mc = 0, md = 0, me = 0, mf = 0] = first;
   const [ca = 0, cb = 0, cc = 0, cd = 0, ce = 0, cf = 0] = second;
@@ -1277,7 +1309,7 @@ function product(first, second) {
   ];
 }
 
-/** The coordinates of the path operator ±word±, a corner each of ±re±. @type {(word: string, operands: string[]) => number[]} */
+/** The coordinates of the path operator `word`, a corner each of `re`. @type {(word: string, operands: string[]) => number[]} */
 function pathPoints(word, operands) {
   const taken = COORDINATES.get(word);
   if (taken !== undefined) {
@@ -1290,7 +1322,7 @@ function pathPoints(word, operands) {
   return [];
 }
 
-/** How many points of ±coordinates±, mapped by ±ctm±, lie inside ±marks±. @type {(marks: Area[], ctm: number[], coordinates: number[]) => number} */
+/** How many points of `coordinates`, mapped by `ctm`, lie inside `marks`. @type {(marks: Area[], ctm: number[], coordinates: number[]) => number} */
 function count(marks, ctm, coordinates) {
   const [ma = 0, mb = 0, mc = 0, md = 0, me = 0, mf = 0] = ctm;
   let inside = 0;
@@ -1303,7 +1335,7 @@ function count(marks, ctm, coordinates) {
   return inside;
 }
 
-/** The points of ±content± inside the marks, through cm and forms (ISO 32000-2:2020, 8.4.4, 8.10.1). @type {(scene: Scene, content: Uint8Array, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
+/** The points of `content` inside the marks, through cm and forms (ISO 32000-2:2020, 8.4.4, 8.10.1). @type {(scene: Scene, content: Uint8Array, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
 async function walk(scene, content, resources, ctm, depth) {
   /** @type {number[][]} */
   const states = [];
@@ -1332,7 +1364,7 @@ async function walk(scene, content, resources, ctm, depth) {
   return inside;
 }
 
-/** The points inside the marks of the form ±label± names, if it is one (ISO 32000-2:2020, 8.10.1). @type {(scene: Scene, label: string, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
+/** The points inside the marks of the form `label` names, if it is one (ISO 32000-2:2020, 8.10.1). @type {(scene: Scene, label: string, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
 async function form(scene, label, resources, ctm, depth) {
   const found = await named(scene.document, resources, "XObject", label);
   if (found === undefined || !("ref" in found)) {
@@ -1348,12 +1380,15 @@ async function form(scene, label, resources, ctm, depth) {
   }
   const given = entry(dictionary, "Matrix");
   const matrix =
-    given !== undefined && "array" in given ? given.array.map((item) => real(text(item))) : [1, 0, 0, 1, 0, 0];
+    given !== undefined && "array" in given ? given.array.map((item) => pdfNumber(text(item))) : [1, 0, 0, 1, 0, 0];
+  if (matrix.length !== 6) {
+    throw new Error("a Matrix not of 6 numbers");
+  }
   const content = await decoded(scene.api, scene.document, found.ref);
   return walk(scene, content, entry(dictionary, "Resources") ?? resources, product(matrix, ctm), depth + 1);
 }
 
-/** The path points of page ±index± strictly inside ±marks± (ISO 32000-2:2020, 8.5.2.1). @type {(api: Api, document: Document, index: number, marks: Area[]) => Promise<string>} */
+/** The path points of page `index` strictly inside `marks` (ISO 32000-2:2020, 8.5.2.1). @type {(api: Api, document: Document, index: number, marks: Area[]) => Promise<string>} */
 async function points(api, document, index, marks) {
   const shown = await document.page({ index });
   if ((await shown.rotation()) !== 0) {
@@ -1376,7 +1411,7 @@ async function points(api, document, index, marks) {
   return String(await walk(scene, content, entry(pageObject, "Resources"), [1, 0, 0, 1, 0, 0], 0));
 }
 
-/** Each image a Do of page ±index± paints, and its inline images (ISO 32000-2:2020, 8.8, 8.9.7). @type {(api: Api, document: Document, index: number) => Promise<[[ObjectId, Obj][], number]>} */
+/** Each image a Do of page `index` paints, and its inline images (ISO 32000-2:2020, 8.8, 8.9.7). @type {(api: Api, document: Document, index: number) => Promise<[[ObjectId, Obj][], number]>} */
 async function paintedImages(api, document, index) {
   const pageObject = await kid(document, index);
   const resources = entry(pageObject, "Resources");
@@ -1452,7 +1487,7 @@ async function maskSamples(api, document, image, id) {
   return "none";
 }
 
-/** What ±read=± gives of the ±do=±-th image page 0 paints. @type {(api: Api, document: Document, given: Map<string, string>) => Promise<string>} */
+/** What `read=` gives of the `do=`-th image page 0 paints. @type {(api: Api, document: Document, given: Map<string, string>) => Promise<string>} */
 async function imageAfter(api, document, given) {
   const [images] = await paintedImages(api, document, 0);
   const at = integer(given.get("do"));
@@ -1469,14 +1504,14 @@ async function imageAfter(api, document, given) {
   return maskSamples(api, document, image, id);
 }
 
-/** Page ±index± rendered at the defaults and read back. @type {(api: Api, document: Document, index: number) => Promise<import("./decode.mjs").Image>} */
+/** Page `index` rendered at the defaults and read back. @type {(api: Api, document: Document, index: number) => Promise<import("./decode.mjs").Image>} */
 async function renderedImage(api, document, index) {
   const sink = await api.Sink.inMemory();
   await (await document.page({ index })).render(sink);
   return decode(await sink.takeBytes());
 }
 
-/** ±same± when the renders before and after agree outside ±excluded±, else how many pixels differ. @type {(api: Api, applied: Applied, index: number, excluded: Area[]) => Promise<string>} */
+/** `same` when the renders before and after agree outside `excluded`, else how many pixels differ. @type {(api: Api, applied: Applied, index: number, excluded: Area[]) => Promise<string>} */
 async function same(api, applied, index, excluded) {
   const [earlier, later] = [applied.before, await renderedImage(api, applied.document, index)];
   if (earlier === undefined || earlier.width !== later.width || earlier.height !== later.height) {
@@ -1497,14 +1532,14 @@ async function same(api, applied, index, excluded) {
   return differ === 0 ? "same" : `${differ} differ`;
 }
 
-/** The bytes ±document± saves to. @type {(api: Api, document: Document) => Promise<Uint8Array>} */
+/** The bytes `document` saves to. @type {(api: Api, document: Document) => Promise<Uint8Array>} */
 async function snapshot(api, document) {
   const sink = await api.Sink.inMemory();
   await save(document, sink, new Map());
   return sink.takeBytes();
 }
 
-/** A redact case's keys, checked, and the progress calls ±cancel=N± lets through. @type {(options: string[], expected: string) => [Map<string, string>, number]} */
+/** A redact case's keys, checked, and the progress calls `cancel=N` lets through. @type {(options: string[], expected: string) => [Map<string, string>, number]} */
 function redactGiven(options, expected) {
   const counts = options.filter((arg) => arg.startsWith("cancel=")).map((arg) => arg.slice("cancel=".length));
   if (!counts.every((found) => /^[0-9]+$/u.test(found))) {
@@ -1519,7 +1554,7 @@ function redactGiven(options, expected) {
     indexed === undefined ||
     (given.has("index") && !indexed) ||
     given.has("bytes") !== (read === "text") ||
-    given.get("bytes") === "" ||
+    !HEX.test(given.get("bytes") ?? "00") ||
     given.has("do") !== IMAGE_SAMPLES.has(read) ||
     (given.has("except") && read !== "pixels") ||
     (read === "render" && !code && !PIXELS.test(expected))
@@ -1529,7 +1564,7 @@ function redactGiven(options, expected) {
   return [given, counts.length === 0 ? 0 : integer(counts[0])];
 }
 
-/** What ±read=± gives of the document redacted. @type {(api: Api, applied: Applied, given: Map<string, string>, expected: string) => Promise<string>} */
+/** What `read=` gives of the document redacted. @type {(api: Api, applied: Applied, given: Map<string, string>, expected: string) => Promise<string>} */
 async function redactRead(api, applied, given, expected) {
   const { document } = applied;
   const index = given.has("index") ? integer(given.get("index")) : 0;

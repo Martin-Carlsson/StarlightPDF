@@ -767,7 +767,7 @@ fn step(
     };
     let Some(surplus) = operands.len().checked_sub(count) else {
         job.warn("7.8.2", "an operator has too few operands")?;
-        return Ok(None);
+        return Ok(Some(String::new()));
     };
     let all = matches!(name, b"sc" | b"SC" | b"scn" | b"SCN");
     let given = operands
@@ -913,8 +913,9 @@ pub(super) fn stream(
         drop(lent);
         let changed = job.tolerate(stepped, "7.8.2", "an operator or its objects are malformed")?;
         let to = operations.input().position();
+        // One unread goes: what it holds is not known.
         if mode == Mode::Rewrite
-            && let Some(Some(text)) = changed
+            && let Some(text) = changed.unwrap_or_else(|| Some(String::new()))
         {
             frame.found.edits.push(Edit { from, text, to });
         }
@@ -1003,8 +1004,17 @@ fn xobject(
         made.map_or(Copied::Out, Copied::Made)
     } else if matches!(*kind.value(), Object::Name(ref name) if name == b"Form") {
         form(run, cx, frame, &found)?
-    } else {
+    } else if matches!(*kind.value(), Object::Name(ref name) if name == b"Image") {
         Copied::Kept
+    } else {
+        job.warn("8.8", "an XObject is neither an image nor a form")?;
+        // Drawn by none, so left out where content is changed.
+        if frame.mode == Mode::Measure {
+            Copied::Kept
+        } else {
+            touched(run, frame)?;
+            Copied::Out
+        }
     };
     let entry = (&b"XObject"[..], key.to_vec());
     let copied = match copy {

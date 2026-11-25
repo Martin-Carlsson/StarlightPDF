@@ -180,21 +180,20 @@ fn annotations(
                 gone.push(popup);
             }
         }
-        read.push((item, value, id, meets && named(b"Widget")));
+        read.push((item, value, id, meets, meets && named(b"Widget")));
     }
     let mut kept = Kept {
         left: Vec::new(),
         parents,
         widgets: Vec::new(),
     };
-    for (item, value, id, widget) in read {
+    for (item, value, id, meets, widget) in read {
         let parent = match value.get(b"Parent") {
             Some(Object::Reference(found)) => Some(found),
             Some(_) | None => None,
         };
-        let removed = id.is_some_and(|found| gone.contains(&found))
-            || parent.is_some_and(|found| gone.contains(&found))
-            || (id.is_none() && widget);
+        let removed = id.map_or(meets, |found| gone.contains(&found))
+            || parent.is_some_and(|found| gone.contains(&found));
         if !removed {
             kept.left
                 .push(unlinked((job, &mut *stage), (item, value, id), &gone)?);
