@@ -422,6 +422,13 @@ fn content(
         "the page's Resources are damaged",
     )?;
     let resources = data::made(job, inherited.unwrap_or(Object::Null), None)?;
+    let place = job
+        .tolerate(
+            shared::located(job, dictionary, Some(id)),
+            "7.7.3.4",
+            "the page's Resources are damaged",
+        )?
+        .flatten();
     let contents = job.tolerate(
         display::streams(objects, reading, dictionary.get(b"Contents")),
         "7.7.3.3",
@@ -447,18 +454,20 @@ fn content(
         marks,
         measured: BTreeSet::new(),
         parents: structure::key(job, dictionary, b"StructParents")?,
+        place,
         procedures: BTreeMap::new(),
         stage,
     };
     let joined = Box::new(Joined::new(job, listing.clone()));
     let found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
-    released.add(id, &found.moved, &cx.drawn);
     let rewritten = if found.changed() {
         let again = Box::new(Joined::new(job, listing));
         Some(walk::emit(job, again, &found, cx.stage.room(job))?)
     } else {
         None
     };
+    let replaced = if rewritten.is_some() { &*items } else { &[] };
+    released.add(id, (&found, replaced), &cx.drawn);
     if !found.added.is_empty() || !found.removed.is_empty() {
         let shown = shared::appearances(job, kept)?;
         let scope = Rc::clone(&run.scope);

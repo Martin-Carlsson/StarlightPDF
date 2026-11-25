@@ -45,14 +45,16 @@ const UNFILTERED: [&[u8]; 7] = [
 
 /// What a walk needs beside the run.
 pub(super) struct Context<'cx> {
-    /// The objects content draws as they are, by number and generation.
-    pub drawn: BTreeSet<(u32, u16)>,
+    /// The objects and property lists content draws as they are.
+    pub drawn: shared::Keys,
     /// The marks.
     pub marks: &'cx Marks,
     /// The `XObject` names content that is measured draws, which no copy leaves out.
     pub measured: BTreeSet<(&'static [u8], Vec<u8>)>,
     /// The `StructParents` key of the stream walked.
     pub parents: Option<i64>,
+    /// Where the resources of the stream walked are.
+    pub place: shared::Place,
     /// Where each glyph procedure paints, in glyph space, by its stream's number and the line
     /// width and miter limit it starts with.
     pub procedures: BTreeMap<(u32, i64, i64), Ink>,
@@ -95,6 +97,8 @@ pub(super) struct Found {
     pub end: Option<u64>,
     /// Where it paints, when measured.
     pub ink: Ink,
+    /// The property lists in resources a mark touched in it and the forms it draws.
+    pub lists: Vec<shared::Key>,
     /// The marked-content levels open at its end.
     pub marked: usize,
     /// The forms and images a mark touched, their copies or none where left out, and their
@@ -364,7 +368,9 @@ fn form(
     let opened = data::open(job, &mut run.caches.streams, found)?;
     let (saved, scope) = (Box::new(run.state.clone()), Rc::clone(&run.scope));
     run.state.matrix = matrix.then(&run.state.matrix);
+    let place = cx.place;
     if !matches!(*resources.value(), Object::Null) && !resources.same(&run.scope.resources) {
+        cx.place = shared::own_place(&resources, id);
         run.scope = Rc::new(Scope::new(resources));
     }
     let inner = Rc::clone(&run.scope);
@@ -373,7 +379,7 @@ fn form(
     run.active.extend(id.map(|reached| (reached, "8.10.1")));
     let parents = mem::replace(&mut cx.parents, own_parents);
     let result = stream(run, cx, opened, frame.mode, frame.kept());
-    cx.parents = parents;
+    (cx.parents, cx.place) = (parents, place);
     if id.is_some() {
         let _ended: Option<(ObjectId, &str)> = run.active.pop();
     }
@@ -382,6 +388,7 @@ fn form(
     let walked = result?;
     frame.found.struck.extend_from_slice(&walked.struck);
     frame.found.elements.extend_from_slice(&walked.elements);
+    frame.found.lists.extend(walked.lists.iter().cloned());
     frame.found.moved.extend(walked.moved.iter().cloned());
     if walked.touched {
         touched(run, frame)?;
@@ -483,10 +490,14 @@ pub(super) fn joined(area: Option<[Fixed; 4]>, more: [Fixed; 4]) -> [Fixed; 4] {
 /// list without its words, and its `MCID` struck (14.6, 14.7.4.4, 14.9.3 to 14.9.5).
 fn ended(
     run: &Run<'_, '_>,
-    cx: &Context<'_>,
+    cx: &mut Context<'_>,
     frame: &mut Frame,
     level: Level,
 ) -> Result<(), PdfError> {
+    let listed = match (level.name.as_deref(), level.properties.as_ref()) {
+        (Some(key), Some(list)) => listed(run, cx, key, list)?,
+        _ => None,
+    };
     let named = level.name.map(|key| (&b"Properties"[..], key));
     let rewritten = level.properties.filter(|_list| level.touched);
     if level.touched
@@ -496,8 +507,10 @@ fn ended(
     }
     let Some(list) = rewritten.filter(|_list| frame.mode == Mode::Rewrite) else {
         let _new: Option<bool> = named.map(|entry| frame.found.used.insert(entry));
+        cx.drawn.extend(listed);
         return Ok(());
     };
+    frame.found.lists.extend(listed);
     let mut text = String::new();
     write_name(&mut text, &level.tag);
     text.push(' ');
@@ -516,10 +529,21 @@ fn ended(
     Ok(())
 }
 
+/// The property list `name`, `list`, of the resources walked.
+fn listed(
+    run: &Run<'_, '_>,
+    cx: &Context<'_>,
+    name: &[u8],
+    list: &Resolved,
+) -> Result<Option<shared::Key>, PdfError> {
+    let lists = data::entry(run.job, run.scope.resources.value(), b"Properties")?;
+    Ok(shared::list(&lists, cx.place, (name, list.id())))
+}
+
 /// A marked-content operator (14.6).
 fn marked(
     run: &Run<'_, '_>,
-    cx: &Context<'_>,
+    cx: &mut Context<'_>,
     frame: &mut Frame,
     name: &[u8],
     operands: &[Object],
@@ -532,6 +556,9 @@ fn marked(
         b"DP" => {
             if let Some(key) = operands.get(1).and_then(data::name) {
                 let _new: bool = frame.found.used.insert((b"Properties", key.to_vec()));
+                if let Some(list) = data::named(run.job, &run.scope, Category::Properties, key)? {
+                    cx.drawn.extend(listed(run, cx, key, &list)?);
+                }
             }
         }
         b"BDC" | b"BMC" => {

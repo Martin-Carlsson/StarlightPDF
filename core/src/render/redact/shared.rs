@@ -15,7 +15,12 @@ use crate::render::interpret::content::{self, Joined};
 use crate::render::interpret::{Run, inline};
 use crate::render::job::{self, Job};
 use crate::render::redact::stage::Stage;
+use crate::render::redact::walk::Found;
 use crate::{ErrorCode, PdfError};
+
+/// The dictionaries between an object holding a property list directly and the list, by how
+/// deep it holds it.
+const INSIDE: [&[u8]; 2] = [b"Resources", b"Properties"];
 
 /// Work of a page or of content it runs.
 const NODE_WORK: u64 = 64;
@@ -26,8 +31,18 @@ type Names = BTreeSet<Vec<u8>>;
 /// Objects by number and generation.
 pub(super) type Ids = BTreeSet<(u32, u16)>;
 
+/// An object, or a property list one holds directly: that one, how deep (0: it is the
+/// `Properties`, 1: the `Resources`, 2: it holds the `Resources`) and the list's name.
+pub(super) type Key = ((u32, u16), Option<(u8, Vec<u8>)>);
+
+/// Objects and property lists.
+pub(super) type Keys = BTreeSet<Key>;
+
+/// Where resources are: the object they are, 1 deep, or that holds them directly, 2 deep.
+pub(super) type Place = Option<(ObjectId, u8)>;
+
 /// Names of resources and the objects of those it draws.
-type Naming = BTreeMap<Vec<u8>, Ids>;
+type Naming = BTreeMap<Vec<u8>, Keys>;
 
 /// A resource's category and name.
 type Named = (&'static [u8], Vec<u8>);
@@ -38,15 +53,16 @@ type Opened<'data> = Result<Box<dyn Pull + 'data>, PdfError>;
 /// An appearance stream and its own resources, where it has them.
 pub(super) type Shown = (Resolved, Option<Resolved>);
 
-/// The forms and images a mark touched, and what still draws them.
+/// The forms, images and property lists a mark touched and the content streams replaced, and
+/// what still draws them.
 #[derive(Default)]
 pub(super) struct Released {
     /// Of them, those drawn.
-    drawn: Ids,
+    drawn: Keys,
     /// What each of them with resources of its own draws of them.
-    edges: BTreeMap<(u32, u16), Ids>,
+    edges: BTreeMap<Key, Keys>,
     /// They, soft mask groups included.
-    objects: Ids,
+    objects: Keys,
     /// The redacted pages.
     pages: Ids,
     /// The content with resources of its own already read.
@@ -54,34 +70,57 @@ pub(super) struct Released {
 }
 
 impl Released {
-    /// Adds the redacted page `page`, the originals of `moved`, which a mark touched there, and
-    /// `drawn`, what it draws as it is.
+    /// Adds the redacted page `page`, the originals of the forms and images and the property
+    /// lists a mark touched there, as `found`, its content streams `replaced`, and `drawn`,
+    /// what it draws as it is.
     pub(super) fn add(
         &mut self,
         page: ObjectId,
-        moved: &[(ObjectId, Option<ObjectId>, Vec<i64>)],
-        drawn: &Ids,
+        (found, replaced): (&Found, &[Object]),
+        drawn: &Keys,
     ) {
         let _new: bool = self.pages.insert(held(page));
-        self.objects.extend(moved.iter().map(|entry| held(entry.0)));
-        self.drawn.extend(drawn.iter().copied());
+        self.objects
+            .extend(found.moved.iter().map(|entry| key(entry.0)));
+        self.objects.extend(found.lists.iter().cloned());
+        self.objects.extend(references(replaced));
+        self.drawn.extend(drawn.iter().cloned());
     }
 
-    /// Of the objects, the names `resources` gives those, or what uses them as it is drawn.
-    fn naming(&self, job: &Job<'_>, resources: &Resolved) -> Result<Naming, PdfError> {
+    /// Of the objects, the names `resources`, at `place`, gives those, or what uses them as it
+    /// is drawn.
+    fn naming(
+        &self,
+        job: &Job<'_>,
+        (resources, place): (&Resolved, Place),
+    ) -> Result<Naming, PdfError> {
         let mut named = Naming::new();
-        for category in [&b"XObject"[..], b"ExtGState", b"Font", b"Pattern"] {
+        for category in [
+            &b"XObject"[..],
+            b"ExtGState",
+            b"Font",
+            b"Pattern",
+            b"Properties",
+        ] {
             let listed = match data::entry(job, resources.value(), category) {
                 Err(error) if error.code() == ErrorCode::Malformed => continue,
                 other => other?,
             };
             for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
                 job.spend(1)?;
-                let mut found =
+                let at = if let Object::Reference(id) = pair.1 {
+                    Some(id)
+                } else {
+                    None
+                };
+                let mut found = if category == b"Properties" {
+                    list(&listed, place, (&pair.0, at)).into_iter().collect()
+                } else {
                     match data::resolve(job, &pair.1).and_then(|given| referenced(job, &given)) {
                         Err(error) if error.code() == ErrorCode::Malformed => continue,
                         other => other?,
-                    };
+                    }
+                };
                 found.retain(|id| self.objects.contains(id));
                 if !found.is_empty() {
                     named.entry(pair.0.clone()).or_default().extend(found);
@@ -91,14 +130,14 @@ impl Released {
         Ok(named)
     }
 
-    /// Reads what `resources` names that runs content: where it has resources of its own, or
-    /// where `all`, through `resources`, each once, what it draws of the objects is drawn, or
-    /// drawn where it is drawn when one of them; and so on within them, `depth` deep; past the
-    /// deepest, all are drawn (7.8.3, 8.10.1).
+    /// Reads what `resources`, at `place`, names that runs content: where it has resources of its
+    /// own, or where `all`, through `resources`, each once, what it draws of the objects is
+    /// drawn, or drawn where it is drawn when one of them; and so on within them, `depth` deep;
+    /// past the deepest, all are drawn (7.8.3, 8.10.1).
     fn owners(
         &mut self,
         run: &mut Run<'_, '_>,
-        resources: &Resolved,
+        (resources, place): (&Resolved, Place),
         (all, depth): (bool, u8),
     ) -> Result<(), PdfError> {
         let job = run.job;
@@ -130,21 +169,26 @@ impl Released {
                         continue;
                     }
                     job.spend(NODE_WORK)?;
-                    let given = if inherits { resources } else { &own };
+                    let at = own_place(&own, owner.id());
+                    let given = if inherits {
+                        (resources, place)
+                    } else {
+                        (&own, at)
+                    };
                     let named = self.naming(job, given)?;
                     let mut found = referenced(job, &owner)?;
                     found.retain(|id| self.objects.contains(id));
                     for stream in streams.iter().filter(|_| !named.is_empty()) {
                         let opened = data::open(job, &mut run.caches.streams, stream);
-                        let scope = Rc::new(Scope::new(given.clone()));
+                        let scope = Rc::new(Scope::new(given.0.clone()));
                         found.extend(scanned(run, (opened, scope, 1), &named)?);
                     }
-                    match owner.id().map(held).filter(|id| self.objects.contains(id)) {
+                    match owner.id().map(key).filter(|id| self.objects.contains(id)) {
                         Some(id) => self.edges.entry(id).or_default().extend(found),
                         None => self.drawn.extend(found),
                     }
                     if !inherits {
-                        self.owners(run, &own, (all, depth.saturating_add(1)))?;
+                        self.owners(run, (&own, at), (all, depth.saturating_add(1)))?;
                     }
                 }
             }
@@ -152,14 +196,14 @@ impl Released {
         Ok(())
     }
 
-    /// Reads the page `node`, as staged, for what it, its annotations' appearances and content
-    /// with resources of its own draw; a page that cannot be drawn draws nothing (7.7.3.3,
-    /// 7.7.3.4, 12.5.5).
+    /// Reads the page `node`, as staged, object `id`, for what it, its annotations' appearances
+    /// and content with resources of its own draw; a page that cannot be drawn draws nothing
+    /// (7.7.3.3, 7.7.3.4, 12.5.5).
     fn page(
         &mut self,
         run: &mut Run<'_, '_>,
         node: &Object,
-        redacted: bool,
+        (id, redacted): (Option<ObjectId>, bool),
     ) -> Result<(), PdfError> {
         let job = run.job;
         let (objects, overlay) = (job.objects, &*job.overlay);
@@ -175,15 +219,28 @@ impl Released {
         )?;
         let made = data::made(job, inherited.unwrap_or(Object::Null), None)?;
         let within = Rc::new(Scope::new(made));
-        let named = self.naming(job, &within.resources)?;
+        let place = job
+            .tolerate(
+                located(job, node, id),
+                "7.7.3.4",
+                "the page's Resources are damaged",
+            )?
+            .flatten();
+        let named = self.naming(job, (&within.resources, place))?;
+        let listed = job.tolerate(
+            display::streams(objects, overlay, node.get(b"Contents")),
+            "7.7.3.3",
+            "Contents is neither a stream nor an array",
+        )?;
+        let streams = listed.unwrap_or_default();
+        for found in references(&streams) {
+            if self.objects.contains(&found) {
+                let _new: bool = self.drawn.insert(found);
+            }
+        }
         // A redacted page's content is known: what it draws as it is was added.
         if !named.is_empty() && !redacted {
-            let streams = job.tolerate(
-                display::streams(objects, overlay, node.get(b"Contents")),
-                "7.7.3.3",
-                "Contents is neither a stream nor an array",
-            )?;
-            let listing = data::made(job, Object::Array(streams.unwrap_or_default()), None)?;
+            let listing = data::made(job, Object::Array(streams), None)?;
             let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
             let found = scanned(run, (Ok(joined), Rc::clone(&within), 0), &named)?;
             self.drawn.extend(found);
@@ -192,13 +249,13 @@ impl Released {
             let (stream, own) = (&entry.0, &entry.1);
             let target = stream
                 .id()
-                .map(held)
+                .map(key)
                 .filter(|found| self.objects.contains(found));
             self.drawn.extend(target);
             let (scope, given) = match *own {
                 Some(ref resources) => (
                     Rc::new(Scope::new(resources.clone())),
-                    self.naming(job, resources)?,
+                    self.naming(job, (resources, own_place(resources, stream.id())))?,
                 ),
                 None => (Rc::clone(&within), named.clone()),
             };
@@ -208,16 +265,20 @@ impl Released {
                 self.drawn.extend(scanned(run, (opened, scope, 1), &given)?);
             }
         }
-        self.owners(run, &within.resources, (redacted, 0))?;
-        for resources in shown.iter().filter_map(|entry| entry.1.as_ref()) {
-            self.owners(run, resources, (redacted, 0))?;
+        self.owners(run, (&within.resources, place), (redacted, 0))?;
+        for entry in &shown {
+            if let Some(ref resources) = entry.1 {
+                let at = own_place(resources, entry.0.id());
+                self.owners(run, (resources, at), (redacted, 0))?;
+            }
         }
         Ok(())
     }
 
     /// Stages as null the objects that no page, template page, appearance or icon of an
-    /// annotation kept or content with resources of its own draws, reading each page once; all
-    /// are drawn where the templates cannot be read (7.3.10, 7.7.4, 12.5.5).
+    /// annotation kept or content with resources of its own draws, and removes such property
+    /// lists from what holds them, reading each page once; all are drawn where the templates
+    /// cannot be read (7.3.10, 7.7.4, 12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
@@ -234,7 +295,7 @@ impl Released {
             && let Some(id) = pages.next(objects, overlay)?
         {
             let node = stage.get(job, id)?;
-            self.page(run, &node, self.pages.contains(&held(id)))?;
+            self.page(run, &node, (Some(id), self.pages.contains(&held(id))))?;
         }
         match templates(job) {
             Ok(found) => {
@@ -242,12 +303,15 @@ impl Released {
                     if self.drawn.len() >= self.objects.len() {
                         break;
                     }
-                    let (node, redacted) = if let Object::Reference(id) = item {
-                        (stage.get(job, id)?, self.pages.contains(&held(id)))
+                    let (node, given) = if let Object::Reference(id) = item {
+                        (
+                            stage.get(job, id)?,
+                            (Some(id), self.pages.contains(&held(id))),
+                        )
                     } else {
-                        (item, false)
+                        (item, (None, false))
                     };
-                    self.page(run, &node, redacted)?;
+                    self.page(run, &node, given)?;
                 }
             }
             Err(error) if error.code() == ErrorCode::Malformed => {
@@ -256,17 +320,28 @@ impl Released {
             Err(error) => return Err(error),
         }
         job.damaged.set(damaged);
-        let mut next: Vec<(u32, u16)> = self.drawn.iter().copied().collect();
+        let mut next: Vec<Key> = self.drawn.iter().cloned().collect();
         while let Some(found) = next.pop() {
             for reached in self.edges.remove(&found).unwrap_or_default() {
                 job.spend(1)?;
-                if self.drawn.insert(reached) {
+                if self.drawn.insert(reached.clone()) {
                     next.push(reached);
                 }
             }
         }
-        for &(number, generation) in self.objects.difference(&self.drawn) {
-            stage.set(job, ObjectId { generation, number }, Object::Null)?;
+        // An object comes before the lists it holds: one made null stays so.
+        for &((number, generation), ref list) in self.objects.difference(&self.drawn) {
+            let id = ObjectId { generation, number };
+            let Some((depth, ref name)) = *list else {
+                stage.set(job, id, Object::Null)?;
+                continue;
+            };
+            job.spend(NODE_WORK)?;
+            let mut value = stage.get(job, id)?;
+            let inside = INSIDE.get(usize::from(2_u8.saturating_sub(depth))..);
+            if without(&mut value, inside.unwrap_or_default(), name) {
+                stage.set(job, id, value)?;
+            }
         }
         Ok(())
     }
@@ -410,6 +485,90 @@ pub(super) const fn held(id: ObjectId) -> (u32, u16) {
     (id.number, id.generation)
 }
 
+/// `id` as [`Keys`] hold it.
+pub(super) const fn key(id: ObjectId) -> Key {
+    (held(id), None)
+}
+
+/// The property list `name` of `lists`, the `Properties` of resources at `place`: object `id`
+/// where one, else as `lists` or `place` holds it.
+pub(super) fn list(
+    lists: &Resolved,
+    place: Place,
+    (name, id): (&[u8], Option<ObjectId>),
+) -> Option<Key> {
+    id.map(key).or_else(|| {
+        let holder = lists.id().map(|found| (found, 0)).or(place);
+        holder.map(|(found, depth)| (held(found), Some((depth, name.to_vec()))))
+    })
+}
+
+/// Where the page `node`, object `id`, has its resources or inherits them from; none where not
+/// known (7.7.3.4).
+pub(super) fn located(
+    job: &Job<'_>,
+    node: &Object,
+    id: Option<ObjectId>,
+) -> Result<Place, PdfError> {
+    let (objects, overlay) = (job.objects, &*job.overlay);
+    let (mut current, mut at) = (node.clone(), id);
+    for _ in 0..=objects.depth_limit() {
+        job.spend(1)?;
+        match current.get(b"Resources") {
+            Some(Object::Reference(found)) => {
+                if !matches!(overlay.resolve(objects, found)?, Object::Null) {
+                    return Ok(Some((found, 1)));
+                }
+            }
+            Some(Object::Null) | None => {}
+            Some(_) => return Ok(at.map(|holder| (holder, 2))),
+        }
+        let Some(Object::Reference(parent)) = current.get(b"Parent") else {
+            return Ok(None);
+        };
+        current = overlay.resolve(objects, parent)?;
+        at = Some(parent);
+    }
+    Ok(None)
+}
+
+/// Where `resources`, those of the object `owner` where its own, are.
+pub(super) fn own_place(resources: &Resolved, owner: Option<ObjectId>) -> Place {
+    resources
+        .id()
+        .map(|found| (found, 1))
+        .or_else(|| owner.map(|found| (found, 2)))
+}
+
+/// The objects `items` refer to.
+fn references(items: &[Object]) -> impl Iterator<Item = Key> + '_ {
+    items.iter().filter_map(|item| {
+        if let Object::Reference(found) = *item {
+            Some(key(found))
+        } else {
+            None
+        }
+    })
+}
+
+/// Removes the entry `name` from the dictionary `keys` lead to within `value`, each direct;
+/// whether there was one.
+fn without(value: &mut Object, keys: &[&[u8]], name: &[u8]) -> bool {
+    let Some((first, rest)) = keys.split_first() else {
+        let had = value.get(name).is_some();
+        value.set(name, None);
+        return had;
+    };
+    let Some(mut inner) = value.get(first) else {
+        return false;
+    };
+    let had = without(&mut inner, rest, name);
+    if had {
+        value.set(first, Some(inner));
+    }
+    had
+}
+
 /// Removes from `names` those that `data` names, `depth` deep, or content it runs through the
 /// same resources names: forms, Type 3 glyph procedures, soft mask groups and tiling pattern
 /// cells that have none of their own; all past the deepest (7.8.2, 8.7.3.1, 8.10.1, 9.6.4,
@@ -527,8 +686,8 @@ pub(super) fn runs(
 /// `found`, a resource, and what it uses as it is drawn: an image's soft mask and mask, the soft
 /// mask group of a graphics state or a shading pattern's, a Type 3 font's glyph procedures, which
 /// may be forms too (8.7.4.2, 8.9.6, 9.6.4, 11.6.5.2).
-pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Ids, PdfError> {
-    let mut ids: Ids = found.id().map(held).into_iter().collect();
+pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Keys, PdfError> {
+    let mut ids: Keys = found.id().map(key).into_iter().collect();
     let value = found.value();
     let group = |owner: &Object| -> Result<Resolved, PdfError> {
         let mask = data::entry(job, owner, b"SMask")?;
@@ -542,7 +701,7 @@ pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Ids, PdfErro
     ];
     for given in used {
         match given {
-            Ok(entry) => ids.extend(entry.id().map(held)),
+            Ok(entry) => ids.extend(entry.id().map(key)),
             Err(error) if error.code() != ErrorCode::Malformed => return Err(error),
             Err(_) => {}
         }
@@ -554,7 +713,7 @@ pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Ids, PdfErro
     for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
         job.spend(1)?;
         if let Object::Reference(id) = pair.1 {
-            let _new: bool = ids.insert(held(id));
+            let _new: bool = ids.insert(key(id));
         }
     }
     Ok(ids)
@@ -566,7 +725,7 @@ fn scanned(
     run: &mut Run<'_, '_>,
     (data, scope, depth): (Opened<'_>, Rc<Scope>, u8),
     named: &Naming,
-) -> Result<Ids, PdfError> {
+) -> Result<Keys, PdfError> {
     let mut left: Names = named.keys().cloned().collect();
     let outer = mem::replace(&mut run.scope, scope);
     let result = data.and_then(|opened| mentioned(run, opened, (&mut left, depth)));
@@ -578,6 +737,6 @@ fn scanned(
     Ok(named
         .iter()
         .filter(|entry| !left.contains(entry.0))
-        .flat_map(|entry| entry.1.iter().copied())
+        .flat_map(|entry| entry.1.iter().cloned())
         .collect())
 }

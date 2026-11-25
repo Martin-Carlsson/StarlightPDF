@@ -142,6 +142,20 @@ redact_file	tests/corpus/redact/resources-pattern-unnamed.pdf	marks=0@10,10,60,6
 # A hundred and fifty pages, each drawing a shared image under its mark by a name of its own: it goes.
 redact_bytes	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
 redact_file	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
+# The content a redacted page no longer draws is gone, though named elsewhere, unless another page draws it (7.3.10, 14.5).
+redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=text	bytes=504945434553454352455431	absent
+redact_file	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=text	bytes=504945434553454352455431	absent
+redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=text	bytes=534841524544434f4e54454e5431	present
+redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=pixels	index=2	same
+# A touched property list in shared resources loses its words unless kept content elsewhere names it (14.6.2, 14.9.3 to 14.9.5).
+redact_bytes	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455431	absent
+redact_file	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455431	absent
+redact_bytes	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455432	absent
+redact_file	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455432	absent
+redact_bytes	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f504b45455031	present
+redact_bytes	tests/corpus/redact/properties-inherited.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455433	absent
+redact_file	tests/corpus/redact/properties-inherited.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455433	absent
+redact_bytes	tests/corpus/redact/properties-inherited.pdf	marks=0@10,50,40,40	read=pixels	index=1	same
 # A name to what a mark removed goes from the resources of a page that never draws it (7.8.3).
 redact_bytes	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=464f524d53454352455458	absent
 redact_file	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=464f524d53454352455458	absent
