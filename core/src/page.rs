@@ -355,6 +355,11 @@ impl Page {
         }
     }
 
+    /// The page object.
+    pub(crate) const fn object(&self) -> ObjectId {
+        self.id
+    }
+
     /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay
     /// when it holds changes (ISO 32000-2:2020, 7.7.3.4, 7.9.5).
     fn rectangle(

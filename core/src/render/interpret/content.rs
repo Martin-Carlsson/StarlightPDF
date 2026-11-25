@@ -91,6 +91,9 @@ impl Pull for Ending<'_, '_, '_> {
             self.job
                 .tolerate(self.data.pull(buf), "7.8.2", "a content stream is damaged")?;
         self.ended = read.is_none();
+        if self.ended {
+            self.job.damaged.set(true);
+        }
         Ok(read.unwrap_or(0))
     }
 }
@@ -109,6 +112,9 @@ impl Pull for Joined<'_, '_> {
                 if let Some(count @ 1..) = read {
                     return Ok(count);
                 }
+                if read.is_none() {
+                    job.damaged.set(true);
+                }
                 self.current = None;
                 if let Some(slot) = buf.first_mut() {
                     *slot = b'\n';
@@ -122,6 +128,9 @@ impl Pull for Joined<'_, '_> {
             self.next = self.next.saturating_add(1);
             job.spend(1)?;
             let opened = job.tolerate(begun(job, item), "7.8.2", damaged)?;
+            if opened.is_none() {
+                job.damaged.set(true);
+            }
             self.current = opened.flatten();
         }
     }

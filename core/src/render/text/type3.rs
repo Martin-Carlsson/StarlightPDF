@@ -16,7 +16,9 @@ use crate::render::text::font;
 const PROCEDURE: u64 = 16;
 
 /// What a Type 3 font draws with.
-pub(super) struct Procedures {
+pub(crate) struct Procedures {
+    /// `FontBBox`, in glyph space.
+    bounds: Option<[Fixed; 4]>,
     /// `FontMatrix`.
     matrix: Matrix,
     /// Its resources; none: the caller's.
@@ -26,6 +28,11 @@ pub(super) struct Procedures {
 }
 
 impl Procedures {
+    /// `FontBBox`, in glyph space.
+    pub(crate) const fn bounds(&self) -> Option<[Fixed; 4]> {
+        self.bounds
+    }
+
     /// The bytes it holds.
     pub(super) fn bytes(&self) -> u64 {
         let count = u64::try_from(self.streams.len()).unwrap_or(0);
@@ -33,7 +40,7 @@ impl Procedures {
     }
 
     /// The map from glyph space to text space.
-    pub(super) const fn matrix(&self) -> Matrix {
+    pub(crate) const fn matrix(&self) -> Matrix {
         self.matrix
     }
 
@@ -69,11 +76,19 @@ impl Procedures {
         // Counted while held, as all that is resolved.
         let found = data::entry(job, owner, b"Resources")?;
         let resources = matches!(*found.value(), Object::Dictionary(_)).then_some(found);
+        let boxed = data::numbers(job, owner, b"FontBBox");
+        let bounds = job.tolerate(boxed, "9.6.4", "a Type 3 font's FontBBox is malformed")?;
         Ok(Self {
+            bounds: bounds.flatten(),
             matrix: Matrix { terms },
             resources,
             streams,
         })
+    }
+
+    /// Its resources; none: the caller's.
+    pub(crate) const fn resources(&self) -> Option<&Resolved> {
+        self.resources.as_ref()
     }
 
     /// How far up the advance `width` of glyph space goes in text space: `FontMatrix` may turn it
@@ -84,7 +99,7 @@ impl Procedures {
     }
 
     /// The procedure of `code`; none paints nothing.
-    pub(super) fn stream(&self, code: u32) -> Option<ObjectId> {
+    pub(crate) fn stream(&self, code: u32) -> Option<ObjectId> {
         let index = usize::try_from(code).ok()?;
         self.streams.get(index).copied().flatten()
     }

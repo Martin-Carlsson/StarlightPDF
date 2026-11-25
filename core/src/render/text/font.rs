@@ -44,11 +44,11 @@ const OUTLINES: u64 = 0x8_0000;
 const TABLE_SIZE: u64 = 0x1100;
 
 /// The thousand of glyph space (9.2.4).
-pub(super) const THOUSAND: Fixed = Fixed::from_i64(1000);
+pub(crate) const THOUSAND: Fixed = Fixed::from_i64(1000);
 
 /// What a render keeps of fonts.
 #[derive(Default)]
-pub(super) struct Cache {
+pub(crate) struct Cache {
     /// Outlines by program and glyph.
     outlines: BTreeMap<(u32, u32), Rc<Traced>>,
     /// Their bytes.
@@ -61,7 +61,7 @@ pub(super) struct Cache {
 
 /// A code and what the font says of it.
 #[derive(Clone, Copy)]
-pub(super) struct Code {
+pub(crate) struct Code {
     /// The advance, in the font's units.
     pub advance: Fixed,
     /// Its bytes.
@@ -135,6 +135,8 @@ struct Tables {
     composite: Option<Composite>,
     /// A program is embedded.
     embedded: bool,
+    /// Descent and ascent, in text space units of size 1 (9.8.1).
+    extent: [Fixed; 2],
     /// That program's stream.
     file: Option<ObjectId>,
     /// Each code's glyph; none is blank by its name, or a name that cannot be resolved (9.6.5.4).
@@ -151,7 +153,7 @@ struct Tables {
 
 /// An outline, in font units.
 #[derive(Default)]
-pub(super) struct Traced {
+pub(crate) struct Traced {
     /// Left, bottom, right and top of its points.
     bounds: Option<[i32; 4]>,
     /// The points.
@@ -455,12 +457,17 @@ impl Encoding {
 
 impl Font {
     /// The unit of advances, in text space: thousandths, or one for Type 3.
-    pub(super) fn divisor(&self) -> Fixed {
+    pub(crate) fn divisor(&self) -> Fixed {
         if self.tables.procedures.is_some() {
             Fixed::from_i64(1)
         } else {
             THOUSAND
         }
+    }
+
+    /// Descent and ascent, in text space units of size 1: the descriptor's, else its `FontBBox`'s.
+    pub(crate) fn extent(&self) -> [Fixed; 2] {
+        self.tables.extent
     }
 
     /// Whether the glyph of `code` marks nothing by its name.
@@ -470,7 +477,7 @@ impl Font {
     }
 
     /// Whether it needs no program or has one embedded.
-    pub(super) fn is_embedded(&self) -> bool {
+    pub(crate) fn is_embedded(&self) -> bool {
         self.tables.embedded || self.tables.procedures.is_some()
     }
 
@@ -480,20 +487,20 @@ impl Font {
     }
 
     /// Whether its codes can be read.
-    pub(super) fn is_readable(&self) -> bool {
+    pub(crate) fn is_readable(&self) -> bool {
         let composite = self.tables.composite.as_ref();
         composite.is_none_or(|found| found.cmap.is_some())
     }
 
     /// Whether it writes downwards.
-    pub(super) fn is_vertical(&self) -> bool {
+    pub(crate) fn is_vertical(&self) -> bool {
         let composite = self.tables.composite.as_ref();
         let cmap = composite.and_then(|found| found.cmap.as_ref());
         cmap.is_some_and(Cmap::is_vertical)
     }
 
     /// What the code that starts `bytes` is; `None` when it is cut short.
-    pub(super) fn next(&self, job: &Job<'_>, bytes: &[u8]) -> Result<Option<Code>, PdfError> {
+    pub(crate) fn next(&self, job: &Job<'_>, bytes: &[u8]) -> Result<Option<Code>, PdfError> {
         if let Some(composite) = self.tables.composite.as_ref() {
             return composite.code(job, bytes);
         }
@@ -518,7 +525,7 @@ impl Font {
     }
 
     /// The outline of the glyph `code` selects and its map to text space; none marks nothing.
-    pub(super) fn outline(
+    pub(crate) fn outline(
         &self,
         job: &Job<'_>,
         cache: &mut Cache,
@@ -552,7 +559,7 @@ impl Font {
     }
 
     /// Its procedures, as a Type 3 font.
-    pub(super) fn procedures(&self) -> Option<&Procedures> {
+    pub(crate) fn procedures(&self) -> Option<&Procedures> {
         self.tables.procedures.as_ref()
     }
 }
@@ -635,6 +642,11 @@ impl Traced {
         u64::try_from(total).unwrap_or(u64::MAX)
     }
 
+    /// Left, bottom, right and top of its points, in font units.
+    pub(crate) fn corners(&self) -> Option<[Fixed; 4]> {
+        self.bounds.map(|corners| corners.map(unit))
+    }
+
     /// Draws it into `path` under `matrix`.
     pub(super) fn draw(
         &self,
@@ -693,6 +705,23 @@ impl Outline for Traced {
         self.verbs.push(Verb::Move);
         self.reach(at);
     }
+}
+
+/// Descent and ascent of the font `owner` in units of 1: its descriptor's, else its `FontBBox`'s
+/// bottom and top, in thousandths (9.8.1).
+fn extent(job: &Job<'_>, owner: &Object) -> Result<[Fixed; 2], PdfError> {
+    let descriptor = data::entry(job, owner, b"FontDescriptor")?;
+    let number = |key: &[u8]| -> Result<Option<Fixed>, PdfError> {
+        let found = data::entry(job, descriptor.value(), key)?;
+        Ok(Fixed::from_object(found.value()).and_then(|value| value.over(THOUSAND)))
+    };
+    if let (Some(descent), Some(ascent)) = (number(b"Descent")?, number(b"Ascent")?) {
+        return Ok([descent, ascent]);
+    }
+    let listed = data::numbers::<4>(job, descriptor.value(), b"FontBBox");
+    let found = job.tolerate(listed, "9.8.1", "a font's FontBBox is malformed")?;
+    let [_, bottom, _, top] = found.flatten().unwrap_or_default();
+    Ok([bottom, top].map(|value| value.over(THOUSAND).unwrap_or_default()))
 }
 
 /// The program's stream the descriptor of `owner` lists, and whether as Type 1's.
@@ -830,6 +859,7 @@ fn made(
         None
     };
     let described = composed.as_ref().map_or(owner, |cid_font| cid_font.value());
+    tables.extent = extent(job, described)?;
     let listed = file(job, described)?;
     tables.embedded = listed.is_some();
     let program = if let Some(found) = listed.as_ref() {

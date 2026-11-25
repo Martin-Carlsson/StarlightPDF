@@ -149,6 +149,23 @@ pub(crate) fn draw(
     run: &mut Run<'_, '_>,
     operations: &mut content::Operations<'_>,
 ) -> Result<(), PdfError> {
+    read(run, operations, true)
+}
+
+/// Passes over the image after `BI`, drawing nothing, and leaves the content after its `EI`.
+pub(crate) fn pass(
+    run: &mut Run<'_, '_>,
+    operations: &mut content::Operations<'_>,
+) -> Result<(), PdfError> {
+    read(run, operations, false)
+}
+
+/// Reads the image after `BI`, drawing it when `drawing`, and leaves the content after its `EI`.
+fn read(
+    run: &mut Run<'_, '_>,
+    operations: &mut content::Operations<'_>,
+    drawing: bool,
+) -> Result<(), PdfError> {
     let job = run.job;
     // Setting up an image allocates as no operator does.
     job.spend(INLINE_WORK)?;
@@ -206,7 +223,7 @@ pub(crate) fn draw(
         reader,
         spend: &spend,
     };
-    let drawn = if known && run.hidden == 0 {
+    let drawn = if drawing && known && run.hidden == 0 {
         image::draw_inline(run, &dictionary, &mut data)
     } else {
         Ok(())

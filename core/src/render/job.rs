@@ -102,6 +102,8 @@ pub(crate) struct Pace<'doc> {
 pub(crate) struct Job<'doc> {
     /// The pixels of this pass: the page, then each band.
     pub area: Area,
+    /// A content stream ended at damage since this was last cleared.
+    pub damaged: Cell<bool>,
     /// The map from default user space to pixels.
     pub device: Matrix,
     /// The small objects resolved.

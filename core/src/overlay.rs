@@ -37,6 +37,8 @@ struct Edits {
     next: u32,
     /// Changed and added objects, by number.
     objects: BTreeMap<u32, (u16, Object)>,
+    /// Content was redacted, which the source's bytes still hold.
+    redacted: bool,
     /// The trailer's `Root` and `Info` entries, when changed.
     trailer: Option<Dictionary>,
 }
@@ -349,6 +351,26 @@ impl Overlay {
         self.edits().next
     }
 
+    /// Whether content was redacted, so that the source's bytes must not be kept.
+    pub(crate) fn redacted(&self) -> bool {
+        self.edits().redacted
+    }
+
+    /// A new number, generation 0, for an object [`Reading::commit`] adds; no change.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn reserve(&self) -> Result<ObjectId, PdfError> {
+        let mut edits = self.edits();
+        let number = edits.next;
+        edits.next = number
+            .checked_add(1)
+            .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, "Overlay::reserve"))?;
+        drop(edits);
+        Ok(ObjectId {
+            generation: 0,
+            number,
+        })
+    }
+
     /// Object `id`: changed or added here, else read from `objects`; null when missing or
     /// another generation.
     pub(crate) fn resolve(&self, objects: Objects<'_>, id: ObjectId) -> Result<Object, PdfError> {
@@ -414,6 +436,25 @@ impl Reading {
             changes: self.changes,
             overlay: Arc::clone(&self.overlay),
         }
+    }
+
+    /// Sets `objects` at once, as one change, and marks the overlay redacted; fails with
+    /// [`ErrorCode::StaleHandle`], setting nothing, once the overlay changed.
+    #[cfg(feature = "rendering")]
+    pub(crate) fn commit(
+        &self,
+        objects: BTreeMap<u32, (u16, Object)>,
+        operation: &'static str,
+    ) -> Result<(), PdfError> {
+        let mut edits = self.overlay.edits();
+        if edits.changes != self.changes {
+            return Err(PdfError::new(ErrorCode::StaleHandle, operation));
+        }
+        edits.changes = edits.changes.wrapping_add(1);
+        edits.objects.extend(objects);
+        edits.redacted = true;
+        drop(edits);
+        Ok(())
     }
 
     /// Fails with [`ErrorCode::StaleHandle`] once the overlay changed.
