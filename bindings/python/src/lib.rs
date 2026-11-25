@@ -14,12 +14,14 @@ use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyo3::types::{PyBytes, PyDict, PyList, PyNone, PyTuple};
+use starlightpdf::annotations::{AddAnnotationOptions, AnnotationKind, DeleteAnnotationOptions};
 use starlightpdf::arrange::{InsertBlankPageOptions, SplitBy, SplitOptions};
 use starlightpdf::compliance::Standard;
 use starlightpdf::document::{
     CreateOptions, OpenOptions, Optimization, PageOptions, SaveMode, SaveOptions,
 };
 use starlightpdf::drawing::DrawImageOptions;
+use starlightpdf::edit::ApplyRedactionsOptions;
 use starlightpdf::images::{ImageFormat, RasterFormat};
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions};
 use starlightpdf::limits::ResourcePolicyOptions;
@@ -31,8 +33,34 @@ use starlightpdf::progress::Progress;
 use starlightpdf::rendering::{ColorSpace, RenderOptions, RenderUsage};
 use starlightpdf::security::{Cipher, Permission};
 use starlightpdf::{
-    Capability, ErrorCode, Version, compliance, document, input, limits, objects, output, page,
+    Capability, ErrorCode, Version, annotations, compliance, document, input, limits, objects,
+    output, page,
 };
+
+/// Each annotation kind's name.
+const ANNOTATION_KINDS: [(AnnotationKind, &str); 21] = [
+    (AnnotationKind::Ellipse, "Ellipse"),
+    (AnnotationKind::FileAttachment, "FileAttachment"),
+    (AnnotationKind::FreeText, "FreeText"),
+    (AnnotationKind::Highlight, "Highlight"),
+    (AnnotationKind::Ink, "Ink"),
+    (AnnotationKind::Line, "Line"),
+    (AnnotationKind::Link, "Link"),
+    (AnnotationKind::Media, "Media"),
+    (AnnotationKind::Model3d, "Model3d"),
+    (AnnotationKind::Note, "Note"),
+    (AnnotationKind::Other, "Other"),
+    (AnnotationKind::Polygon, "Polygon"),
+    (AnnotationKind::Polyline, "Polyline"),
+    (AnnotationKind::Popup, "Popup"),
+    (AnnotationKind::Rectangle, "Rectangle"),
+    (AnnotationKind::Redact, "Redact"),
+    (AnnotationKind::RubberStamp, "RubberStamp"),
+    (AnnotationKind::Squiggly, "Squiggly"),
+    (AnnotationKind::Strikeout, "Strikeout"),
+    (AnnotationKind::Underline, "Underline"),
+    (AnnotationKind::Widget, "Widget"),
+];
 
 /// Each boundary's name.
 const BOUNDARIES: [(Boundary, &str); 5] = [
@@ -449,12 +477,123 @@ struct Rect {
     y: f64,
 }
 
+/// An annotation's kind, place in points from the top-left, colour and quadrilaterals.
+#[pyclass(frozen, module = "starlightpdf")]
+struct AnnotationInfo {
+    /// A redaction mark's interior colour, else the colour; empty for none.
+    #[pyo3(get)]
+    color: String,
+    /// The height.
+    #[pyo3(get)]
+    height: f64,
+    /// The kind, such as `"Redact"`.
+    #[pyo3(get)]
+    kind: &'static str,
+    /// Eight numbers per quadrilateral.
+    #[pyo3(get)]
+    quads: Vec<f64>,
+    /// The width.
+    #[pyo3(get)]
+    width: f64,
+    /// The left edge.
+    #[pyo3(get)]
+    x: f64,
+    /// The top edge.
+    #[pyo3(get)]
+    y: f64,
+}
+
+/// An annotation on a page.
+#[pyclass(frozen, module = "starlightpdf")]
+struct Annotation(annotations::Annotation);
+
+#[pymethods]
+impl Annotation {
+    /// Removes the annotation and its popup from the page.
+    fn delete(&self) -> PyResult<()> {
+        self.0
+            .delete(&DeleteAnnotationOptions::default())
+            .map_err(|error| to_py(&error))
+    }
+
+    /// Its kind, place, colour and quadrilaterals.
+    #[getter]
+    fn info(&self) -> PyResult<AnnotationInfo> {
+        let found = self.0.info().map_err(|error| to_py(&error))?;
+        Ok(AnnotationInfo {
+            color: found.color,
+            height: found.height,
+            kind: name(&ANNOTATION_KINDS, found.kind)?,
+            quads: found.quads,
+            width: found.width,
+            x: found.x,
+            y: found.y,
+        })
+    }
+}
+
+/// A page's annotations, iterated.
+#[pyclass(frozen, module = "starlightpdf")]
+struct Annotations(annotations::Annotations);
+
+#[pymethods]
+impl Annotations {
+    /// Itself.
+    const fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    /// The next annotation.
+    fn __next__(&self) -> PyResult<Option<Annotation>> {
+        self.0
+            .next()
+            .map(|found| found.map(Annotation))
+            .map_err(|error| to_py(&error))
+    }
+}
+
 /// A page.
 #[pyclass(frozen, module = "starlightpdf")]
 struct Page(page::Page);
 
 #[pymethods]
 impl Page {
+    /// Adds an annotation; only `kind` `"Redact"` is implemented, a redaction mark over `quads`,
+    /// else the rectangle, `color` its interior colour, `data` `None`; `x`, `y` in points from the
+    /// top-left.
+    #[pyo3(signature = (data, **keywords))]
+    fn add_annotation(
+        &self,
+        data: Option<&Source>,
+        keywords: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<Annotation> {
+        let given = Keywords::new(
+            keywords,
+            &["color", "height", "kind", "quads", "width", "x", "y"],
+        )?;
+        let mut options = AddAnnotationOptions::default();
+        options.color = given.get("color", String::new())?;
+        options.height = given.get("height", 0.0_f64)?;
+        options.kind = value(&ANNOTATION_KINDS, &given.get("kind", String::from("Note"))?)?;
+        options.quads = given.get("quads", Vec::new())?;
+        options.width = given.get("width", 0.0_f64)?;
+        options.x = given.get("x", 0.0_f64)?;
+        options.y = given.get("y", 0.0_f64)?;
+        self.0
+            .add_annotation(data.map(|each| &each.0), &options)
+            .map(Annotation)
+            .map_err(|error| to_py(&error))
+    }
+
+    /// The annotations, links included.
+    #[getter]
+    fn annotations(&self) -> PyResult<Annotations> {
+        self.0
+            .annotations()
+            .map(Annotations)
+            .map_err(|error| to_py(&error))
+    }
+
     /// The boundary `kind`: `"Art"`, `"Bleed"`, `"Crop"`, `"Media"` or `"Trim"`.
     #[pyo3(signature = (*, kind = "Crop"))]
     fn boundary(&self, kind: &str) -> PyResult<Rect> {
@@ -720,6 +859,24 @@ struct Document {
 
 #[pymethods]
 impl Document {
+    /// Removes the content under redaction marks, then the marks; `pages` `None` all, empty none;
+    /// `progress(done, total)` returns false to cancel.
+    #[pyo3(signature = (progress = None, *, pages = None))]
+    fn apply_redactions(
+        &self,
+        progress: Option<Py<PyAny>>,
+        pages: Option<Vec<u32>>,
+    ) -> PyResult<()> {
+        let mut options = ApplyRedactionsOptions::default();
+        options.pages = pages;
+        let callback = progress.map(Callback::new);
+        let result = self.document.apply_redactions(
+            callback.as_ref().map::<&dyn Progress, _>(|each| each),
+            &options,
+        );
+        checked(result, &[callback.as_ref()])
+    }
+
     /// The catalog's id.
     #[getter]
     fn catalog(&self) -> PyResult<ObjectId> {
@@ -1092,6 +1249,9 @@ where
 #[pymodule(name = "starlightpdf")]
 fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("PdfError", module.py().get_type::<PdfError>())?;
+    module.add_class::<Annotation>()?;
+    module.add_class::<AnnotationInfo>()?;
+    module.add_class::<Annotations>()?;
     module.add_class::<Deviation>()?;
     module.add_class::<Deviations>()?;
     module.add_class::<Document>()?;
