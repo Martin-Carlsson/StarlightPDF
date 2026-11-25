@@ -1,0 +1,69 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /Names << /Templates << /Names [(T) 10 0 R] >> >> /AcroForm << /Fields [9 0 R] >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 /MediaBox [0 0 200 200] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /XObject << /I 5 0 R /T 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 32 >>
+stream
+q 1 0 0 1 10 10 cm /I Do /T Do Q
+endstream
+endobj
+5 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 40 40] /Length 33 >>
+stream
+0 0 1 rg 1.2345 1.2345 30 30 re f
+endstream
+endobj
+6 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 40 40] /Length 33 >>
+stream
+0 1 0 rg 2.3456 2.3456 30 30 re f
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 8 0 R /Annots [9 0 R] >>
+endobj
+8 0 obj
+<< /Length 3 >>
+stream
+q Q
+endstream
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 65536 /T (B) /Rect [100 100 140 140] /P 7 0 R /MK << /I 5 0 R >> >>
+endobj
+10 0 obj
+<< /Type /Page /MediaBox [0 0 200 200] /Resources << /XObject << /T 6 0 R >> >> /Contents 11 0 R >>
+endobj
+11 0 obj
+<< /Length 5 >>
+stream
+/T Do
+endstream
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000015 00000 n 
+0000000146 00000 n 
+0000000233 00000 n 
+0000000346 00000 n 
+0000000428 00000 n 
+0000000559 00000 n 
+0000000690 00000 n 
+0000000769 00000 n 
+0000000821 00000 n 
+0000000950 00000 n 
+0000001066 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+1121
+%%EOF

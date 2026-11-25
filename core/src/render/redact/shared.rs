@@ -24,7 +24,7 @@ const NODE_WORK: u64 = 64;
 type Names = BTreeSet<Vec<u8>>;
 
 /// Objects by number and generation.
-type Ids = BTreeSet<(u32, u16)>;
+pub(super) type Ids = BTreeSet<(u32, u16)>;
 
 /// Names of resources and the objects of those it draws.
 type Naming = BTreeMap<Vec<u8>, Ids>;
@@ -152,8 +152,72 @@ impl Released {
         Ok(())
     }
 
-    /// Stages as null the objects that no page, appearance of an annotation kept or content with
-    /// resources of its own draws, reading each page once (7.3.10, 12.5.5).
+    /// Reads the page `node`, as staged, for what it, its annotations' appearances and content
+    /// with resources of its own draw; a page that cannot be drawn draws nothing (7.7.3.3,
+    /// 7.7.3.4, 12.5.5).
+    fn page(
+        &mut self,
+        run: &mut Run<'_, '_>,
+        node: &Object,
+        redacted: bool,
+    ) -> Result<(), PdfError> {
+        let job = run.job;
+        let (objects, overlay) = (job.objects, &*job.overlay);
+        job.spend(NODE_WORK)?;
+        let shown = match data::entry(job, node, b"Annots") {
+            Err(error) if error.code() == ErrorCode::Malformed => Vec::new(),
+            other => appearances(job, data::items(other?.value()).unwrap_or_default())?,
+        };
+        let inherited = job.tolerate(
+            display::inherited(objects, overlay, node, b"Resources"),
+            "7.7.3.4",
+            "the page's Resources are damaged",
+        )?;
+        let made = data::made(job, inherited.unwrap_or(Object::Null), None)?;
+        let within = Rc::new(Scope::new(made));
+        let named = self.naming(job, &within.resources)?;
+        // A redacted page's content is known: what it draws as it is was added.
+        if !named.is_empty() && !redacted {
+            let streams = job.tolerate(
+                display::streams(objects, overlay, node.get(b"Contents")),
+                "7.7.3.3",
+                "Contents is neither a stream nor an array",
+            )?;
+            let listing = data::made(job, Object::Array(streams.unwrap_or_default()), None)?;
+            let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
+            let found = scanned(run, (Ok(joined), Rc::clone(&within), 0), &named)?;
+            self.drawn.extend(found);
+        }
+        for entry in &shown {
+            let (stream, own) = (&entry.0, &entry.1);
+            let target = stream
+                .id()
+                .map(held)
+                .filter(|found| self.objects.contains(found));
+            self.drawn.extend(target);
+            let (scope, given) = match *own {
+                Some(ref resources) => (
+                    Rc::new(Scope::new(resources.clone())),
+                    self.naming(job, resources)?,
+                ),
+                None => (Rc::clone(&within), named.clone()),
+            };
+            if !given.is_empty() {
+                job.spend(NODE_WORK)?;
+                let opened = data::open(job, &mut run.caches.streams, stream);
+                self.drawn.extend(scanned(run, (opened, scope, 1), &given)?);
+            }
+        }
+        self.owners(run, &within.resources, (redacted, 0))?;
+        for resources in shown.iter().filter_map(|entry| entry.1.as_ref()) {
+            self.owners(run, resources, (redacted, 0))?;
+        }
+        Ok(())
+    }
+
+    /// Stages as null the objects that no page, template page, appearance or icon of an
+    /// annotation kept or content with resources of its own draws, reading each page once; all
+    /// are drawn where the templates cannot be read (7.3.10, 7.7.4, 12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
@@ -169,49 +233,27 @@ impl Released {
         while self.drawn.len() < self.objects.len()
             && let Some(id) = pages.next(objects, overlay)?
         {
-            job.spend(NODE_WORK)?;
             let node = stage.get(job, id)?;
-            let shown = match data::entry(job, &node, b"Annots") {
-                Err(error) if error.code() == ErrorCode::Malformed => Vec::new(),
-                other => appearances(job, data::items(other?.value()).unwrap_or_default())?,
-            };
-            // A redacted page's content is known: what it draws as it is was added.
-            let redacted = self.pages.contains(&held(id));
-            let stored = overlay.resolve(objects, id)?;
-            let inherited = display::inherited(objects, overlay, &stored, b"Resources")?;
-            let within = Rc::new(Scope::new(data::made(job, inherited, None)?));
-            let named = self.naming(job, &within.resources)?;
-            if !named.is_empty() && !redacted {
-                let streams = display::streams(objects, overlay, stored.get(b"Contents"))?;
-                let listing = data::made(job, Object::Array(streams), None)?;
-                let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
-                let found = scanned(run, (Ok(joined), Rc::clone(&within), 0), &named)?;
-                self.drawn.extend(found);
-            }
-            for entry in &shown {
-                let (stream, own) = (&entry.0, &entry.1);
-                let target = stream
-                    .id()
-                    .map(held)
-                    .filter(|found| self.objects.contains(found));
-                self.drawn.extend(target);
-                let (scope, given) = match *own {
-                    Some(ref resources) => (
-                        Rc::new(Scope::new(resources.clone())),
-                        self.naming(job, resources)?,
-                    ),
-                    None => (Rc::clone(&within), named.clone()),
-                };
-                if !given.is_empty() {
-                    job.spend(NODE_WORK)?;
-                    let opened = data::open(job, &mut run.caches.streams, stream);
-                    self.drawn.extend(scanned(run, (opened, scope, 1), &given)?);
+            self.page(run, &node, self.pages.contains(&held(id)))?;
+        }
+        match templates(job) {
+            Ok(found) => {
+                for item in found {
+                    if self.drawn.len() >= self.objects.len() {
+                        break;
+                    }
+                    let (node, redacted) = if let Object::Reference(id) = item {
+                        (stage.get(job, id)?, self.pages.contains(&held(id)))
+                    } else {
+                        (item, false)
+                    };
+                    self.page(run, &node, redacted)?;
                 }
             }
-            self.owners(run, &within.resources, (redacted, 0))?;
-            for resources in shown.iter().filter_map(|entry| entry.1.as_ref()) {
-                self.owners(run, resources, (redacted, 0))?;
+            Err(error) if error.code() == ErrorCode::Malformed => {
+                self.drawn.clone_from(&self.objects);
             }
+            Err(error) => return Err(error),
         }
         job.damaged.set(damaged);
         let mut next: Vec<(u32, u16)> = self.drawn.iter().copied().collect();
@@ -231,18 +273,21 @@ impl Released {
 }
 
 /// The appearance streams of the annotations `listed`, normal, rollover and down, of each state,
-/// and their own resources; those that cannot be read draw nothing (12.5.3, 12.5.5).
+/// and the icons of widgets, with their own resources; those that cannot be read draw nothing
+/// (12.5.3, 12.5.5, 12.5.6.19).
 pub(super) fn appearances(job: &Job<'_>, listed: &[Object]) -> Result<Vec<Shown>, PdfError> {
     let mut streams = Vec::new();
-    for item in listed {
+    let read: [(&[u8], [&[u8]; 3]); 2] =
+        [(b"AP", [b"N", b"R", b"D"]), (b"MK", [b"I", b"RI", b"IX"])];
+    for (item, (owner, keys)) in listed.iter().flat_map(|item| read.map(|pair| (item, pair))) {
         job.spend(NODE_WORK)?;
         let given = data::resolve(job, item)
-            .and_then(|annotation| data::entry(job, annotation.value(), b"AP"));
+            .and_then(|annotation| data::entry(job, annotation.value(), owner));
         let appearances = match given {
             Err(error) if error.code() == ErrorCode::Malformed => continue,
             other => other?,
         };
-        for key in [&b"N"[..], b"R", b"D"] {
+        for key in keys {
             let found = match data::entry(job, appearances.value(), key) {
                 Err(error) if error.code() == ErrorCode::Malformed => continue,
                 other => other?,
@@ -303,8 +348,36 @@ pub(super) fn drawn(
         .collect())
 }
 
+/// The template pages the catalog's `Templates` name tree holds, each node read once (7.7.4,
+/// 7.9.6).
+fn templates(job: &Job<'_>) -> Result<Vec<Object>, PdfError> {
+    let (objects, overlay) = (job.objects, &*job.overlay);
+    let trailer = Object::Dictionary(overlay.trailer(objects)?);
+    let catalog = overlay.entry(objects, &trailer, b"Root")?;
+    let names = overlay.entry(objects, &catalog, b"Names")?;
+    let mut stack = vec![overlay.entry(objects, &names, b"Templates")?];
+    let (mut seen, mut pages) = (Ids::new(), Vec::new());
+    while let Some(node) = stack.pop() {
+        job.spend(NODE_WORK)?;
+        if let Object::Array(pairs) = overlay.entry(objects, &node, b"Names")? {
+            job.spend(u64::try_from(pairs.len()).unwrap_or(u64::MAX))?;
+            pages.extend(pairs.into_iter().skip(1).step_by(2));
+        }
+        if let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? {
+            for kid in kids {
+                job.spend(1)?;
+                let (child, reached) = overlay.ended(objects, kid)?;
+                if reached.is_none_or(|id| seen.insert(held(id))) {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    Ok(pages)
+}
+
 /// `id` as [`Ids`] hold it.
-const fn held(id: ObjectId) -> (u32, u16) {
+pub(super) const fn held(id: ObjectId) -> (u32, u16) {
     (id.number, id.generation)
 }
 
@@ -385,8 +458,8 @@ fn procedures(
 }
 
 /// What runs content that `found`, a resource, names, and its streams: a form, a Type 3 font's
-/// glyph procedures, a soft mask's group or font of a graphics state, a tiling pattern
-/// (8.4.5, 8.7.3.1, 8.10.1, 9.6.4, 11.6.5.2).
+/// glyph procedures, a soft mask's group or font of a graphics state, a tiling pattern, a shading
+/// pattern's soft mask group (8.4.5, 8.7.3.1, 8.7.4.2, 8.10.1, 9.6.4, 11.6.5.2).
 pub(super) fn runs(
     job: &Job<'_>,
     found: &Resolved,
@@ -403,10 +476,17 @@ pub(super) fn runs(
     ) {
         made.push((found.clone(), vec![found.clone()]));
     }
-    let mask = data::entry(job, value, b"SMask")?;
-    let group = data::entry(job, mask.value(), b"G")?;
-    if matches!(*group.value(), Object::Stream(..)) {
-        made.push((group.clone(), vec![group]));
+    let pattern = data::entry(job, value, b"PatternType")?;
+    let mut owners = vec![found.clone()];
+    if matches!(*pattern.value(), Object::Integer(2)) {
+        owners.push(data::entry(job, value, b"ExtGState")?);
+    }
+    for owner in owners {
+        let mask = data::entry(job, owner.value(), b"SMask")?;
+        let group = data::entry(job, mask.value(), b"G")?;
+        if matches!(*group.value(), Object::Stream(..)) {
+            made.push((group.clone(), vec![group]));
+        }
     }
     let font = data::entry(job, value, b"Font")?;
     if let Some(first) = data::items(font.value()).and_then(<[Object]>::first) {
@@ -415,19 +495,21 @@ pub(super) fn runs(
     Ok(made)
 }
 
-/// `found`, a resource, and what it uses as it is drawn: an image's soft mask and mask, a graphics
-/// state's soft mask group, a pattern's shading, a Type 3 font's glyph procedures (8.7.4.3,
-/// 8.9.6, 9.6.4, 11.6.5.2).
+/// `found`, a resource, and what it uses as it is drawn: an image's soft mask and mask, the soft
+/// mask group of a graphics state or a shading pattern's, a Type 3 font's glyph procedures, which
+/// may be forms too (8.7.4.2, 8.9.6, 9.6.4, 11.6.5.2).
 pub(super) fn referenced(job: &Job<'_>, found: &Resolved) -> Result<Ids, PdfError> {
     let mut ids: Ids = found.id().map(held).into_iter().collect();
     let value = found.value();
-    let group =
-        data::entry(job, value, b"SMask").and_then(|mask| data::entry(job, mask.value(), b"G"));
+    let group = |owner: &Object| -> Result<Resolved, PdfError> {
+        let mask = data::entry(job, owner, b"SMask")?;
+        data::entry(job, mask.value(), b"G")
+    };
     let used = [
         data::entry(job, value, b"SMask"),
         data::entry(job, value, b"Mask"),
-        data::entry(job, value, b"Shading"),
-        group,
+        group(value),
+        data::entry(job, value, b"ExtGState").and_then(|parameters| group(parameters.value())),
     ];
     for given in used {
         match given {

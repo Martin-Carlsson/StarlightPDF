@@ -22,7 +22,7 @@ use crate::render::interpret::{Caches, Run};
 use crate::render::job::{Job, Pace, WORK_STEP, work_limit};
 use crate::render::plane::Planes;
 use crate::render::redact::marks::{self, Mark, Marks};
-use crate::render::redact::shared::{self, Released};
+use crate::render::redact::shared::{self, Ids, Released, held};
 use crate::render::redact::stage::Stage;
 use crate::render::redact::structure;
 use crate::render::redact::walk::{self, Context, Found, Mode};
@@ -35,9 +35,6 @@ const OPERATION: &str = "Document::apply_redactions";
 
 /// What walking a page's content found, the content rewritten when changed, and its streams.
 type Walked = (Found, Option<Vec<u8>>, Vec<Object>);
-
-/// Objects by number and generation.
-type Ids = BTreeSet<(u32, u16)>;
 
 /// What the annotations of a page become.
 struct Kept {
@@ -351,11 +348,6 @@ fn detach(
         catalog.set(b"AcroForm", Some(form));
         stage.set(job, root, catalog)
     }
-}
-
-/// `id` as [`Ids`] hold it.
-const fn held(id: ObjectId) -> (u32, u16) {
-    (id.number, id.generation)
 }
 
 /// The normalized `Rect` of `annotation`; none when it has none (7.9.5).

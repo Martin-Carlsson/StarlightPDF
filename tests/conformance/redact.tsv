@@ -124,6 +124,9 @@ redact_bytes	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	re
 redact_file	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=1	same
 redact_bytes	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=2	same
 redact_file	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=2	same
+# Or a shading pattern's soft mask group (8.7.4.2, 11.6.5.2).
+redact_bytes	tests/corpus/redact/pattern-shading-mask.pdf	marks=1@80,0,40,200	read=pixels	index=2	same
+redact_file	tests/corpus/redact/pattern-shading-mask.pdf	marks=1@80,0,40,200	read=pixels	index=2	same
 # Or with a kept annotation's appearance, through its own Resources or the page's (12.5.5).
 redact_bytes	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
 redact_file	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
@@ -145,6 +148,18 @@ redact_bytes	tests/corpus/redact/resources-mask-elsewhere.pdf	marks=0@10,130,100
 redact_file	tests/corpus/redact/resources-mask-elsewhere.pdf	marks=0@10,130,100,60	read=text	bytes=4d41534b47524f5550534543524554	absent
 redact_bytes	tests/corpus/redact/resources-form-inline.pdf	marks=0@10,130,60,60	read=text	bytes=494e4c494e454e414d45534543524554	absent
 redact_file	tests/corpus/redact/resources-form-inline.pdf	marks=0@10,130,60,60	read=text	bytes=494e4c494e454e414d45534543524554	absent
+# A page whose Contents or Parent is damaged draws nothing; nor does a form its resources list that nothing draws (7.7.3.3, 7.7.3.4, 8.10.1).
+redact_bytes	tests/corpus/redact/resources-page-damaged.pdf	marks=0@10,130,60,60	read=text	bytes=44414d41474544534543524554494d47	absent
+redact_file	tests/corpus/redact/resources-page-damaged.pdf	marks=0@10,130,60,60	read=text	bytes=44414d41474544534543524554494d47	absent
+redact_bytes	tests/corpus/redact/resources-form-listed.pdf	marks=0@10,130,60,60;1@10,130,60,60	read=text	bytes=4c49535445445345435245544f4e4531	absent
+redact_file	tests/corpus/redact/resources-form-listed.pdf	marks=0@10,130,60,60;1@10,130,60,60	read=text	bytes=4c49535445445345435245544f4e4531	absent
+redact_bytes	tests/corpus/redact/resources-form-listed.pdf	marks=0@10,130,60,60;1@10,130,60,60	read=text	bytes=4c495354454453454352455454574f32	absent
+redact_file	tests/corpus/redact/resources-form-listed.pdf	marks=0@10,130,60,60;1@10,130,60,60	read=text	bytes=4c495354454453454352455454574f32	absent
+# A button's icon and a template page draw what they name (7.7.4, 12.5.6.19).
+redact_bytes	tests/corpus/redact/resources-icons.pdf	marks=0@10,130,60,60	read=text	bytes=312e3233343520312e32333435	present
+redact_file	tests/corpus/redact/resources-icons.pdf	marks=0@10,130,60,60	read=text	bytes=312e3233343520312e32333435	present
+redact_bytes	tests/corpus/redact/resources-icons.pdf	marks=0@10,130,60,60	read=text	bytes=322e3334353620322e33343536	present
+redact_file	tests/corpus/redact/resources-icons.pdf	marks=0@10,130,60,60	read=text	bytes=322e3334353620322e33343536	present
 # Or one drawn content uses as it is drawn, here the soft mask of an image outside the mark (7.3.10, 11.6.5.3).
 redact_bytes	tests/corpus/redact/image-mask-shared.pdf	marks=0@10,130,60,60	read=pixels	index=0	same
 redact_file	tests/corpus/redact/image-mask-shared.pdf	marks=0@10,130,60,60	read=pixels	index=0	same
@@ -368,6 +383,9 @@ redact_bytes	tests/corpus/redact/pattern-reached.pdf	marks=2@40,80,60,40	read=ok
 redact_file	tests/corpus/redact/pattern-reached.pdf	marks=2@40,80,60,40	read=ok	Unsupported
 redact_bytes	tests/corpus/redact/pattern-reached.pdf	marks=3@80,80,40,40	read=ok	Unsupported
 redact_file	tests/corpus/redact/pattern-reached.pdf	marks=3@80,80,40,40	read=ok	Unsupported
+# So is a soft mask group of a shading pattern that paints under a mark (8.7.4.2, 11.6.5.2).
+redact_bytes	tests/corpus/redact/pattern-shading-mask.pdf	marks=0@80,0,40,200	read=ok	Unsupported
+redact_file	tests/corpus/redact/pattern-shading-mask.pdf	marks=0@80,0,40,200	read=ok	Unsupported
 # So is a Type 3 glyph under a mark whose procedure shows text or an image, which would stay in the font (9.6.4).
 redact_bytes	tests/corpus/redact/text-type3-procedure.pdf	marks=0@10,120,70,70	read=ok	Unsupported
 redact_file	tests/corpus/redact/text-type3-procedure.pdf	marks=0@10,120,70,70	read=ok	Unsupported
