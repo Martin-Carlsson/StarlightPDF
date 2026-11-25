@@ -37,6 +37,8 @@ type Walked = (Found, Option<Vec<u8>>, Vec<Object>);
 struct Kept {
     /// Those left.
     left: Vec<Object>,
+    /// The `StructParent` keys of those removed, and them.
+    parents: Vec<(i64, Option<ObjectId>)>,
     /// The widgets removed, and their dictionaries.
     widgets: Vec<(ObjectId, Object)>,
 }
@@ -86,6 +88,7 @@ fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kep
     let (objects, overlay) = (job.objects, &*job.overlay);
     let mut read = Vec::new();
     let mut gone = Vec::new();
+    let mut parents = Vec::new();
     for item in listed {
         let (value, id) = overlay.ended(objects, item.clone())?;
         let kind = overlay.entry(objects, &value, b"Subtype")?;
@@ -94,11 +97,8 @@ fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kep
         let meets = named(b"Redact")
             || rect.is_some_and(|found| marks::meets(marks, &marks::rectangle(found)));
         if meets {
-            if !matches!(
-                overlay.entry(objects, &value, b"StructParent")?,
-                Object::Null
-            ) {
-                structure::annotation(job)?;
+            if let Object::Integer(key) = overlay.entry(objects, &value, b"StructParent")? {
+                parents.push((key, id));
             }
             gone.extend(id);
             if let Some(Object::Reference(popup)) = value.get(b"Popup") {
@@ -109,6 +109,7 @@ fn annotations(job: &Job<'_>, marks: &[Mark], listed: Vec<Object>) -> Result<Kep
     }
     let mut kept = Kept {
         left: Vec::new(),
+        parents,
         widgets: Vec::new(),
     };
     for (item, value, id, widget) in read {
@@ -262,6 +263,7 @@ fn content(
     let mut cx = Context {
         marks,
         measured: BTreeSet::new(),
+        parents: structure::parents(job, dictionary)?,
         procedures: BTreeMap::new(),
         stage,
     };
@@ -366,6 +368,7 @@ fn redact(
     }
     let walked = content(&job, (&marks, stage), &mut dictionary)?;
     let kept = annotations(&job, &marks, listed)?;
+    structure::clear(&job, stage, &walked.0.struck, &kept.parents)?;
     for widget in kept.widgets {
         detach(&job, stage, widget)?;
     }

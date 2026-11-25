@@ -18,7 +18,7 @@ pub(super) struct Mark {
 }
 
 /// Twice the signed area of the triangle `origin`, `first`, `second`, in squared bits.
-fn cross(origin: Point, first: Point, second: Point) -> i128 {
+pub(super) fn cross(origin: Point, first: Point, second: Point) -> i128 {
     let along = |to: Point| {
         (
             i128::from(to.across.bits()).saturating_sub(i128::from(origin.across.bits())),
@@ -83,7 +83,7 @@ pub(super) fn fill(marks: &[Mark]) -> String {
 }
 
 /// The convex hull of `points`, counterclockwise, the leftmost lowest first.
-fn hull(mut points: Vec<Point>) -> Vec<Point> {
+pub(super) fn hull(mut points: Vec<Point>) -> Vec<Point> {
     points.sort_by_key(|point| (point.across, point.down));
     points.dedup_by(|first, second| first.across == second.across && first.down == second.down);
     if points.len() < 3 {
@@ -136,7 +136,7 @@ fn numbers(
 
 /// Whether the insides of the convex polygons `first` and `second` overlap: no axis of theirs
 /// separates them.
-fn overlap(first: &[Point], second: &[Point]) -> bool {
+pub(super) fn overlap(first: &[Point], second: &[Point]) -> bool {
     if first.is_empty() || second.is_empty() {
         return false;
     }

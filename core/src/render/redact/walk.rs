@@ -14,11 +14,13 @@ use crate::render::data::{self, Category, Resolved, Scope};
 use crate::render::fixed::Fixed;
 use crate::render::geometry::{Matrix, Point};
 use crate::render::interpret::state::State;
-use crate::render::interpret::{self, Run, content, inline, name_operand, numbers, state};
+use crate::render::interpret::{self, Run, content, inline, name_operand, numbers, paint, state};
 use crate::render::job;
+use crate::render::redact::cut::{self, Outline};
 use crate::render::redact::marks::{self, Mark};
 use crate::render::redact::stage::Stage;
-use crate::render::redact::{cut, glyph, image, structure};
+use crate::render::redact::structure::{self, Level};
+use crate::render::redact::{glyph, image};
 use crate::render::text::{self, Block};
 use crate::syntax::write_name;
 
@@ -42,6 +44,8 @@ pub(super) struct Context<'cx> {
     pub marks: &'cx [Mark],
     /// The `XObject` names content that is measured draws, which no copy leaves out.
     pub measured: BTreeSet<(&'static [u8], Vec<u8>)>,
+    /// The `StructParents` key of the stream walked.
+    pub parents: Option<i64>,
     /// Where each glyph procedure paints, in glyph space, by its stream's number.
     pub procedures: BTreeMap<u32, Ink>,
     /// What is changed.
@@ -87,8 +91,13 @@ pub(super) struct Found {
     pub removed: Vec<(&'static [u8], Vec<u8>)>,
     /// The `Q` without a `q`.
     pub stray: usize,
+    /// The marked content a mark touched in it and the forms it draws: `StructParents` keys and
+    /// `MCID`s.
+    pub struck: Vec<(i64, i64)>,
     /// A text object is open at its end.
     pub texting: bool,
+    /// Content a mark meets is in it, which was drawn within marked content structure keeps.
+    pub touched: bool,
     /// The resources it uses unchanged, by category and name.
     pub used: BTreeSet<(&'static [u8], Vec<u8>)>,
 }
@@ -103,16 +112,22 @@ struct Frame {
     found: Found,
     /// It runs within marked content that structure keeps.
     inside: bool,
-    /// Whether each marked-content level open keeps `ActualText`, `Alt`, `E` or an `MCID`.
-    marked: Vec<bool>,
+    /// The marked-content levels open.
+    marked: Vec<Level>,
     /// Whether it changes content or measures it.
     mode: Mode,
+    /// The path, held to be cut.
+    outline: Outline,
     /// The box of the path, in default user space.
     path: Option<[Fixed; 4]>,
+    /// Where the path's construction and clipping operators are.
+    pieces: Vec<(u64, u64)>,
     /// The resources it uses copies of, by category and name.
     replaced: Vec<(&'static [u8], Vec<u8>)>,
     /// The saved states and their clips.
     saved: Vec<(State, Option<[Fixed; 4]>)>,
+    /// Where the operator run is.
+    span: (u64, u64),
     /// The text object.
     text: Option<Block>,
 }
@@ -145,7 +160,7 @@ impl Found {
 impl Frame {
     /// Whether the content is within marked content that structure keeps.
     fn kept(&self) -> bool {
-        self.inside || self.marked.iter().any(|kept| *kept)
+        self.inside || self.marked.iter().any(Level::kept)
     }
 
     /// Whether what paints `shape`, none being anywhere, meets a mark; measuring, it is counted.
@@ -307,6 +322,7 @@ fn form(
     job.spend(job::NESTING_WORK)?;
     let matrix = data::matrix(job, owner, b"Matrix")?;
     let resources = data::entry(job, owner, b"Resources")?;
+    let own_parents = structure::parents(job, owner)?;
     let opened = data::open(job, &mut run.caches.streams, found)?;
     let (saved, scope) = (Box::new(run.state.clone()), Rc::clone(&run.scope));
     run.state.matrix = matrix.then(&run.state.matrix);
@@ -317,13 +333,19 @@ fn form(
     let shared = Rc::ptr_eq(&inner, &scope);
     run.depth = run.depth.saturating_add(1);
     run.active.extend(id.map(|reached| (reached, "8.10.1")));
+    let parents = mem::replace(&mut cx.parents, own_parents);
     let result = stream(run, cx, opened, frame.mode, frame.kept());
+    cx.parents = parents;
     if id.is_some() {
         let _ended: Option<(ObjectId, &str)> = run.active.pop();
     }
     run.depth = run.depth.saturating_sub(1);
     (run.state, run.scope) = (*saved, scope);
     let walked = result?;
+    frame.found.struck.extend_from_slice(&walked.struck);
+    if walked.touched {
+        touched(run, frame)?;
+    }
     if shared {
         frame.found.used.extend(walked.used.iter().cloned());
     }
@@ -414,36 +436,67 @@ pub(super) fn joined(area: Option<[Fixed; 4]>, more: [Fixed; 4]) -> [Fixed; 4] {
     ]
 }
 
-/// A marked-content operator: whether the level it opens keeps what structure reads (14.6).
+/// The marked-content level `level` closed: where content a mark meets is in it, its property
+/// list without its words, and its `MCID` struck (14.6, 14.7.4.4, 14.9.3 to 14.9.5).
+fn ended(
+    run: &Run<'_, '_>,
+    cx: &Context<'_>,
+    frame: &mut Frame,
+    level: Level,
+) -> Result<(), PdfError> {
+    let named = level.name.map(|key| (&b"Properties"[..], key));
+    let rewritten = level.properties.filter(|_list| level.touched);
+    if level.touched
+        && let (Some(key), Some(id)) = (cx.parents, level.id)
+    {
+        frame.found.struck.push((key, id));
+    }
+    let Some(list) = rewritten.filter(|_list| frame.mode == Mode::Rewrite) else {
+        let _new: Option<bool> = named.map(|entry| frame.found.used.insert(entry));
+        return Ok(());
+    };
+    let mut text = String::new();
+    write_name(&mut text, &level.tag);
+    text.push(' ');
+    let made = structure::stripped(&list);
+    if let Some(entry) = named {
+        frame.replaced.push(entry);
+        let name = fresh(
+            run,
+            &frame.found.added,
+            (Category::Properties, b"Properties"),
+        )?;
+        write_name(&mut text, &name);
+        frame.found.added.push((b"Properties", name, made));
+    } else {
+        made.syntax(&mut text);
+    }
+    text.push_str(" BDC");
+    let (from, to) = level.span;
+    frame.found.edits.push(Edit { from, text, to });
+    Ok(())
+}
+
+/// A marked-content operator (14.6).
 fn marked(
     run: &Run<'_, '_>,
+    cx: &Context<'_>,
     frame: &mut Frame,
     name: &[u8],
     operands: &[Object],
 ) -> Result<(), PdfError> {
-    let job = run.job;
     match name {
-        b"EMC" => {
-            if frame.marked.pop().is_none() {
-                job.warn("14.6", "EMC without BMC or BDC")?;
+        b"EMC" => match frame.marked.pop() {
+            Some(level) => ended(run, cx, frame, level)?,
+            None => run.job.warn("14.6", "EMC without BMC or BDC")?,
+        },
+        b"BDC" | b"BMC" => {
+            // As deep as states are saved.
+            if frame.marked.len() >= job::SAVED {
+                return Err(run.job.limit());
             }
-        }
-        b"BMC" => frame.marked.push(false),
-        b"BDC" => {
-            let given = operands.get(1).unwrap_or(&Object::Null);
-            let properties = if let Some(key) = data::name(given) {
-                data::named(job, &run.scope, Category::Properties, key)?
-            } else if matches!(*given, Object::Dictionary(_)) {
-                Some(data::resolve(job, given)?)
-            } else {
-                None
-            };
-            let kept = properties.is_some_and(|found| {
-                [&b"ActualText"[..], b"Alt", b"E", b"MCID"]
-                    .iter()
-                    .any(|key| !matches!(*data::stored(found.value(), key), Object::Null))
-            });
-            frame.marked.push(kept);
+            let level = structure::level(run, name, operands, frame.span)?;
+            frame.marked.push(level);
         }
         _ => {}
     }
@@ -452,11 +505,13 @@ fn marked(
 
 /// A path painted, clipped or ended: `name` (8.5.3, 8.5.4).
 fn painted(
-    run: &Run<'_, '_>,
+    run: &mut Run<'_, '_>,
     cx: &Context<'_>,
     frame: &mut Frame,
     name: &[u8],
 ) -> Result<Option<String>, PdfError> {
+    let outline = mem::take(&mut frame.outline);
+    let pieces = mem::take(&mut frame.pieces);
     let Some(area) = frame.path.take() else {
         frame.clipping = false;
         return Ok(None);
@@ -474,11 +529,29 @@ fn painted(
     if name == b"n" && frame.mode == Mode::Measure {
         return Ok(None);
     }
-    if frame.reach(cx.marks, Some(&shape)) {
-        touched(run, frame)?;
-        return cut::path(run.job);
+    if !frame.reach(cx.marks, Some(&shape)) {
+        return Ok(None);
     }
-    Ok(None)
+    if name != b"n" {
+        touched(run, frame)?;
+        let filled = !matches!(name, b"S" | b"s");
+        let paints = [
+            filled.then(|| run.state.fill.clone()),
+            stroked.then(|| run.state.stroke.clone()),
+        ];
+        for paint in paints.iter().flatten() {
+            cut::cell(run, paint)?;
+        }
+    }
+    let text = cut::path(run, cx.marks, outline, name)?;
+    for (from, to) in pieces {
+        frame.found.edits.push(Edit {
+            from,
+            text: String::new(),
+            to,
+        });
+    }
+    Ok(Some(text))
 }
 
 /// The box both `first` and `second` hold, empty where none.
@@ -513,6 +586,12 @@ fn path(
         }
         _ => Vec::new(),
     };
+    if frame.mode == Mode::Rewrite {
+        frame.outline.add(job, &run.state.matrix, name, operands)?;
+        if frame.outline.holds() {
+            frame.pieces.push(frame.span);
+        }
+    }
     for &[across, down] in given.as_chunks::<2>().0 {
         let point = run.state.matrix.apply(Point { across, down });
         frame.path = Some(joined(
@@ -651,8 +730,14 @@ fn step(
             return painted(run, cx, frame, name);
         }
         b"c" | b"h" | b"l" | b"m" | b"re" | b"v" | b"y" => path(run, frame, name, given)?,
-        b"W" | b"W*" => frame.clipping = true,
-        b"BDC" | b"BMC" | b"DP" | b"EMC" | b"MP" => marked(run, frame, name, given)?,
+        b"W" | b"W*" => {
+            frame.clipping = true;
+            frame.outline.clip(name == b"W*");
+            if frame.mode == Mode::Rewrite && frame.outline.holds() {
+                frame.pieces.push(frame.span);
+            }
+        }
+        b"BDC" | b"BMC" | b"DP" | b"EMC" | b"MP" => marked(run, cx, frame, name, given)?,
         b"BT" => frame.text = Some(text::begin(run, (None, 0))?),
         b"ET" => frame.text = None,
         b"T*" | b"Td" | b"TD" | b"Tm" => match frame.text.as_mut() {
@@ -676,12 +761,13 @@ fn step(
             let shape = frame.clip.map(marks::rectangle);
             if frame.reach(cx.marks, shape.as_deref()) {
                 touched(run, frame)?;
-                return cut::shading(job);
+                return cut::shading(run, cx.marks, name_operand(job, given, 0)?).map(Some);
             }
         }
         b"gs" => return graphics(run, cx, frame, name_operand(job, given, 0)?),
-        b"BX" | b"EX" | b"cs" | b"CS" | b"d0" | b"d1" | b"g" | b"G" | b"k" | b"K" | b"rg"
-        | b"RG" | b"sc" | b"SC" | b"scn" | b"SCN" => {}
+        b"cs" | b"CS" | b"g" | b"G" | b"k" | b"K" | b"rg" | b"RG" | b"sc" | b"SC" | b"scn"
+        | b"SCN" => paint::color(run, name, given)?,
+        b"BX" | b"EX" | b"d0" | b"d1" => {}
         _ => state::operator(run, &mut Vec::new(), name, given)?,
     }
     Ok(None)
@@ -707,9 +793,12 @@ pub(super) fn stream(
         inside,
         marked: Vec::new(),
         mode,
+        outline: Outline::default(),
         path: None,
+        pieces: Vec::new(),
         replaced: Vec::new(),
         saved: Vec::new(),
+        span: (0, 0),
         text: None,
     });
     let mut operands = Vec::new();
@@ -733,6 +822,7 @@ pub(super) fn stream(
         } else {
             None
         };
+        frame.span = (from, operations.input().position());
         let stepped = step(
             run,
             cx,
@@ -751,6 +841,10 @@ pub(super) fn stream(
         from = to;
     }
     frame.found.damaged |= job.damaged.replace(outer);
+    while let Some(level) = frame.marked.pop() {
+        ended(run, cx, &mut frame, level)?;
+    }
+    frame.found.edits.sort_by_key(|edit| edit.from);
     let replaced = mem::take(&mut frame.replaced);
     frame.found.removed = replaced
         .into_iter()
@@ -761,11 +855,15 @@ pub(super) fn stream(
     Ok(frame.found)
 }
 
-/// Content a mark meets within marked content that structure keeps.
-fn touched(run: &Run<'_, '_>, frame: &Frame) -> Result<(), PdfError> {
-    if frame.kept() {
-        return structure::touched(run.job);
+/// Content a mark meets: the marked content around it is touched, and that around the form it
+/// is in where structure keeps that.
+fn touched(run: &Run<'_, '_>, frame: &mut Frame) -> Result<(), PdfError> {
+    run.job
+        .spend(u64::try_from(frame.marked.len()).unwrap_or(u64::MAX))?;
+    for level in &mut frame.marked {
+        level.touched = true;
     }
+    frame.found.touched |= frame.inside;
     Ok(())
 }
 
