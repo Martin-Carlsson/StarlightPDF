@@ -106,6 +106,11 @@ redact_bytes	tests/corpus/redact/path-stroke.pdf	marks=0@80,10,40,180	read=rende
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_file	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=points	index=0	0
+# Overlapping marks are cut and clipped as their union: what lies between them stays (8.5.3, 8.5.4).
+redact_bytes	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=points	index=0	0
+redact_file	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=points	index=0	0
+redact_bytes	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=pixels	index=0	except=36,94,4,12;80,94,4,12	same
+redact_file	tests/corpus/redact/marks-overlap.pdf	marks=0@40,40,40,120;0@40,120,120,40	read=pixels	index=0	except=36,94,4,12;80,94,4,12	same
 # Annotations whose Rect meets a mark go with their popups, a widget with its field; a redacted page loses its thumbnail (12.3.4, 12.5.6.14, 12.7.4).
 redact_bytes	tests/corpus/redact/annotations.pdf	read=annotations	index=0	Note 10,170,20,20
 redact_file	tests/corpus/redact/annotations.pdf	read=annotations	index=0	Note 10,170,20,20
@@ -127,7 +132,7 @@ redact_file	tests/corpus/redact/mark-rect.pdf	read=annotations	index=0	none
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=render	index=0	200x200 15,95=ffffff 95,95=000000 95,135=ffffff
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=annotations	index=0	none
 redact_bytes	tests/corpus/redact/rotated.pdf	marks=0@75,45,20,100@00ff00	read=render	index=0	160x200 85,95=00ff00 125,55=000000 30,30=ffffff
-# Rendered before and after, pixels outside the marks and except= (ink a mark removed whole) are the same.
+# Rendered before and after, pixels are the same outside the marks and except=: ink a mark removes whole, and within one line width of a cut stroke, whose coverage the renderer rounds anew.
 redact_bytes	tests/corpus/redact/mark-rect.pdf	read=pixels	index=0	same
 redact_file	tests/corpus/redact/mark-rect.pdf	read=pixels	index=0	same
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=pixels	index=0	same
@@ -144,7 +149,7 @@ redact_bytes	tests/corpus/redact/image-inline.pdf	marks=0@10,10,60,60;0@95,95,23
 redact_bytes	tests/corpus/redact/image-masks.pdf	marks=0@42,15,13,50;0@112,15,13,50;0@182,15,13,50	read=pixels	index=0	except=40,20,2,40;110,20,2,40;180,20,2,40	same
 redact_bytes	tests/corpus/redact/image-dct.pdf	marks=0@142,15,43,90	read=pixels	index=0	except=140,20,2,80	same
 redact_bytes	tests/corpus/redact/path-fill.pdf	marks=0@80,10,40,180	read=pixels	index=0	same
-redact_bytes	tests/corpus/redact/path-stroke.pdf	marks=0@80,10,40,180	read=pixels	index=0	except=78,0,2,200;120,0,2,200	same
+redact_bytes	tests/corpus/redact/path-stroke.pdf	marks=0@80,10,40,180	read=pixels	index=0	except=76,0,4,200;120,0,4,200	same
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=pixels	index=0	same
 redact_bytes	tests/corpus/redact/annotations.pdf	read=pixels	index=0	same
 # pages= limits the pages: none given is all, empty is none, one past the last is InvalidArgument.

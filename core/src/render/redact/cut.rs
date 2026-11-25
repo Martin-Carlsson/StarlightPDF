@@ -44,8 +44,8 @@ enum Drawn {
 /// What walking a subpath meets, in order.
 #[derive(Clone, Copy)]
 enum Item {
-    /// It enters an area.
-    Enter,
+    /// It enters an area, or passes from the one it is in into another, at the point.
+    Enter(usize, Point),
     /// It leaves one at the point, the length along the subpath there.
     Exit(Point, Fixed),
     /// It draws outside, continuing a curve where it is a piece of one but the first.
@@ -107,7 +107,9 @@ struct Subpath {
 
 /// Walks a subpath through the areas.
 struct Walker<'areas> {
-    /// The areas: convex, counterclockwise and apart.
+    /// The one it is in, while in one.
+    area: usize,
+    /// The areas: convex and counterclockwise.
     areas: &'areas [Vec<Point>],
     /// It is in one.
     inside: bool,
@@ -284,24 +286,31 @@ impl Walker<'_> {
     /// A line from `from` to `to`, less what is in the areas; `continues` a curve, when one of
     /// its pieces.
     fn line(&mut self, from: Point, to: Point, continues: bool) {
-        let mut spans: Vec<(Fixed, Fixed)> = self
+        let mut spans: Vec<(Fixed, Fixed, usize)> = self
             .areas
             .iter()
-            .filter_map(|area| within(area, from, to))
+            .enumerate()
+            .filter_map(|(area, shape)| {
+                within(shape, from, to).map(|(low, high)| (low, high, area))
+            })
             .collect();
         spans.sort_by_key(|span| span.0);
         let long = math::hypotenuse(between(from, to));
         let mut done = Fixed::default();
-        for (low, high) in spans {
+        for (low, high, area) in spans {
             if low > done {
                 self.out(along(from, to, done), long.times(done));
                 let end = along(from, to, low);
                 self.items.push(Item::Keep(Drawn::Line(end), continues));
             }
-            if !mem::replace(&mut self.inside, true) {
-                self.items.push(Item::Enter);
+            // Past where the one it is in ends, it goes on in this one, which holds `low` too.
+            if high > done {
+                if !mem::replace(&mut self.inside, true) || self.area != area {
+                    self.items.push(Item::Enter(area, along(from, to, low)));
+                    self.area = area;
+                }
+                done = high;
             }
-            done = done.max(high);
         }
         if done < ONE {
             self.out(along(from, to, done), long.times(done));
@@ -332,26 +341,15 @@ fn along(from: Point, to: Point, part: Fixed) -> Point {
     }
 }
 
-/// The areas of `marks` in the user space `inverse` maps default user space to: convex,
-/// counterclockwise and apart, those that overlap taken as the hull of both.
+/// The areas of `marks` in the user space `inverse` maps default user space to: convex and
+/// counterclockwise.
 fn areas(marks: &[Mark], inverse: &Matrix) -> Vec<Vec<Point>> {
-    let mut found: Vec<Vec<Point>> = Vec::new();
-    for area in marks.iter().flat_map(|mark| mark.areas.iter()) {
-        let mut joined = marks::hull(area.iter().map(|point| inverse.apply(*point)).collect());
-        if joined.len() < 3 {
-            continue;
-        }
-        while let Some(at) = found
-            .iter()
-            .position(|other| marks::overlap(other, &joined))
-        {
-            let mut more = found.swap_remove(at);
-            more.append(&mut joined);
-            joined = marks::hull(more);
-        }
-        found.push(joined);
-    }
-    found
+    marks
+        .iter()
+        .flat_map(|mark| mark.areas.iter())
+        .map(|area| marks::hull(area.iter().map(|point| inverse.apply(*point)).collect()))
+        .filter(|area| area.len() >= 3)
+        .collect()
 }
 
 /// The vector from `from` to `to`.
@@ -377,8 +375,9 @@ pub(super) fn cell(run: &mut Run<'_, '_>, paint: &Fill) -> Result<(), PdfError> 
     Ok(())
 }
 
-/// Appends `subpaths` to fill or clip: where one passes through an area, that part becomes the
-/// line between where it enters and leaves, which changes what is inside only there (8.5.3.3).
+/// Appends `subpaths` to fill or clip: where one passes through areas, that part becomes lines
+/// within them from where it enters, through a point each two it passes between share, to where
+/// it leaves, which changes what is inside only there (8.5.3.3).
 fn chorded(
     job: &Job<'_>,
     out: &mut String,
@@ -391,9 +390,26 @@ fn chorded(
             .iter()
             .position(|item| matches!(*item, Item::Exit(..)))
         else {
-            // Inside throughout, or never.
-            if !items.iter().any(|item| matches!(*item, Item::Enter)) {
+            let entered: Vec<(usize, Point)> = items
+                .iter()
+                .filter_map(|item| match *item {
+                    Item::Enter(area, at) => Some((area, at)),
+                    Item::Exit(..) | Item::Keep(..) => None,
+                })
+                .collect();
+            if entered.is_empty() {
                 written(out, subpath);
+                continue;
+            }
+            // Inside throughout: around through where it passes between areas.
+            let corners: Vec<Point> = entered
+                .iter()
+                .zip(entered.iter().cycle().skip(1))
+                .filter(|&(&(area, _), &(next, _))| area != next)
+                .map(|(&(area, _), &(next, at))| shared(areas, area, next).unwrap_or(at))
+                .collect();
+            if !corners.is_empty() {
+                polygon(out, &corners);
             }
             continue;
         };
@@ -402,10 +418,15 @@ fn chorded(
             continue;
         };
         point(out, start, "m");
-        let mut inside = false;
+        let (mut inside, mut current) = (false, 0);
         for item in rest.iter().chain(after).chain([&Item::Exit(start, ONE)]) {
             match *item {
-                Item::Enter => inside = true,
+                Item::Enter(area, at) => {
+                    if mem::replace(&mut inside, true) && area != current {
+                        point(out, shared(areas, current, area).unwrap_or(at), "l");
+                    }
+                    current = area;
+                }
                 Item::Exit(at, _) => {
                     if mem::take(&mut inside) {
                         point(out, at, "l");
@@ -482,6 +503,11 @@ fn excluded(out: &mut String, areas: &[Vec<Point>], inverse: &Matrix) {
         polygon(out, area);
         out.push_str(" W* n");
     }
+}
+
+/// Whether `point` is inside `area`, not on its edge.
+fn holds(area: &[Point], point: Point) -> bool {
+    sides(area).all(|(corner, next)| marks::cross(corner, next, point) > 0)
 }
 
 /// What paints `outline` as `name` does, cut where the areas of `marks` are and clipped out of
@@ -569,7 +595,7 @@ fn pieces(items: &[Item], subpath: &Subpath, dashed: bool) -> Vec<Piece> {
     };
     let mut made = Vec::new();
     let mut walk = |item: &Item, open: &mut Option<Piece>| match *item {
-        Item::Enter => made.extend(open.take().filter(|found| !found.drawn.is_empty())),
+        Item::Enter(..) => made.extend(open.take().filter(|found| !found.drawn.is_empty())),
         Item::Exit(at, length) => *open = Some(begun(at, length)),
         Item::Keep(step, continues) => {
             if let Some(found) = open.as_mut() {
@@ -577,11 +603,12 @@ fn pieces(items: &[Item], subpath: &Subpath, dashed: bool) -> Vec<Piece> {
             }
         }
     };
+    let ending = Item::Enter(0, subpath.start.user);
     for item in before {
         walk(item, &mut piece);
     }
     if dashed && subpath.closed && piece.is_some() {
-        walk(&Item::Enter, &mut piece);
+        walk(&ending, &mut piece);
         walk(
             &Item::Exit(subpath.start.user, Fixed::default()),
             &mut piece,
@@ -590,7 +617,7 @@ fn pieces(items: &[Item], subpath: &Subpath, dashed: bool) -> Vec<Piece> {
     for item in after {
         walk(item, &mut piece);
     }
-    walk(&Item::Enter, &mut piece);
+    walk(&ending, &mut piece);
     made
 }
 
@@ -625,6 +652,32 @@ pub(super) fn shading(run: &Run<'_, '_>, marks: &[Mark], key: &[u8]) -> Result<S
     write_name(&mut out, key);
     out.push_str(" sh Q");
     Ok(out)
+}
+
+/// A point that areas `first` and `second` share, none inside another when one is: a corner of
+/// where they overlap (Sutherland-Hodgman); none where rounding parts them.
+fn shared(areas: &[Vec<Point>], first: usize, second: usize) -> Option<Point> {
+    let (mut kept, other) = (areas.get(first)?.clone(), areas.get(second)?);
+    for (corner, next) in sides(other) {
+        let mut clipped = Vec::new();
+        for (start, end) in sides(&kept) {
+            let (from, to) = (
+                marks::cross(corner, next, start),
+                marks::cross(corner, next, end),
+            );
+            if from >= 0 {
+                clipped.push(start);
+            }
+            if (from < 0) != (to < 0) {
+                clipped.push(along(start, end, crossing(from, to)));
+            }
+        }
+        kept = clipped;
+    }
+    kept.iter()
+        .copied()
+        .find(|point| !areas.iter().any(|area| holds(area, *point)))
+        .or_else(|| kept.first().copied())
 }
 
 /// Whether the content of `found`, a pattern or a form, shows text or images, it `depth` forms
@@ -670,6 +723,14 @@ fn shows(run: &mut Run<'_, '_>, found: &Resolved, depth: u8) -> Result<bool, Pdf
             _ => {}
         }
     }
+}
+
+/// Each side of `polygon`: a corner and the next.
+fn sides(polygon: &[Point]) -> impl Iterator<Item = (Point, Point)> {
+    polygon
+        .iter()
+        .copied()
+        .zip(polygon.iter().skip(1).chain(polygon.first()).copied())
 }
 
 /// Piece `index` of `count` of `curve`, whose points are `corners`, as its own four points.
@@ -727,7 +788,7 @@ fn stroked(
     let (mut whole, mut apart) = (String::new(), String::new());
     for subpath in subpaths {
         let items = walked(job, areas, subpath, subpath.closed)?;
-        if !items.iter().any(|item| matches!(*item, Item::Enter)) {
+        if !items.iter().any(|item| matches!(*item, Item::Enter(..))) {
             written(&mut whole, subpath);
             continue;
         }
@@ -769,6 +830,7 @@ fn walked(
     closing: bool,
 ) -> Result<Vec<Item>, PdfError> {
     let mut walker = Walker {
+        area: 0,
         areas,
         inside: false,
         items: Vec::new(),
@@ -794,12 +856,11 @@ fn walked(
 /// The part of the line from `from` to `to` in `area`, from 0 to 1 along it; none where it only
 /// touches it.
 fn within(area: &[Point], from: Point, to: Point) -> Option<(Fixed, Fixed)> {
-    let sides = || area.iter().zip(area.iter().skip(1).chain(area.first()));
     let (mut low, mut high) = (Fixed::default(), ONE);
-    for (corner, next) in sides() {
+    for (corner, next) in sides(area) {
         let (start, end) = (
-            marks::cross(*corner, *next, from),
-            marks::cross(*corner, *next, to),
+            marks::cross(corner, next, from),
+            marks::cross(corner, next, to),
         );
         match (start < 0, end < 0) {
             (true, true) => return None,
@@ -812,9 +873,7 @@ fn within(area: &[Point], from: Point, to: Point) -> Option<(Fixed, Fixed)> {
         return None;
     }
     let middle = along(from, to, low.plus(high.minus(low).times(HALF)));
-    sides()
-        .all(|(corner, next)| marks::cross(*corner, *next, middle) > 0)
-        .then_some((low, high))
+    holds(area, middle).then_some((low, high))
 }
 
 /// Appends `subpath` as it was.
