@@ -39,9 +39,9 @@ const SMALL_SPLIT_BOUND: usize = 104_857_600;
 /// 78,936.
 const PACKED_KIDS_BOUND: usize = 98_304;
 
-/// Most bytes opening each file, marking a page and applying the mark may hold allocated at once;
-/// measured 48,460.
-const REDACT_BOUND: usize = 0x1_0000;
+/// Most bytes opening each file, marking a page and applying the mark, which fills it, may hold
+/// allocated at once; measured 48,694.
+const REDACT_BOUND: usize = 57_344;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
@@ -825,6 +825,7 @@ fn redaction_is_bounded() {
             page.index = found.page;
             let mut mark = AddAnnotationOptions::default();
             mark.kind = AnnotationKind::Redact;
+            "#000000".clone_into(&mut mark.color);
             [mark.x, mark.y, mark.width, mark.height] =
                 [206.0_f64, 296.0_f64, 200.0_f64, 200.0_f64];
             let mut options = ApplyRedactionsOptions::default();

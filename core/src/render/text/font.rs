@@ -3,7 +3,6 @@
 use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 
-use crate::PdfError;
 use crate::font_program::encoding::{self, Base};
 use crate::font_program::{Fault, Outline, Program, Table};
 use crate::objects::ObjectId;
@@ -18,6 +17,7 @@ use crate::render::lent::{Clear, Yielding};
 use crate::render::path::Path;
 use crate::render::text::cmap::{Cmap, RANGE, Ranges};
 use crate::render::text::type3::Procedures;
+use crate::{ErrorCode, PdfError};
 
 /// The most items of `Differences` that mean something: each code once, with a number before it.
 const DIFFERENCES: usize = 512;
@@ -707,6 +707,15 @@ impl Outline for Traced {
     }
 }
 
+/// The `FontBBox` of `owner`; none where absent or malformed, which drawing does not need, so
+/// it is not warned of (9.6.4, 9.8.1).
+pub(super) fn bounds(job: &Job<'_>, owner: &Object) -> Result<Option<[Fixed; 4]>, PdfError> {
+    match data::numbers(job, owner, b"FontBBox") {
+        Err(error) if error.code() == ErrorCode::Malformed => Ok(None),
+        found => found,
+    }
+}
+
 /// Descent and ascent of the font `owner` in units of 1: its descriptor's, else its `FontBBox`'s
 /// bottom and top, in thousandths (9.8.1).
 fn extent(job: &Job<'_>, owner: &Object) -> Result<[Fixed; 2], PdfError> {
@@ -718,9 +727,7 @@ fn extent(job: &Job<'_>, owner: &Object) -> Result<[Fixed; 2], PdfError> {
     if let (Some(descent), Some(ascent)) = (number(b"Descent")?, number(b"Ascent")?) {
         return Ok([descent, ascent]);
     }
-    let listed = data::numbers::<4>(job, descriptor.value(), b"FontBBox");
-    let found = job.tolerate(listed, "9.8.1", "a font's FontBBox is malformed")?;
-    let [_, bottom, _, top] = found.flatten().unwrap_or_default();
+    let [_, bottom, _, top] = bounds(job, descriptor.value())?.unwrap_or_default();
     Ok([bottom, top].map(|value| value.over(THOUSAND).unwrap_or_default()))
 }
 

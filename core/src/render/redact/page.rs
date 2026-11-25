@@ -193,41 +193,53 @@ fn detached(
 }
 
 /// Removes the widget `widget` from its field, and a field left without widgets from its parent
-/// or the form's `Fields` (12.7.4).
+/// or the form's `Fields`; what is removed leaves the form's `CO` (12.7.3.3, 12.7.4).
 fn detach(job: &Job<'_>, stage: &mut Stage, widget: (ObjectId, Object)) -> Result<(), PdfError> {
     let (mut kid, mut value) = widget;
+    let mut gone = vec![kid];
+    let mut top = None;
+    let mut ended = false;
     for _ in 0..=job.objects.depth_limit() {
-        if let Some(Object::Reference(parent)) = value.get(b"Parent") {
-            let mut node = stage.get(job, parent)?;
-            let empty = detached(job, stage, &mut node, (b"Kids", kid))?;
-            stage.set(job, parent, node.clone())?;
-            if !empty {
-                return Ok(());
-            }
-            (kid, value) = (parent, node);
-            continue;
-        }
-        let trailer = Object::Dictionary(job.overlay.trailer(job.objects)?);
-        let Some(Object::Reference(root)) = trailer.get(b"Root") else {
-            return Ok(());
+        let Some(Object::Reference(parent)) = value.get(b"Parent") else {
+            (top, ended) = (Some(kid), true);
+            break;
         };
-        let mut catalog = stage.get(job, root)?;
-        match catalog.get(b"AcroForm") {
-            Some(Object::Reference(form)) => {
-                let mut fields = stage.get(job, form)?;
-                let _empty: bool = detached(job, stage, &mut fields, (b"Fields", kid))?;
-                stage.set(job, form, fields)?;
-            }
-            Some(mut fields @ Object::Dictionary(_)) => {
-                let _empty: bool = detached(job, stage, &mut fields, (b"Fields", kid))?;
-                catalog.set(b"AcroForm", Some(fields));
-                stage.set(job, root, catalog)?;
-            }
-            Some(_) | None => {}
+        let mut node = stage.get(job, parent)?;
+        let empty = detached(job, stage, &mut node, (b"Kids", kid))?;
+        stage.set(job, parent, node.clone())?;
+        if !empty {
+            ended = true;
+            break;
         }
-        return Ok(());
+        (kid, value) = (parent, node);
+        gone.push(kid);
     }
-    Err(job.limit())
+    if !ended {
+        return Err(job.limit());
+    }
+    let trailer = Object::Dictionary(job.overlay.trailer(job.objects)?);
+    let Some(Object::Reference(root)) = trailer.get(b"Root") else {
+        return Ok(());
+    };
+    let mut catalog = stage.get(job, root)?;
+    let (mut form, place) = match catalog.get(b"AcroForm") {
+        Some(Object::Reference(found)) => (stage.get(job, found)?, Some(found)),
+        Some(found @ Object::Dictionary(_)) => (found, None),
+        Some(_) | None => return Ok(()),
+    };
+    for (key, removed) in top
+        .map(|field| (&b"Fields"[..], field))
+        .into_iter()
+        .chain(gone.into_iter().map(|field| (&b"CO"[..], field)))
+    {
+        let _empty: bool = detached(job, stage, &mut form, (key, removed))?;
+    }
+    if let Some(found) = place {
+        stage.set(job, found, form)
+    } else {
+        catalog.set(b"AcroForm", Some(form));
+        stage.set(job, root, catalog)
+    }
 }
 
 /// The normalized `Rect` of `annotation`; none when it has none (7.9.5).
@@ -406,6 +418,7 @@ fn redact(
     kept.parents
         .extend(walked.0.elements.iter().map(|&key| (key, None)));
     structure::clear(&job, stage, &walked.0.struck, &kept.parents)?;
+    structure::moved(&job, stage, &walked.0.moved)?;
     for widget in kept.widgets {
         detach(&job, stage, widget)?;
     }

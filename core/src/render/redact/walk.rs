@@ -50,8 +50,9 @@ pub(super) struct Context<'cx> {
     pub measured: BTreeSet<(&'static [u8], Vec<u8>)>,
     /// The `StructParents` key of the stream walked.
     pub parents: Option<i64>,
-    /// Where each glyph procedure paints, in glyph space, by its stream's number.
-    pub procedures: BTreeMap<u32, Ink>,
+    /// Where each glyph procedure paints, in glyph space, by its stream's number and the line
+    /// width and miter limit it starts with.
+    pub procedures: BTreeMap<(u32, i64, i64), Ink>,
     /// What is changed.
     pub stage: &'cx mut Stage,
 }
@@ -93,6 +94,9 @@ pub(super) struct Found {
     pub ink: Ink,
     /// The marked-content levels open at its end.
     pub marked: usize,
+    /// The forms and images a mark touched, their copies or none where left out, and their
+    /// parent tree keys (14.7.4.4).
+    pub moved: Vec<(ObjectId, Option<ObjectId>, Vec<i64>)>,
     /// The number of the last name its copy adds.
     pub named: u32,
     /// The `q` open at its end.
@@ -323,12 +327,21 @@ fn form(
             return Err(job.limit());
         }
         job.warn("8.10.1", "content nests too deep or runs itself")?;
+        if frame.mode == Mode::Measure {
+            return Ok(Copied::Kept);
+        }
         // Not drawn, so left out: nothing unread stays.
-        return Ok(if frame.mode == Mode::Rewrite {
-            Copied::Out
-        } else {
-            Copied::Kept
-        });
+        if let Some(reached) = id {
+            let keys = [
+                structure::key(job, owner, b"StructParent")?,
+                structure::key(job, owner, b"StructParents")?,
+            ];
+            frame
+                .found
+                .moved
+                .push((reached, None, keys.into_iter().flatten().collect()));
+        }
+        return Ok(Copied::Out);
     }
     job.spend(job::NESTING_WORK)?;
     let matrix = data::matrix(job, owner, b"Matrix")?;
@@ -356,6 +369,7 @@ fn form(
     let walked = result?;
     frame.found.struck.extend_from_slice(&walked.struck);
     frame.found.elements.extend_from_slice(&walked.elements);
+    frame.found.moved.extend(walked.moved.iter().cloned());
     if walked.touched {
         touched(run, frame)?;
     }
@@ -374,7 +388,12 @@ fn form(
     let reopened = data::open(job, &mut run.caches.streams, found)?;
     let bytes = emit(job, reopened, &walked, cx.stage.room(job))?;
     let own = resources_with(job, inner.resources.value(), &walked, &cx.measured)?;
-    Ok(Copied::Made(cx.stage.add(job, copied(owner, bytes, own))?))
+    let made = cx.stage.add(job, copied(owner, bytes, own))?;
+    if let Some(reached) = id {
+        let keys = element.into_iter().chain(own_parents).collect();
+        frame.found.moved.push((reached, Some(made), keys));
+    }
+    Ok(Copied::Made(made))
 }
 
 /// `gs` of the `ExtGState` resource `key`: its font and line width, and its soft mask's group
@@ -943,7 +962,16 @@ fn xobject(
         && frame.reach(cx.marks, Some(&shape))
     {
         touched(run, frame)?;
-        image::painted(run, (cx.marks, &mut *cx.stage), &found)?.map_or(Copied::Out, Copied::Made)
+        let made = image::painted(run, (cx.marks, &mut *cx.stage), &found)?;
+        let element = structure::key(job, found.value(), b"StructParent")?;
+        frame.found.elements.extend(element);
+        if let Some(reached) = found.id() {
+            frame
+                .found
+                .moved
+                .push((reached, made, element.into_iter().collect()));
+        }
+        made.map_or(Copied::Out, Copied::Made)
     } else if matches!(*kind.value(), Object::Name(ref name) if name == b"Form") {
         form(run, cx, frame, &found)?
     } else {

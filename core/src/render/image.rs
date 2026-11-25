@@ -181,8 +181,8 @@ struct Source<'data> {
     stream: Option<(Resolved, Object)>,
 }
 
-/// An image's samples decoded whole, as unfiltered data holds them (7.4, 8.9.5).
-pub(crate) struct Unpacked {
+/// An image's samples as unfiltered data holds them, read row by row (7.4, 8.9.5).
+pub(crate) struct Unpacked<'data> {
     /// The channel of JPX data that is no colour (7.4.9).
     pub alpha: Option<usize>,
     /// Bits per sample.
@@ -191,8 +191,6 @@ pub(crate) struct Unpacked {
     pub columns: u32,
     /// Samples per pixel.
     pub components: usize,
-    /// The rows, each of `stride` bytes.
-    pub data: Vec<u8>,
     /// Its colour space is the device space of its colours, not as its dictionary names it.
     pub device: bool,
     /// Rows.
@@ -205,8 +203,20 @@ pub(crate) struct Unpacked {
     pub opacity: bool,
     /// The ICC profile of JPX data, its colour space in place of the device one.
     pub profile: Option<Vec<u8>>,
+    /// Its rows.
+    pub rows: Rows<'data>,
     /// Bytes per row.
     pub stride: usize,
+}
+
+/// An image's rows, as unfiltered data holds them.
+pub(crate) struct Rows<'data> {
+    /// Where they come from.
+    cursor: Cursor<'data>,
+    /// Bytes per row.
+    stride: usize,
+    /// Its colours are YCC, which become RGB: samples per pixel, and the channel that is no colour.
+    ycc: Option<(usize, Option<usize>)>,
 }
 
 /// An image's place in this band.
@@ -647,9 +657,9 @@ impl<'data> Source<'data> {
     }
 }
 
-impl Unpacked {
+impl Unpacked<'_> {
     /// Takes how the colours of JPX data `made`, which `header` reads, are named, its channel
-    /// beside them, and RGB for YCC (7.4.9, 8.9.5), as `coloured` reads them.
+    /// beside them, and whether YCC becomes RGB (7.4.9, 8.9.5), as `coloured` reads them.
     fn coloured(
         &mut self,
         job: &Job<'_>,
@@ -696,18 +706,39 @@ impl Unpacked {
                 .collect();
         }
         if fitting.is_none() && colours == 3 && made.ycc && self.bits == 8 {
-            let skipped = alpha.unwrap_or(usize::MAX);
-            let at = |index: usize| index.saturating_add(usize::from(index >= skipped));
-            for pixel in self.data.chunks_exact_mut(count.max(1)) {
-                let mut raw = [0_u16; 3];
-                for (index, slot) in raw.iter_mut().enumerate() {
-                    *slot = u16::from(pixel.get(at(index)).copied().unwrap_or(0));
-                }
-                samples::full_colour(&mut raw);
-                for (index, value) in raw.into_iter().enumerate() {
-                    if let Some(slot) = pixel.get_mut(at(index)) {
-                        *slot = u8::try_from(value).unwrap_or(u8::MAX);
-                    }
+            self.rows.ycc = Some((count, alpha));
+        }
+        Ok(())
+    }
+}
+
+impl Rows<'_> {
+    /// Reads row `index` into `out`, of its bytes per row; rows come in order.
+    pub(crate) fn row(
+        &mut self,
+        job: &Job<'_>,
+        index: u32,
+        out: &mut Vec<u8>,
+    ) -> Result<(), PdfError> {
+        self.cursor.seek(job, index)?;
+        let got = self.cursor.row();
+        out.clear();
+        out.extend_from_slice(got.get(..self.stride).unwrap_or(got));
+        out.resize(self.stride, 0);
+        let Some((count, alpha)) = self.ycc else {
+            return Ok(());
+        };
+        let skipped = alpha.unwrap_or(usize::MAX);
+        let at = |place: usize| place.saturating_add(usize::from(place >= skipped));
+        for pixel in out.chunks_exact_mut(count.max(1)) {
+            let mut raw = [0_u16; 3];
+            for (place, slot) in raw.iter_mut().enumerate() {
+                *slot = u16::from(pixel.get(at(place)).copied().unwrap_or(0));
+            }
+            samples::full_colour(&mut raw);
+            for (place, value) in raw.into_iter().enumerate() {
+                if let Some(slot) = pixel.get_mut(at(place)) {
+                    *slot = u8::try_from(value).unwrap_or(u8::MAX);
                 }
             }
         }
@@ -1357,13 +1388,13 @@ fn subsidiary<'doc>(
     Ok(Some(Part { samples, source }))
 }
 
-/// The samples of the image `image`, a soft mask when `soft`, decoded whole as unfiltered data
-/// holds them; YCC that JPX data implies becomes RGB.
-pub(crate) fn unpacked(
-    run: &mut Run<'_, '_>,
+/// The samples of the image `image`, a soft mask when `soft`, as unfiltered data holds them, held
+/// whole only where its decoder gives them so; YCC that JPX data implies becomes RGB.
+pub(crate) fn unpacked<'doc>(
+    run: &mut Run<'_, 'doc>,
     image: &Resolved,
     soft: bool,
-) -> Result<Unpacked, PdfError> {
+) -> Result<Unpacked<'doc>, PdfError> {
     let job = run.job;
     let owner = image.value();
     let role = if flagged(job, owner, b"ImageMask")? {
@@ -1378,12 +1409,16 @@ pub(crate) fn unpacked(
     let open = || data::coded(job, image).map(|found| found.data);
     let mut first = opened.data;
     let (mut profile, mut decoded) = (None, None);
-    let mut cursor = match header.coding {
+    let cursor = match header.coding {
         Coding::Plain => {
             let layout = header.declared.ok_or_else(|| job.objects.malformed())?;
             Cursor::plain(layout, first, None)
         }
-        Coding::Dct => Cursor::jpeg(job, &open, &header.parameters, None)?,
+        Coding::Dct => {
+            // Its own, as the rows outlive `open`'s borrow.
+            let again = || data::coded(job, image).map(|found| found.data);
+            Cursor::jpeg(job, &again, &header.parameters, None)?
+        }
         Coding::Fax | Coding::Jbig2 | Coding::Jpx => {
             let held = header.held(job, header.size(), (&mut *first, &open))?;
             if let Some(codec::Implied::Profile(ref bytes)) = held.implied {
@@ -1399,28 +1434,23 @@ pub(crate) fn unpacked(
     let layout = cursor.layout();
     let size = [layout.columns, layout.height];
     let read = Layout::new(job, size, layout.components, layout.bits)?;
-    job.fits(read.whole())?;
-    let mut data = function::room(usize::try_from(read.whole()).map_err(|_error| job.limit())?)?;
-    for row in 0..read.height {
-        cursor.seek(job, row)?;
-        let got = cursor.row();
-        let start = data.len();
-        data.extend_from_slice(got.get(..read.stride).unwrap_or(got));
-        data.resize(start.saturating_add(read.stride), 0);
-    }
     let jpx = header.coding == Coding::Jpx;
     let mut found = Unpacked {
         alpha: None,
         bits: read.bits,
         columns: read.columns,
         components: read.components,
-        data,
         device: role == Role::Colour && header.space.is_none(),
         height: read.height,
         jpx,
         matte: Vec::new(),
         opacity: false,
         profile: None,
+        rows: Rows {
+            cursor,
+            stride: read.stride,
+            ycc: None,
+        },
         stride: read.stride,
     };
     if let Some(made) = decoded

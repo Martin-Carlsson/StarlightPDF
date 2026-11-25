@@ -56,10 +56,7 @@ pub(super) fn clear(
         return Ok(());
     }
     let (objects, overlay) = (job.objects, &*job.overlay);
-    let trailer = Object::Dictionary(overlay.trailer(objects)?);
-    let catalog = overlay.entry(objects, &trailer, b"Root")?;
-    let root = overlay.entry(objects, &catalog, b"StructTreeRoot")?;
-    let tree = overlay.entry(objects, &root, b"ParentTree")?;
+    let tree = parent_tree(job)?;
     let mut elements = Vec::new();
     for &(key, id) in struck {
         let Object::Array(items) = overlay.direct(objects, number(job, &tree, key)?)? else {
@@ -89,10 +86,9 @@ fn cleared(
     element: ObjectId,
     annotation: Option<ObjectId>,
 ) -> Result<(), PdfError> {
-    let (objects, overlay) = (job.objects, &*job.overlay);
     let mut at = element;
     let mut gone = annotation;
-    for _ in 0..=objects.depth_limit() {
+    for _ in 0..=job.objects.depth_limit() {
         job.spend(NODE_WORK)?;
         let mut value = stage.get(job, at)?;
         if !matches!(value, Object::Dictionary(_)) {
@@ -106,39 +102,7 @@ fn cleared(
             }
         }
         if let Some(removed) = gone.take() {
-            let refers = |item: &Object| -> Result<bool, PdfError> {
-                let found = overlay.direct(objects, item.clone())?;
-                Ok(matches!(found.get(b"Obj"), Some(Object::Reference(id)) if id == removed))
-            };
-            match overlay.direct(objects, value.get(b"K").unwrap_or(Object::Null))? {
-                Object::Array(items) => {
-                    let count = items.len();
-                    let mut kept = Vec::new();
-                    for item in items {
-                        if !refers(&item)? {
-                            kept.push(item);
-                        }
-                    }
-                    if kept.len() != count {
-                        value.set(b"K", Some(Object::Array(kept)));
-                        changed = true;
-                    }
-                }
-                single @ Object::Dictionary(_) => {
-                    if refers(&single)? {
-                        value.set(b"K", None);
-                        changed = true;
-                    }
-                }
-                Object::Boolean(_)
-                | Object::Integer(_)
-                | Object::Name(_)
-                | Object::Null
-                | Object::Real(_)
-                | Object::Reference(_)
-                | Object::Stream(..)
-                | Object::String(_) => {}
-            }
+            changed |= retargeted(job, stage, &mut value, (removed, None))?;
         }
         let parent = value.get(b"P");
         if changed {
@@ -150,6 +114,137 @@ fn cleared(
         at = next;
     }
     Err(job.limit())
+}
+
+/// Points the structure elements of the parent tree keys of each of `moved`, an object, its copy
+/// or none where it is left out, and the keys, at the copy, or no longer at it (14.7.4.3, 14.7.5).
+///
+/// # Errors
+///
+/// As reading and staging objects.
+pub(super) fn moved(
+    job: &Job<'_>,
+    stage: &mut Stage,
+    moved: &[(ObjectId, Option<ObjectId>, Vec<i64>)],
+) -> Result<(), PdfError> {
+    if moved.is_empty() {
+        return Ok(());
+    }
+    let (objects, overlay) = (job.objects, &*job.overlay);
+    let tree = parent_tree(job)?;
+    for &(from, to, ref keys) in moved {
+        for &key in keys {
+            let found = number(job, &tree, key)?;
+            let elements: Vec<Object> = match overlay.direct(objects, found.clone())? {
+                Object::Array(items) => items,
+                Object::Boolean(_)
+                | Object::Dictionary(_)
+                | Object::Integer(_)
+                | Object::Name(_)
+                | Object::Null
+                | Object::Real(_)
+                | Object::Reference(_)
+                | Object::Stream(..)
+                | Object::String(_) => vec![found],
+            };
+            for item in elements {
+                let Object::Reference(element) = item else {
+                    continue;
+                };
+                job.spend(NODE_WORK)?;
+                let mut value = stage.get(job, element)?;
+                if retargeted(job, stage, &mut value, (from, to))? {
+                    stage.set(job, element, value)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The parent tree, as stored; null where none (14.7.5.4).
+fn parent_tree(job: &Job<'_>) -> Result<Object, PdfError> {
+    let (objects, overlay) = (job.objects, &*job.overlay);
+    let trailer = Object::Dictionary(overlay.trailer(objects)?);
+    let catalog = overlay.entry(objects, &trailer, b"Root")?;
+    let root = overlay.entry(objects, &catalog, b"StructTreeRoot")?;
+    overlay.entry(objects, &root, b"ParentTree")
+}
+
+/// Makes the kids of `element` that refer by `Obj` or `Stm` to `from` refer to `to`, staged where
+/// their own objects, or leaves them out where none; whether any did (14.7.2).
+fn retargeted(
+    job: &Job<'_>,
+    stage: &mut Stage,
+    element: &mut Object,
+    (from, to): (ObjectId, Option<ObjectId>),
+) -> Result<bool, PdfError> {
+    let (objects, overlay) = (job.objects, &*job.overlay);
+    let found = element.get(b"K").unwrap_or(Object::Null);
+    let (items, single) = match overlay.direct(objects, found.clone())? {
+        Object::Array(items) => (items, false),
+        Object::Dictionary(_) => (vec![found], true),
+        Object::Boolean(_)
+        | Object::Integer(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => return Ok(false),
+    };
+    let mut changed = false;
+    let mut kept = Vec::new();
+    for item in items {
+        job.spend(NODE_WORK)?;
+        let own = match item {
+            Object::Reference(id) => Some(id),
+            Object::Array(_)
+            | Object::Boolean(_)
+            | Object::Dictionary(_)
+            | Object::Integer(_)
+            | Object::Name(_)
+            | Object::Null
+            | Object::Real(_)
+            | Object::Stream(..)
+            | Object::String(_) => None,
+        };
+        let mut kid = match own {
+            Some(id) => stage.get(job, id)?,
+            None => item.clone(),
+        };
+        let keys = [&b"Obj"[..], b"Stm"];
+        let Some(key) = keys
+            .into_iter()
+            .find(|key| matches!(kid.get(key), Some(Object::Reference(id)) if id == from))
+        else {
+            kept.push(item);
+            continue;
+        };
+        changed = true;
+        let Some(copy) = to else {
+            continue;
+        };
+        kid.set(key, Some(Object::Reference(copy)));
+        match own {
+            Some(id) => {
+                stage.set(job, id, kid)?;
+                kept.push(item);
+            }
+            None => kept.push(kid),
+        }
+    }
+    if changed {
+        element.set(
+            b"K",
+            if single {
+                kept.pop()
+            } else {
+                Some(Object::Array(kept))
+            },
+        );
+    }
+    Ok(changed)
 }
 
 /// The level `BDC` or `BMC`, `name`, with `operands` opens, its operator at `span`.

@@ -86,14 +86,17 @@ fn boxed(
     Ok(Some(walk::corners(&user.then(&run.state.matrix), area)))
 }
 
-/// Where the glyph procedure `id` of `procedures` paints, in glyph space, measured once (9.6.4).
+/// Where the glyph procedure `id` of `procedures` paints, in glyph space, measured once for each
+/// line width and miter limit its strokes start with (8.4.3.2, 9.6.4).
 fn procedure(
     run: &mut Run<'_, '_>,
     cx: &mut Context<'_>,
     procedures: &Procedures,
     id: ObjectId,
 ) -> Result<Ink, PdfError> {
-    if let Some(found) = cx.procedures.get(&id.number) {
+    let style = &run.state.style;
+    let key = (id.number, style.width.bits(), style.miter.bits());
+    if let Some(found) = cx.procedures.get(&key) {
         return Ok(*found);
     }
     let job = run.job;
@@ -131,7 +134,7 @@ fn procedure(
         }
         Err(error) => return Err(error),
     };
-    let _old: Option<Ink> = cx.procedures.insert(id.number, ink);
+    let _old: Option<Ink> = cx.procedures.insert(key, ink);
     Ok(ink)
 }
 

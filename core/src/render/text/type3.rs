@@ -76,10 +76,8 @@ impl Procedures {
         // Counted while held, as all that is resolved.
         let found = data::entry(job, owner, b"Resources")?;
         let resources = matches!(*found.value(), Object::Dictionary(_)).then_some(found);
-        let boxed = data::numbers(job, owner, b"FontBBox");
-        let bounds = job.tolerate(boxed, "9.6.4", "a Type 3 font's FontBBox is malformed")?;
         Ok(Self {
-            bounds: bounds.flatten(),
+            bounds: font::bounds(job, owner)?,
             matrix: Matrix { terms },
             resources,
             streams,

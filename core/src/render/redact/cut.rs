@@ -245,14 +245,17 @@ impl Subpath {
 }
 
 impl Walker<'_> {
-    /// A curve from `from` by `points` (8.5.2.2): whole where no area meets its hull, else as the
-    /// pieces strokes and fills draw it in default user space, each whole or as its chord;
-    /// gives how many.
+    /// A curve from `from` by `points` (8.5.2.2): whole where no area meets its hull, else cut
+    /// into the pieces drawing it in default user space takes; those no area meets are joined into
+    /// as few exact parts of it as are drawn by the same lines, the rest are lines, as drawn there,
+    /// cut where the areas are. Gives how many pieces it took.
     fn curve(&mut self, from: Place, points: [Place; 3]) -> i64 {
         let [first, second, end] = points;
         let corners = [from.user, first.user, second.user, end.user];
+        let defaults = [from.page, first.page, second.page, end.page];
         let curve = Curve::new(from.user, [first.user, second.user, end.user]);
-        let count = Curve::new(from.page, [first.page, second.page, end.page]).pieces();
+        let drawn = Curve::new(from.page, [first.page, second.page, end.page]);
+        let count = drawn.pieces();
         if !self.meets(&corners) {
             self.out(from.user, Fixed::default());
             self.items.push(Item::Keep(
@@ -267,20 +270,37 @@ impl Walker<'_> {
             }
             return 1;
         }
-        for index in 0..count {
-            let piece = split(corners, &curve, index, count);
-            let [start, one, two, finish] = piece;
-            let continues = index > 0;
+        let mut taken = 0_i64;
+        let mut index = 0;
+        while index < count {
+            let next = index.saturating_add(1);
+            let piece = split(corners, &curve, (index, next), count);
             if self.meets(&piece) {
-                self.line(start, finish, continues);
-            } else {
-                self.out(start, Fixed::default());
-                self.items
-                    .push(Item::Keep(Drawn::Curve([one, two, finish]), continues));
-                self.length = self.length.plus(math::hypotenuse(between(start, finish)));
+                let [start, _, _, finish] = piece;
+                self.line(start, finish, index > 0);
+                taken = taken.saturating_add(1);
+                index = next;
+                continue;
             }
+            let mut last = next;
+            while last < count
+                && !self.meets(&split(
+                    corners,
+                    &curve,
+                    (last, last.saturating_add(1)),
+                    count,
+                ))
+            {
+                last = last.saturating_add(1);
+            }
+            taken = taken.saturating_add(self.kept(
+                (corners, defaults),
+                (&curve, &drawn),
+                (index, last, count),
+            ));
+            index = last;
         }
-        count
+        taken
     }
 
     /// The point `part` of the way along `line`, moved toward `limit` until no area holds it, as
@@ -299,6 +319,41 @@ impl Walker<'_> {
             };
             step = step.plus(step);
         }
+    }
+
+    /// The pieces `from` to `to` of `count` of a curve of `corners` as given and in default
+    /// user space, `curves` likewise, which no area meets: as curves, each drawn in default user
+    /// space by the lines of those pieces, so that it is drawn as before. Gives how many.
+    fn kept(
+        &mut self,
+        (corners, defaults): ([Point; 4], [Point; 4]),
+        curves: (&Curve, &Curve),
+        (from, to, count): (i64, i64, i64),
+    ) -> i64 {
+        let [page_start, page_one, page_two, page_end] =
+            split(defaults, curves.1, (from, to), count);
+        let [start, one, two, finish] = split(corners, curves.0, (from, to), count);
+        let pieces = to.saturating_sub(from);
+        let lines = Curve::new(page_start, [page_one, page_two, page_end]).pieces();
+        if pieces > 1 && lines != pieces {
+            let middle = from.saturating_add(pieces >> 1_u32);
+            let first = self.kept((corners, defaults), curves, (from, middle, count));
+            return first.saturating_add(self.kept(
+                (corners, defaults),
+                curves,
+                (middle, to, count),
+            ));
+        }
+        self.out(start, Fixed::default());
+        self.items
+            .push(Item::Keep(Drawn::Curve([one, two, finish]), from > 0));
+        let mut before = start;
+        for index in from..to {
+            let next = curves.0.step(index.saturating_add(1), count);
+            self.length = self.length.plus(math::hypotenuse(between(before, next)));
+            before = next;
+        }
+        1
     }
 
     /// A line from `from` to `to`, less what is in the areas; `continues` a curve, when one of
@@ -349,6 +404,11 @@ impl Walker<'_> {
             self.items.push(Item::Exit(at, self.length.plus(further)));
         }
     }
+}
+
+/// Whether `subpath`, entering no area, stays at a start inside one: it has no length there.
+fn alone(areas: &[Vec<Point>], subpath: &Subpath) -> bool {
+    areas.iter().any(|area| holds(area, subpath.start.user))
 }
 
 /// The point `part` of the way from `from` to `to`.
@@ -417,7 +477,9 @@ fn chorded(
                 })
                 .collect();
             if entered.is_empty() {
-                written(out, subpath);
+                if !alone(areas, subpath) {
+                    written(out, subpath);
+                }
                 continue;
             }
             // Inside throughout: around through where it passes between areas.
@@ -757,8 +819,9 @@ fn sides(polygon: &[Point]) -> impl Iterator<Item = (Point, Point)> {
         .zip(polygon.iter().skip(1).chain(polygon.first()).copied())
 }
 
-/// Piece `index` of `count` of `curve`, whose points are `corners`, as its own four points.
-fn split(corners: [Point; 4], curve: &Curve, index: i64, count: i64) -> [Point; 4] {
+/// Pieces `index` to `next` of `count` of `curve`, whose points are `corners`, as their own four
+/// points: the exact part of it (8.5.2.2).
+fn split(corners: [Point; 4], curve: &Curve, (index, next): (i64, i64), count: i64) -> [Point; 4] {
     let part = |at: i64| {
         if at >= count {
             return ONE;
@@ -766,7 +829,6 @@ fn split(corners: [Point; 4], curve: &Curve, index: i64, count: i64) -> [Point; 
         let found = quotient(i128::from(at) << 32_u32, i128::from(count)).unwrap_or_default();
         Fixed::from_bits(saturated(found))
     };
-    let next = index.saturating_add(1);
     let (from, to) = (part(index), part(next));
     let (start, finish) = (curve.step(index, count), curve.step(next, count));
     let [zero, one, two, three] = corners;
@@ -813,7 +875,9 @@ fn stroked(
     for subpath in subpaths {
         let items = walked(job, areas, subpath, subpath.closed)?;
         if !items.iter().any(|item| matches!(*item, Item::Enter(..))) {
-            written(&mut whole, subpath);
+            if !alone(areas, subpath) {
+                written(&mut whole, subpath);
+            }
             continue;
         }
         for piece in pieces(&items, subpath, dashed) {

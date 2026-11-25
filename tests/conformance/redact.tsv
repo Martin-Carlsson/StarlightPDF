@@ -58,6 +58,10 @@ redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=text	bytes=47484f5354494e4b	absent
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=text	bytes=4b4545505448524545	present
 redact_bytes	tests/corpus/redact/text-type3.pdf	marks=0@15,65,90,10;0@105,125,90,20	read=render	index=0	200x200 25,25=000000 25,77=ffffff 115,135=ffffff
+# A glyph procedure's stroke reaches as far as the line width where the glyph is shown (8.4.3.2, 9.6.4).
+redact_bytes	tests/corpus/redact/text-type3-width.pdf	read=text	bytes=4e454152474f4e45	absent
+redact_file	tests/corpus/redact/text-type3-width.pdf	read=text	bytes=4e454152474f4e45	absent
+redact_bytes	tests/corpus/redact/text-type3-width.pdf	read=text	bytes=4641524b455054	present
 # Text shown outside a text object, which no reader agrees where to draw (9.4.1).
 redact_bytes	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
 redact_file	tests/corpus/redact/text-outside.pdf	marks=0@0,0,200,200	read=text	bytes=4f555453494445534543524554	absent
@@ -94,6 +98,13 @@ redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=annotat
 # Of the element of a form that is one content item (14.7.5.3).
 redact_bytes	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
 redact_file	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
+# Elements of a form or image a mark copies or removes refer to the copy, or no longer to it (14.7.4.3, 14.7.5.3).
+redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32332e34353637	absent
+redact_file	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32332e34353637	absent
+redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32342e35363738	absent
+redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=5041525449414c494d41474553454352	absent
+redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=57484f4c45494d414745534543524554	absent
+redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=494d414745414c54474f4e45	absent
 # Images (8.9): one wholly under a mark is removed, an untouched one keeps its bytes. images= counts the Do of image XObjects, inline= the BI.
 redact_bytes	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
 redact_file	tests/corpus/redact/image-whole.pdf	marks=0@10,10,60,60	read=painted	index=0	images=1 inline=0
@@ -132,6 +143,9 @@ redact_bytes	tests/corpus/redact/path-stroke.pdf	marks=0@80,10,40,180	read=rende
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_file	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=render	index=0	200x200 100,35=ffffff 100,100=ffffff 100,160=ffffff 40,35=cb0034~3 40,100=00cb34~3 42,157=000000 47,152=ffffff
 redact_bytes	tests/corpus/redact/shading-pattern.pdf	marks=0@80,0,40,200	read=points	index=0	0
+# A move alone under a mark goes (8.5.2.1).
+redact_bytes	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
+redact_file	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
 # Under a singular matrix a fill or clip paints nothing, so nothing is removed (8.4.4).
 redact_bytes	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
 redact_file	tests/corpus/redact/singular.pdf	marks=0@20,120,60,60	read=pixels	index=0	same
@@ -157,6 +171,9 @@ redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4649454c4456414
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d425a45524f	absent
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4641524e4f54454b455054	present
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d424f4e4558	present
+# A field removed with its widget leaves the calculation order (12.7.3.3).
+redact_bytes	tests/corpus/redact/acroform-order.pdf	read=text	bytes=4f524445524649454c44474f4e45	absent
+redact_file	tests/corpus/redact/acroform-order.pdf	read=text	bytes=4f524445524649454c44474f4e45	absent
 # A kept annotation loses its IRT and Popup where they are removed (12.5.6.4, 12.5.6.14).
 redact_bytes	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
 redact_file	tests/corpus/redact/annotations-linked.pdf	marks=0@10,50,60,140	read=text	bytes=5245504c494544534543524554	absent
@@ -218,6 +235,6 @@ redact_bytes	tests/corpus/redact/image-unreadable.pdf	marks=1@10,10,100,100	read
 redact_bytes	tests/corpus/redact/pattern-text.pdf	marks=0@80,0,40,200	read=ok	Unsupported
 redact_bytes	tests/corpus/redact/mark-rect.pdf	cancel	read=ok	Cancelled
 redact_file	tests/corpus/redact/mark-rect.pdf	cancel	read=ok	Cancelled
-redact_bytes	tests/corpus/redact/pages.pdf	cancel	read=ok	Cancelled
+redact_bytes	tests/corpus/redact/pages.pdf	cancel=1	read=ok	Cancelled
 # An incremental save would keep the removed content in the old bytes (7.5.6).
 redact_bytes	tests/corpus/redact/mark-rect.pdf	mode=Incremental	read=ok	IncrementalRefused
