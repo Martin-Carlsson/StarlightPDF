@@ -166,6 +166,9 @@ redact_file	tests/corpus/redact/properties-optional-untyped.pdf	marks=0@10,50,40
 # A stream is no property list: naming a form as one, here or on another page, keeps nothing (14.6.2).
 redact_bytes	tests/corpus/redact/properties-stream.pdf	marks=0@10,50,40,40	read=text	bytes=53545245414d4c495354444154413031	absent
 redact_file	tests/corpus/redact/properties-stream.pdf	marks=0@10,50,40,40	read=text	bytes=53545245414d4c495354444154413031	absent
+# Naming a touched property list as anything other than a property list keeps none of its words (14.6.2).
+redact_bytes	tests/corpus/redact/properties-named-elsewhere.pdf	marks=0@10,50,40,40	read=text	bytes=50524f50584f424a45435431	absent
+redact_file	tests/corpus/redact/properties-named-elsewhere.pdf	marks=0@10,50,40,40	read=text	bytes=50524f50584f424a45435431	absent
 # A change at the start of a content stream leaves the stream before it as it is (7.8.2).
 redact_bytes	tests/corpus/redact/content-start.pdf	marks=0@10,50,40,40	read=text	bytes=53545245414d4b45505431	present
 redact_file	tests/corpus/redact/content-start.pdf	marks=0@10,50,40,40	read=text	bytes=53545245414d4b45505431	present

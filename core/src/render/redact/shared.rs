@@ -105,6 +105,12 @@ impl Released {
         self.drawn.extend(drawn.iter().cloned());
     }
 
+    /// Whether `id` is of the objects and, where a property list, named as one, `properties`
+    /// (14.6.2).
+    fn keeps(&self, id: &Key, properties: bool) -> bool {
+        self.objects.contains(id) && (properties || id.1.is_some() || !self.lists.contains(&id.0))
+    }
+
     /// Of the objects, the names `resources`, at `place`, gives those, or what uses them as it
     /// is drawn.
     fn naming(
@@ -139,7 +145,7 @@ impl Released {
                         other => other?,
                     }
                 };
-                found.retain(|id| self.objects.contains(id));
+                found.retain(|id| self.keeps(id, category == b"Properties"));
                 // A property list is a dictionary (14.6.2).
                 if category == b"Properties" && !found.is_empty() {
                     let given = match data::resolve(job, &pair.1) {
@@ -205,7 +211,7 @@ impl Released {
                     };
                     let named = self.naming(job, given)?;
                     let mut found = referenced(job, &owner)?;
-                    found.retain(|id| self.objects.contains(id));
+                    found.retain(|id| self.keeps(id, false));
                     for stream in streams.iter().filter(|_| !named.is_empty()) {
                         let opened = data::open(job, &mut run.caches.streams, stream);
                         let scope = Rc::new(Scope::new(given.0.clone()));
