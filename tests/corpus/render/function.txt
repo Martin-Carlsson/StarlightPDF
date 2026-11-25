@@ -1,0 +1,1 @@
+{ dup 0.5 gt { 1 exch sub 0 0 } { 0 exch 2 mul 0 } ifelse }

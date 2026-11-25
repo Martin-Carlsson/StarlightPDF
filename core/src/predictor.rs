@@ -53,8 +53,18 @@ impl<P: Pull> Predictor<P> {
         let mut filled = 0_usize;
         while filled < self.width {
             if filled == self.current.len() {
+                // Doubled, and the whole row once past half of it, so that what it holds while it
+                // grows stays within what it counts.
+                let doubled = filled.saturating_mul(2).max(GROWTH);
+                let grown = if doubled > self.width >> 1_u32 {
+                    self.width
+                } else {
+                    doubled
+                };
                 self.current
-                    .resize(filled.saturating_add(GROWTH).min(self.width), 0);
+                    .try_reserve_exact(grown.saturating_sub(filled))
+                    .map_err(|_error| PdfError::new(ErrorCode::BudgetExceeded, OPERATION))?;
+                self.current.resize(grown, 0);
             }
             let rest = self.current.get_mut(filled..).ok_or_else(malformed)?;
             let read = self.inner.pull(rest)?;
@@ -74,6 +84,15 @@ impl<P: Pull> Predictor<P> {
             self.tiff_row()?;
         }
         Ok(true)
+    }
+
+    /// The most bytes its rows hold once it reads: the row before, and the row being served and
+    /// at most half of it while it grows.
+    pub(crate) fn held(&self) -> u64 {
+        let row = u64::try_from(self.width)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        row.saturating_mul(5) >> 1_u32
     }
 
     /// Undoes the PNG filter of row type `kind` on `current` (ISO/IEC 15948:2004, 9.2).

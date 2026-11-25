@@ -7,6 +7,7 @@ use alloc::sync::Arc;
 use core::iter;
 
 use super::Page;
+use super::display::{Affine, DIGITS, SCALE, display, fixed, inherited, streams};
 use crate::drawing::DrawImageOptions;
 use crate::input::Source;
 use crate::objects::ObjectId;
@@ -16,20 +17,11 @@ use crate::raster::{self, Filter, Image, Profile};
 use crate::store::Objects;
 use crate::{ErrorCode, PdfError};
 
-/// Fraction digits of a fixed-point number.
-const DIGITS: usize = 12;
-
 /// The operation errors name.
 const DRAW: &str = "Page::draw_image";
 
-/// The media box of a page without one: US Letter, as [`Page::boundary`] gives it.
-const LETTER: [i128; 4] = [0, 0, 612 * SCALE, 792 * SCALE];
-
 /// The end of a content stream drawn here.
 const PAINT: &[u8] = b" Do Q\n";
-
-/// Fixed-point units per point: 10 to the [`DIGITS`].
-const SCALE: i128 = 1_000_000_000_000;
 
 /// A stream of an image file.
 #[derive(Clone, Copy, Debug)]
@@ -51,10 +43,15 @@ struct Part {
     kind: Kind,
 }
 
-/// An affine map in fixed point: x' = a·x + c·y + e, y' = b·x + d·y + f, as `cm` operands.
-type Affine = [i128; 6];
-
 impl Produce for Part {
+    #[cfg(feature = "rendering")]
+    fn held(&self) -> u64 {
+        match self.kind {
+            Kind::Data | Kind::Mask => self.image.held(),
+            Kind::Profile => 0,
+        }
+    }
+
     fn length(&self) -> u64 {
         match self.kind {
             Kind::Data => self.image.length(),
@@ -63,20 +60,16 @@ impl Produce for Part {
         }
     }
 
-    fn pull(&self) -> Option<Box<dyn Pull + '_>> {
+    fn reader(&self) -> Box<dyn Pull> {
         match self.kind {
             Kind::Data => self.image.data(),
-            Kind::Mask => None,
+            Kind::Mask => self.image.mask_data(),
             Kind::Profile => self.image.profile_data(),
         }
     }
 
     fn write(&self, out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>) -> Result<(), PdfError> {
-        match self.kind {
-            Kind::Data => self.image.write_data(out),
-            Kind::Mask => self.image.write_mask(out),
-            Kind::Profile => self.image.write_profile(out),
-        }
+        raster::copy(&mut self.reader(), out)
     }
 }
 
@@ -145,7 +138,7 @@ pub(super) fn draw(
         orientation,
         size,
         (left, top),
-        view(objects, overlay, &dictionary)?,
+        display(objects, overlay, &dictionary)?.matrix,
     )
     .ok_or_else(|| PdfError::new(ErrorCode::LimitExceeded, DRAW))?;
     let mut resources = dictionary_entries(
@@ -183,7 +176,8 @@ pub(super) fn draw(
     operators.extend_from_slice(b" cm /");
     operators.extend_from_slice(&label);
     operators.extend_from_slice(PAINT);
-    let content = |bytes: Vec<u8>| overlay.add(Object::Stream(Vec::new(), Data::Bytes(bytes)));
+    let content =
+        |bytes: Vec<u8>| overlay.add(Object::Stream(Vec::new(), Data::Bytes(bytes.into())));
     let contents = if existing.is_empty() {
         Object::Reference(content(operators)?)
     } else {
@@ -222,55 +216,6 @@ fn dictionary_entries(
         | Object::Stream(..)
         | Object::String(_) => Err(objects.malformed()),
     }
-}
-
-/// `value` in fixed point, its shortest decimal cut to [`DIGITS`] fraction digits; `None` when
-/// not finite or too large.
-fn fixed(value: f64) -> Option<i128> {
-    let text = value.to_string();
-    let magnitude = text.trim_start_matches('-');
-    let (whole, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));
-    let digits: String = whole
-        .chars()
-        .chain(fraction.chars().chain(iter::repeat('0')).take(DIGITS))
-        .collect();
-    let units: i128 = digits.parse().ok()?;
-    if text.starts_with('-') {
-        units.checked_neg()
-    } else {
-        Some(units)
-    }
-}
-
-/// The value of `key` in the page tree node `node` or the nearest ancestor that has it,
-/// resolved; null when none has it, a node not a dictionary malformed (ISO 32000-2:2020, 7.3.10,
-/// 7.7.3.4).
-fn inherited(
-    objects: Objects<'_>,
-    overlay: &Overlay,
-    node: &Object,
-    key: &[u8],
-) -> Result<Object, PdfError> {
-    let mut current = node.clone();
-    for _ in 0..=objects.depth_limit() {
-        let found = overlay.entry(objects, &current, key)?;
-        if !matches!(found, Object::Null) {
-            return Ok(found);
-        }
-        current = match overlay.entry(objects, &current, b"Parent")? {
-            Object::Null => return Ok(Object::Null),
-            parent @ Object::Dictionary(_) => parent,
-            Object::Array(_)
-            | Object::Boolean(_)
-            | Object::Integer(_)
-            | Object::Name(_)
-            | Object::Real(_)
-            | Object::Reference(_)
-            | Object::Stream(..)
-            | Object::String(_) => return Err(objects.malformed()),
-        };
-    }
-    Err(PdfError::new(ErrorCode::LimitExceeded, DRAW))
 }
 
 /// The `cm` operands that paint the unit square as `image` shown in Exif `orientation`
@@ -335,131 +280,6 @@ fn place(
 /// The fixed-point product of `left` and `right`.
 fn product(left: i128, right: i128) -> Option<i128> {
     left.checked_mul(right)?.checked_div(SCALE)
-}
-
-/// The rectangle `value`, normalized to `[left, bottom, right, top]`; `None` when null
-/// (ISO 32000-2:2020, 7.9.5).
-fn rectangle(
-    objects: Objects<'_>,
-    overlay: &Overlay,
-    value: Object,
-) -> Result<Option<[i128; 4]>, PdfError> {
-    let items = match overlay.direct(objects, value)? {
-        Object::Null => return Ok(None),
-        Object::Array(items) if items.len() == 4 => items,
-        Object::Array(_)
-        | Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Integer(_)
-        | Object::Name(_)
-        | Object::Real(_)
-        | Object::Reference(_)
-        | Object::Stream(..)
-        | Object::String(_) => return Err(objects.malformed()),
-    };
-    let mut numbers = [0_i128; 4];
-    for (slot, item) in numbers.iter_mut().zip(items) {
-        *slot = units(&overlay.direct(objects, item)?).ok_or_else(|| objects.malformed())?;
-    }
-    let [x0, y0, x1, y1] = numbers;
-    Ok(Some([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)]))
-}
-
-/// The content streams `contents` names, in order (ISO 32000-2:2020, 7.7.3.3).
-fn streams(
-    objects: Objects<'_>,
-    overlay: &Overlay,
-    contents: Option<Object>,
-) -> Result<Vec<Object>, PdfError> {
-    let Some(value) = contents else {
-        return Ok(Vec::new());
-    };
-    match overlay.direct(objects, value.clone())? {
-        Object::Null => Ok(Vec::new()),
-        Object::Array(items) => Ok(items),
-        Object::Stream(..) => Ok(vec![value]),
-        Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Integer(_)
-        | Object::Name(_)
-        | Object::Real(_)
-        | Object::Reference(_)
-        | Object::String(_) => Err(objects.malformed()),
-    }
-}
-
-/// The number `value` in fixed point.
-fn units(value: &Object) -> Option<i128> {
-    match *value {
-        Object::Integer(integer) => i128::from(integer).checked_mul(SCALE),
-        Object::Real(real) => fixed(real),
-        Object::Array(_)
-        | Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Name(_)
-        | Object::Null
-        | Object::Reference(_)
-        | Object::Stream(..)
-        | Object::String(_) => None,
-    }
-}
-
-/// The map from the page `dictionary` as displayed, in points from its top-left corner, to its
-/// default user space: through `Rotate`, the crop box clipped to the media box, and `UserUnit`
-/// (ISO 32000-2:2020, 7.7.3.3, 14.11.2).
-fn view(objects: Objects<'_>, overlay: &Overlay, dictionary: &Object) -> Result<Affine, PdfError> {
-    let malformed = || objects.malformed();
-    let boxed = |key: &[u8]| {
-        rectangle(
-            objects,
-            overlay,
-            inherited(objects, overlay, dictionary, key)?,
-        )
-    };
-    let [media_left, media_bottom, media_right, media_top] = boxed(b"MediaBox")?.unwrap_or(LETTER);
-    let [left, bottom, right, top] = boxed(b"CropBox")?.map_or(
-        [media_left, media_bottom, media_right, media_top],
-        |[crop_left, crop_bottom, crop_right, crop_top]| {
-            let low_x = crop_left.max(media_left);
-            let low_y = crop_bottom.max(media_bottom);
-            [
-                low_x,
-                low_y,
-                crop_right.min(media_right).max(low_x),
-                crop_top.min(media_top).max(low_y),
-            ]
-        },
-    );
-    let rotation = match inherited(objects, overlay, dictionary, b"Rotate")? {
-        Object::Integer(degrees) if degrees.checked_rem(90) == Some(0) => {
-            degrees.checked_rem_euclid(360).unwrap_or_default()
-        }
-        Object::Array(_)
-        | Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Integer(_)
-        | Object::Name(_)
-        | Object::Null
-        | Object::Real(_)
-        | Object::Reference(_)
-        | Object::Stream(..)
-        | Object::String(_) => 0,
-    };
-    let unit = units(&overlay.entry(objects, dictionary, b"UserUnit")?)
-        .filter(|unit| *unit > 0)
-        .unwrap_or(SCALE);
-    // A displayed point is 1 / UserUnit units, along an axis of user space.
-    let step = SCALE
-        .checked_mul(SCALE)
-        .and_then(|square| square.checked_div(unit))
-        .ok_or_else(malformed)?;
-    let back = step.checked_neg().ok_or_else(malformed)?;
-    Ok(match rotation {
-        90 => [0, step, step, 0, left, bottom],
-        180 => [back, 0, 0, step, right, bottom],
-        270 => [0, back, back, 0, right, top],
-        _ => [step, 0, 0, back, left, top],
-    })
 }
 
 /// Adds `image` as an image `XObject`, with its soft mask and ICC profile, its data read from the

@@ -1,4 +1,4 @@
-"""Checks the version the library reports."""
+"""Checks what the library reports of itself: its version and capabilities."""
 
 import importlib.metadata
 import unittest
@@ -14,3 +14,7 @@ class Version(unittest.TestCase):
         self.assertEqual(
             starlightpdf.library_version(), importlib.metadata.version("starlightpdf")
         )
+
+    def test_capabilities_list_rendering(self) -> None:
+        """The wheel has rendering built in."""
+        self.assertIn("Rendering", starlightpdf.capabilities())

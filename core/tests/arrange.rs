@@ -649,3 +649,30 @@ fn splitting_a_flat_tree_reads_its_kids_a_few_times() -> Result<(), Box<dyn Erro
     }
     Ok(())
 }
+
+/// A changed document reads a page that is its own `Parent` as its own: the search for its inherited crop box and
+/// rotation stops at the page and warns (ISO 32000-2:2020, 7.7.3.4).
+#[test]
+fn changed_documents_stop_at_a_page_its_own_parent() -> Result<(), Box<dyn Error>> {
+    let document = corpus("pages/own-parent-dense-mutated.pdf")?;
+    drop(document.insert_blank_page(&blank(200.0, 100.0, None))?);
+    same(
+        &[describe(
+            &document.page(&PageOptions::default())?,
+            Boundary::Crop,
+        )?],
+        &["0 0 100 100 0"],
+    )?;
+    let found = document.warnings()?;
+    let mut clauses = Vec::new();
+    while let Some(deviation) = found.next()? {
+        clauses.push(deviation.clause);
+    }
+    if !clauses
+        .iter()
+        .any(|clause| clause == "ISO 32000-2:2020, 7.7.3.4")
+    {
+        return Err(format!("warnings {clauses:?}").into());
+    }
+    Ok(())
+}

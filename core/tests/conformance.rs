@@ -2,6 +2,11 @@
 
 extern crate alloc;
 
+#[path = "conformance/decode.rs"]
+mod decode;
+#[path = "conformance/render.rs"]
+mod render;
+
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use core::fmt::Write as _;
@@ -340,7 +345,7 @@ fn combine(operation: &str, family: &str, case: &Case) -> Result<(), String> {
 }
 
 /// Calls `operation`; only operations listed here are known.
-fn call(operation: &str, args: &[&str]) -> Result<String, String> {
+fn call(operation: &str, args: &[&str], expected: &str) -> Result<String, String> {
     if operation == "header_version" {
         return Ok(
             starlightpdf::header_version(&read(operation, args)?).map_or_else(
@@ -357,6 +362,12 @@ fn call(operation: &str, args: &[&str]) -> Result<String, String> {
             None => (operation.strip_suffix("_file").ok_or_else(unknown)?, true),
         },
     };
+    if family == "render" && operation != family {
+        let (&relative, rest) = args
+            .split_first()
+            .ok_or_else(|| format!("{operation} takes a path"))?;
+        return render::call(operation, file, relative, rest, expected);
+    }
     let (takes, needs) = keys(family).ok_or_else(unknown)?;
     let (&relative, rest) = args
         .split_first()
@@ -373,20 +384,7 @@ fn call(operation: &str, args: &[&str]) -> Result<String, String> {
         "insert_blank_page" if relative == "-" => inserted(&case),
         "insert_blank_page" => return Err(format!("{operation} takes the path -")),
         "draw_image" => drawn(relative, &case),
-        _ => {
-            let file_path = format!("{ROOT}/{relative}");
-            let source = if file {
-                let mut options = FileSourceOptions::default();
-                options.file = PathBuf::from(file_path);
-                Source::from_file(&options)
-            } else {
-                let mut options = BytesSourceOptions::default();
-                options.bytes =
-                    Arc::new(fs::read(&file_path).map_err(|err| format!("{file_path}: {err}"))?);
-                Source::from_bytes(&options)
-            };
-            perform(family, &case, source)
-        }
+        _ => perform(family, &case, source(relative, file)?),
     };
     match result {
         Ok(value) => Ok(value),
@@ -1283,6 +1281,21 @@ fn sheet(value: &str) -> Option<InsertBlankPageOptions> {
     Some(options)
 }
 
+/// A source over the file at `relative`: its path when `file`, else its bytes.
+fn source(relative: &str, file: bool) -> Result<Result<Source, PdfError>, String> {
+    let file_path = format!("{ROOT}/{relative}");
+    Ok(if file {
+        let mut options = FileSourceOptions::default();
+        options.file = PathBuf::from(file_path);
+        Source::from_file(&options)
+    } else {
+        let mut options = BytesSourceOptions::default();
+        options.bytes =
+            Arc::new(fs::read(&file_path).map_err(|err| format!("{file_path}: {err}"))?);
+        Source::from_bytes(&options)
+    })
+}
+
 /// The data of the stream `id`, decoded when `decode`.
 fn stream_bytes(document: &Document, id: ObjectId, decode: bool) -> Result<Vec<u8>, PdfError> {
     let sink = Sink::in_memory(&MemorySinkOptions::default())?;
@@ -1491,7 +1504,7 @@ fn warnings(family: &str, case: &Case, document: &Document) -> Result<String, Fa
 
 /// Fails unless `operation` on `args` gives `expected`.
 fn check(operation: &str, args: &[&str], expected: &str) -> Result<(), String> {
-    let actual = call(operation, args)?;
+    let actual = call(operation, args, expected)?;
     if actual == expected {
         Ok(())
     } else {

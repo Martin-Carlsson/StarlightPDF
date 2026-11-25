@@ -74,13 +74,15 @@ pub enum PrintScaling {
 pub struct RenderOptions {
     /// The color space.
     pub color_space: ColorSpace,
-    /// Fit within this many pixels per side, for thumbnails; overrides `resolution`.
+    /// The longer side in pixels, 1 to 65,536; overrides `resolution`.
     pub fit: Option<u32>,
     /// The image format.
     pub format: RasterFormat,
     /// Layers hidden in this rendering, whatever their default.
     pub hidden_layers: Vec<Layer>,
-    /// Pixels per inch; `None`: 72.
+    /// JPEG quality, 1 to 100; `None`: 85.
+    pub quality: Option<u8>,
+    /// Pixels per inch, 1 to 4800; `None`: 72.
     pub resolution: Option<u32>,
     /// What the rendering is for.
     pub usage: RenderUsage,

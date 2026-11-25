@@ -302,8 +302,24 @@ ${module}
 `;
 }
 
-/** A page that runs `name` of browser.mjs with `args`, loading the package as static files. */
-export function scenario(name: string, args: unknown = null): string {
+/** The entry `starlightpdf/without-rendering` as installed: loaded in this process, and its file. */
+export async function withoutRendering(installed: Installed): Promise<{ readonly api: Api; readonly url: string }> {
+  const loader = join(installed.dir, "load-without.mjs");
+  await writeFile(
+    loader,
+    [
+      'export * as api from "starlightpdf/without-rendering";',
+      'export const url = import.meta.resolve("starlightpdf/without-rendering");',
+      "",
+    ].join("\n"),
+  );
+  const loaded: { readonly api: Api; readonly url: string } = await import(pathToFileURL(loader).href);
+  const at = loaded.url.lastIndexOf("/node_modules/starlightpdf/");
+  return { api: loaded.api, url: loaded.url.slice(at) };
+}
+
+/** A page that runs `name` of browser.mjs with `args`, loading the package at `entry` as static files. */
+export function scenario(name: string, args: unknown = null, entry = "/node_modules/starlightpdf/index.js"): string {
   return page(`import { main } from ${JSON.stringify(`${HERE}/browser.mjs`)};
-await main(${JSON.stringify(name)}, "/node_modules/starlightpdf/index.js", ${JSON.stringify(args)});`);
+await main(${JSON.stringify(name)}, ${JSON.stringify(entry)}, ${JSON.stringify(args)});`);
 }

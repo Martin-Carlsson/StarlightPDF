@@ -546,3 +546,7 @@ page_count_file	tests/corpus/encryption/r4-aes-128-object-stream.pdf	password=us
 # 7.5.4, 7.5.5: a trailer Size below the objects the table declares loses none: page object 3 under Size 3
 page_count_bytes	tests/corpus/save/small-size.pdf	saved	1
 page_count_file	tests/corpus/save/small-size.pdf	saved	1
+# 7.5.4, 7.5.8: a cross-reference stream whose dictionary nests past the depth limit is unusable; open rebuilds the table
+#   from the objects and the trailer after them, so the one page is found; strict rejects it
+page_count_bytes	tests/corpus/repair/xref-stream-deep.pdf	1
+page_count_bytes	tests/corpus/repair/xref-stream-deep.pdf	strict	Malformed

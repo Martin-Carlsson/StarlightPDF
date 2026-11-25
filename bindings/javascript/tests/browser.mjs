@@ -525,6 +525,38 @@ async function unisolated(entry) {
 }
 
 /**
+ * Renders a page and saves its document with a progress callback that answers 1, truthy but not true; each outcome,
+ * `Cancelled` where only true goes on.
+ * @param {Api} api
+ * @param {(path: string) => Promise<Uint8Array>} bytes
+ */
+export async function truthful(api, bytes) {
+  const document = await api.Document.open(
+    await api.Source.fromBytes(await bytes("tests/corpus/render/output-blank.pdf")),
+  );
+  const truthy = /** @type {import("./api.mts").Progress} */ (/** @type {unknown} */ (() => 1));
+  /** @param {Promise<unknown>} call */
+  const fate = async (call) =>
+    call.then(
+      () => "resolved",
+      (/** @type {unknown} */ reason) => (reason instanceof api.PdfError ? reason.code : String(reason)),
+    );
+  const page = await document.page({ index: 0 });
+  return [
+    await fate(page.render(await api.Sink.inMemory(), truthy)),
+    await fate(document.save(await api.Sink.inMemory(), truthy)),
+  ];
+}
+
+/**
+ * [`truthful`] with the package at `entry`.
+ * @param {string} entry
+ */
+async function truthy(entry) {
+  return truthful(await load(entry), read);
+}
+
+/**
  * Runs the suites `names`; the failures and how many WebAssembly instances this thread made.
  * @param {string} entry
  * @param {string[]} names
@@ -635,6 +667,7 @@ const NAMED = [
   ["memory", memory],
   ["missing", missing],
   ["splitting", splitting],
+  ["truthy", truthy],
   ["unisolated", unisolated],
   ["worker", worker],
 ];

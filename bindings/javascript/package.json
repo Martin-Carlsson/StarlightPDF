@@ -2,11 +2,18 @@
   "name": "starlightpdf",
   "license": "Apache-2.0",
   "type": "module",
-  "exports": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./without-rendering": "./without-rendering/index.js"
+  },
   "files": [
     "*.js",
     "index.d.ts",
     "wasm/*.js",
-    "wasm/*.wasm"
+    "wasm/*.wasm",
+    "without-rendering/*.js",
+    "without-rendering/index.d.ts",
+    "without-rendering/wasm/*.js",
+    "without-rendering/wasm/*.wasm"
   ]
 }

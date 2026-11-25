@@ -1,0 +1,11 @@
+q 1 0 0 1 2 2 cm 4 w 1 J 1 j 3 M [6 3] 2 d 0 0.5 1 RG 5 5 m 40 5 l 60 90 80 -20 95 60 c 50 50 70 70 v
+20 20 30 30 y h S 2 J 2 j [] 0 d 0.1 w 10 10 m 90 90 l 10 90 l s Q
+q 0 0 99 99 re 20 20 9 9 re W* n 0.2 g 0 G 0 0 0 1 k 0 0 0 1 K /G gs 10 10 70 70 re B Q
+q /L gs /Pattern cs /Q scn 0 0 50 50 re f /U cs 1 0 0 /Q scn 50 50 40 40 re f* /N gs Q
+q /C cs 1 sc /DeviceGray CS 0.5 SC 10 0 0 10 5 5 cm 0 0 1 1 re b /Perceptual ri 5 i Q
+/OC /V BDC /Y Do EMC /T BMC EMC /M MP BX zz EX
+q 30 0 0 30 60 0 cm BI /W 2 /H 2 /BPC 8 /CS /G ID @p EI Q
+q 30 0 0 30 0 60 cm BI /W 2 /H 1 /BPC 8 /CS /RGB /F /AHx ID FF00007F7F7F> EI Q
+BT /F 20 Tf 5 70 Td 1 Tr 2 Tc 3 Tw 90 Tz 22 TL 1 Ts (A A) Tj T* [(A) -120 (A)] TJ (A)' 1 2 (A)" ET
+q /A gs 0.5 g 0 0 50 50 re f Q
+BT /F 60 Tf 7 Tr 5 5 Td (A) Tj ET 0 0 99 99 re f

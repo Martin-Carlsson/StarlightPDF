@@ -1,6 +1,6 @@
 import os
 from collections.abc import Callable
-from typing import Self, final
+from typing import Never, Self, final
 
 __all__ = [
     "Deviation",
@@ -17,6 +17,7 @@ __all__ = [
     "SaveReport",
     "Sink",
     "Source",
+    "capabilities",
     "header_version",
     "library_version",
 ]
@@ -93,6 +94,19 @@ class Page:
         format: str | None = None,  # noqa: A002 runtime keyword name
         frame: int = 0,
         opacity: float | None = None,
+    ) -> None: ...
+    def render(
+        self,
+        sink: Sink,
+        progress: Callable[[int, int], bool] | None = None,
+        *,
+        color_space: str = "Rgb",
+        fit: int | None = None,
+        format: str = "Png",  # noqa: A002 runtime keyword name
+        hidden_layers: list[Never] | tuple[()] = ...,
+        quality: int | None = None,
+        resolution: int | None = None,
+        usage: str = "Display",
     ) -> None: ...
     @property
     def rotation(self) -> int: ...
@@ -234,5 +248,6 @@ class Document:
         self, sink: Sink, object_id: ObjectId, /, *, decode: bool = False
     ) -> None: ...
 
+def capabilities() -> list[str]: ...
 def header_version(data: bytes) -> tuple[int, int]: ...
 def library_version() -> str: ...

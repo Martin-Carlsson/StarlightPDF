@@ -1,0 +1,1 @@
+{ pop 1 2 lt 2 3 ne and {0.8} {0} ifelse 1 2 bitshift 10 div true false xor not {0.9} {0.2} ifelse }

@@ -1,0 +1,1 @@
+{ pop 30 sin 0.3 add 60 cos 0.1 sub 1 1 atan 225 div }

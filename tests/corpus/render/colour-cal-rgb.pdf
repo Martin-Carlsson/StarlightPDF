@@ -1,0 +1,32 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /ColorSpace << /A [/CalRGB << /WhitePoint [0.9505 1 1.089] /Matrix [0.4124 0.2126 0.0193 0.3576 0.7152 0.1192 0.1805 0.0722 0.9505] >>] /C [/CalRGB << /WhitePoint [0.9505 1 1.089] /Matrix [0.4124 0.2126 0.0193 0.3576 0.7152 0.1192 0.1805 0.0722 0.9505] /Gamma [1 2 1] >>] >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 115 >>
+stream
+/A cs 1 1 1 scn 0 0 33 100 re f
+/A cs 0.5 0.25 0.125 scn 33 0 34 100 re f
+/C cs 0.5 0.5 0.125 scn 67 0 33 100 re f
+
+endstream
+endobj
+xref
+0 5
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000500 00000 n 
+trailer
+<< /Size 5 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+666
+%%EOF

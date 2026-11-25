@@ -3,6 +3,7 @@ import { deepEqual, equal, ok } from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { truthful } from "./browser.mjs";
 import { browse, corpus, installed, NESTED, ROOT, scenario } from "./harness.mts";
 
 test("every operation Python has returns a promise", async () => {
@@ -93,4 +94,29 @@ test("a number outside the core's integer type rejects with RangeError instead o
     );
     ok(reason instanceof RangeError, `call ${String(index)}: ${String(reason)}`);
   }
+});
+
+test("a progress callback that answers anything but true cancels, in Node, a worker and on a page's main thread", async () => {
+  const package_ = await installed();
+  const node = await truthful(package_.api, corpus);
+  const page = (await browse(package_, scenario("truthy"))).result;
+  const worker = (await browse(package_, scenario("worker", ["truthy"]))).result;
+  const cancelled = ["Cancelled", "Cancelled"];
+  deepEqual([node, page, worker], [cancelled, cancelled, cancelled]);
+});
+
+test("a layer to hide fails NotImplemented, as none can be made yet", async () => {
+  const { api } = await installed();
+  const document = await api.Document.open(
+    await api.Source.fromBytes(await corpus("tests/corpus/render/output-blank.pdf")),
+  );
+  const page = await document.page({ index: 0 });
+  // Typed as the declarations allow, so that a non-empty array reaches the binding.
+  const hiddenLayers = [{}] as unknown as readonly never[];
+  const error: unknown = await page.render(await api.Sink.inMemory(), null, { hiddenLayers }).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  ok(error instanceof api.PdfError, String(error));
+  equal(error.code, "NotImplemented");
 });

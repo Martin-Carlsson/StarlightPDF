@@ -38,7 +38,7 @@ export function remote<A extends unknown[]>(fn: (...args: A) => boolean): Remote
   const cells = new Int32Array(new SharedArrayBuffer(8));
   const answer = (args: A): number => {
     try {
-      return fn(...args) ? 1 : 0;
+      return fn(...args) === true ? 1 : 0;
     } catch {
       return THREW;
     }
@@ -63,7 +63,8 @@ function invoke<A extends unknown[]>(
     throw new RangeError(`no callback ${id}`);
   }
   if (typeof callback === "function") {
-    return callback(...args);
+    // Only true goes on, as for a callback on a page's main thread.
+    return callback(...args) === true;
   }
   Atomics.store(callback.cells, 0, 0);
   callback.port.postMessage(args, transfer);

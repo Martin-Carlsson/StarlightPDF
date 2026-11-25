@@ -1,4 +1,4 @@
-// The package's API as the tests expect it (issues #147, #148 and #149).
+// The package's API as the tests expect it (issues #147, #148, #149 and #150).
 
 export type Source = object;
 
@@ -78,6 +78,16 @@ export interface DrawImageOptions {
   readonly y?: number;
 }
 
+export interface RenderOptions {
+  readonly colorSpace?: string;
+  readonly fit?: number;
+  readonly format?: string;
+  readonly hiddenLayers?: readonly never[];
+  readonly quality?: number;
+  readonly resolution?: number;
+  readonly usage?: string;
+}
+
 export interface ObjectId {
   readonly generation: number;
   readonly number: number;
@@ -105,6 +115,7 @@ export interface Deviation {
 export interface Page {
   boundary(options?: { readonly kind?: Boundary }): Promise<Rect>;
   drawImage(image: Source, mask?: Source | null, layer?: null, options?: DrawImageOptions): Promise<void>;
+  render(sink: Sink, progress?: Progress | null, options?: RenderOptions): Promise<void>;
   rotation(): Promise<number>;
 }
 
@@ -153,6 +164,7 @@ export interface Api {
     fromBlob(blob: Blob): Promise<Source>;
     fromBytes(bytes: Uint8Array): Promise<Source>;
   };
+  capabilities(): Promise<readonly string[]>;
   headerVersion(bytes: Uint8Array): Promise<[number, number]>;
   libraryVersion(): Promise<string>;
 }

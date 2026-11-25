@@ -1,0 +1,811 @@
+# operation	arguments	expected
+# render page index= (default 0) with format=, color_space=, resolution=, fit=, quality= and usage=, each the default unless given;
+#   cancel[=N]: a progress callback that returns false after N calls, by default 0. With read=warnings the document's
+#   warning clauses after the render, or none.
+#   Otherwise WxH, then x,y=colour[~T]: x and y count pixels from the top left, the colour is hex, rrggbb of RGB or gg of grey,
+#   as the file's channels must be, and T (default 0) is the most each channel may differ: 0 where no arithmetic can round,
+#   1 for one rounding, otherwise as said.
+# Output of the page as displayed. PNG is W3C PNG with 8 bits and no alpha, JPEG is ITU-T T.81 baseline read as ITU-T T.871.
+# ISO 32000-2:2020, 11.4.7: what nothing paints is opaque white. Default: PNG, RGB, 72 pixels an inch.
+# A JPEG pixel lies in a flat 16 x 16 block; it allows its DC quantisation, YCbCr rounding and conversion: 3 at the default quality.
+render_bytes	tests/corpus/render/output-colours.pdf	100x100 25,25=ff0000 75,25=00ff00 25,75=0000ff 75,75=ffffff
+render_bytes	tests/corpus/render/output-colours.pdf	format=Png	color_space=Rgb	usage=Display	strict	100x100 25,25=ff0000 75,25=00ff00 25,75=0000ff 75,75=ffffff
+render_bytes	tests/corpus/render/output-colours.pdf	format=Jpeg	100x100 25,25=ff0000~3 75,25=00ff00~3 25,75=0000ff~3 75,75=ffffff~3
+render_bytes	tests/corpus/render/output-colours.pdf	format=Jpeg	quality=100	100x100 25,25=ff0000~2 75,25=00ff00~2 25,75=0000ff~2 75,75=ffffff~2
+render_bytes	tests/corpus/render/output-colours.pdf	format=Jpeg	quality=1	100x100 75,75=ffffff~1
+render_bytes	tests/corpus/render/output-colours.pdf	format=Png	quality=1	100x100 25,25=ff0000 75,25=00ff00 25,75=0000ff 75,75=ffffff
+render_bytes	tests/corpus/render/output-colours.pdf	format=Jpeg	fit=75	75x75 10,10=ff0000~3 55,10=00ff00~3 10,55=0000ff~3 70,70=ffffff~3
+# ISO 32000-2:2020, 10.4.2: grey is 0.30 R + 0.59 G + 0.11 B of the encoded values, after compositing.
+render_bytes	tests/corpus/render/output-colours.pdf	color_space=Gray	100x100 25,25=4d~1 75,25=96~1 25,75=1c~1 75,75=ff
+render_bytes	tests/corpus/render/output-colours.pdf	format=Jpeg	color_space=Gray	100x100 25,25=4d~3 75,25=96~3 25,75=1c~3 75,75=ff~3
+# ISO 32000-2:2020, 7.7.3.3: Rotate turns the page clockwise as displayed.
+render_bytes	tests/corpus/render/output-rotate-90.pdf	60x100 10,10=ff0000 50,10=00ff00 50,90=0000ff 10,90=ffffff
+render_bytes	tests/corpus/render/output-rotate-180.pdf	100x60 90,10=ff0000 90,50=00ff00 10,50=0000ff 10,10=ffffff
+render_bytes	tests/corpus/render/output-rotate-270.pdf	60x100 50,90=ff0000 10,90=00ff00 10,10=0000ff 50,10=ffffff
+# ISO 32000-2:2020, 14.11.2: the crop box clipped to the media box is the page shown.
+render_bytes	tests/corpus/render/output-crop.pdf	100x80 10,70=ff0000 90,10=00ff00 10,10=ffffff 90,70=ffffff
+render_bytes	tests/corpus/render/output-crop-clamped.pdf	100x70 10,60=ff0000 90,10=00ff00 10,10=ffffff
+render_bytes	tests/corpus/render/output-crop-rotate.pdf	80x100 10,10=ff0000 70,90=00ff00 70,10=ffffff
+# ISO 32000-2:2020, 7.7.3.4 and 7.8.2: inherited MediaBox, Rotate and Resources; Contents streams read as one.
+render_bytes	tests/corpus/render/output-inherited.pdf	index=1	50x100 25,25=0000ff 25,75=ffffff
+render_bytes	tests/corpus/render/output-inherited.pdf	30x30 15,15=ffffff
+# ISO 32000-2:2020, 7.7.3.3: UserUnit scales default user space.
+render_bytes	tests/corpus/render/output-user-unit.pdf	100x100 25,50=ff0000 75,50=ffffff
+render_bytes	tests/corpus/render/output-user-unit.pdf	resolution=144	200x200 50,100=ff0000 150,100=ffffff
+# resolution is pixels an inch, of 72 points (ISO 32000-2:2020, 8.3.2.3); fit makes the longer side exactly that many pixels
+#   and overrides resolution. Sides round to the nearest pixel, at least 1.
+render_bytes	tests/corpus/render/output-rotate-90.pdf	resolution=144	120x200 20,20=ff0000 100,20=00ff00 100,180=0000ff 20,180=ffffff
+render_bytes	tests/corpus/render/output-rotate-90.pdf	fit=50	30x50 5,5=ff0000 25,5=00ff00 25,45=0000ff 5,45=ffffff
+render_bytes	tests/corpus/render/output-rotate-90.pdf	fit=200	resolution=10	120x200 20,20=ff0000 100,20=00ff00 100,180=0000ff 20,180=ffffff
+render_bytes	tests/corpus/render/output-crop.pdf	fit=200	200x160 20,140=ff0000 180,20=00ff00 20,20=ffffff
+render_bytes	tests/corpus/render/output-crop.pdf	resolution=150	208x167 20,145=ff0000 187,20=00ff00 20,20=ffffff
+render_bytes	tests/corpus/render/output-size.pdf	resolution=4800	200x133 100,66=ff0000
+render_bytes	tests/corpus/render/output-size.pdf	fit=100	100x67 50,33=ff0000
+render_bytes	tests/corpus/render/output-blank.pdf	3x2 1,1=ffffff
+render_bytes	tests/corpus/render/output-blank.pdf	resolution=1	1x1 0,0=ffffff
+render_bytes	tests/corpus/render/output-blank.pdf	fit=1	1x1 0,0=ffffff
+render_bytes	tests/corpus/render/output-thin.pdf	14400x1 10,0=ff0000 14000,0=ffffff
+render_bytes	tests/corpus/render/output-thin.pdf	fit=65536	65536x5 10,1=ff0000 65000,1=ffffff
+# A side over 65,536 pixels: LimitExceeded.
+render_bytes	tests/corpus/render/output-thin.pdf	resolution=328	LimitExceeded
+# ITU-T T.81, B.2.2: a JPEG side is at most 65,535.
+render_bytes	tests/corpus/render/output-thin.pdf	format=Jpeg	fit=65536	LimitExceeded
+# resolution is 1 to 4800, fit 1 to 65536, quality 1 to 100; each is validated even where it has no effect.
+render_bytes	tests/corpus/render/output-blank.pdf	resolution=0	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	resolution=4801	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	fit=10	resolution=0	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	fit=0	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	fit=65537	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	format=Jpeg	quality=0	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	format=Jpeg	quality=101	InvalidArgument
+render_bytes	tests/corpus/render/output-blank.pdf	format=Png	quality=0	InvalidArgument
+# Outputs out of scope: CMYK, TIFF and HEIF.
+render_bytes	tests/corpus/render/output-blank.pdf	color_space=Cmyk	NotImplemented
+render_bytes	tests/corpus/render/output-blank.pdf	format=Tiff	NotImplemented
+render_bytes	tests/corpus/render/output-blank.pdf	format=Heif	NotImplemented
+# A progress callback that returns false cancels.
+render_bytes	tests/corpus/render/output-colours.pdf	cancel	Cancelled
+# ISO 32000-2:2020, 12.5.3: Display draws unless Hidden or NoView, Print only with Print and not Hidden.
+#   Cells from the top left. annotation-display: none, Print, NoView, NoView Print, ToggleNoView, ToggleNoView Print,
+#   NoView ToggleNoView, NoView ToggleNoView Print.
+render_bytes	tests/corpus/render/annotation-display.pdf	usage=Print	100x100 12,25=ffffff 37,25=00ff00 62,25=ffffff 87,25=ff0000 12,75=ffffff 37,75=0000ff 62,75=ffffff 87,75=00ff00
+render_bytes	tests/corpus/render/annotation-display.pdf	100x100 12,25=ff0000 37,25=00ff00 62,25=ffffff 87,25=ffffff 12,75=00ff00 37,75=0000ff 62,75=ffffff 87,75=ffffff
+# ISO 32000-2:2020, 12.5.3: NoZoom, NoRotate, ReadOnly, Locked and LockedContents hide nothing; Print alone lets each print.
+render_bytes	tests/corpus/render/annotation-print.pdf	usage=Display	100x100 10,25=ff0000 30,25=00ff00 50,25=0000ff 70,25=ff0000 90,25=00ff00 10,75=0000ff 30,75=ff0000 50,75=00ff00 70,75=0000ff 90,75=ff0000
+render_bytes	tests/corpus/render/annotation-print.pdf	usage=Print	100x100 10,25=ff0000 30,25=00ff00 50,25=0000ff 70,25=ff0000 90,25=00ff00 10,75=ffffff 30,75=ffffff 50,75=ffffff 70,75=ffffff 90,75=ffffff
+# ISO 32000-2:2020, 12.5.3: Hidden hides for both; Invisible only an annotation of no standard type.
+#   Cells: Hidden, Hidden Print, Hidden NoView Print, Invisible, then of unknown type Invisible Print, Invisible, Print, none.
+render_bytes	tests/corpus/render/annotation-hidden.pdf	usage=Display	100x100 12,25=ffffff 37,25=ffffff 62,25=ffffff 87,25=ff0000 12,75=ffffff 37,75=ffffff 62,75=ff0000 87,75=00ff00
+render_bytes	tests/corpus/render/annotation-hidden.pdf	usage=Print	100x100 12,25=ffffff 37,25=ffffff 62,25=ffffff 87,25=ff0000 12,75=ffffff 37,75=ffffff 62,75=ff0000 87,75=ffffff
+# ISO 32000-2:2020, 12.5.5: Matrix, then the box onto Rect, clipped to BBox, from the initial graphics state;
+#   AS selects the state, a missing one draws nothing, as does an annotation without an appearance stream.
+render_bytes	tests/corpus/render/annotation-appearance.pdf	100x100 40,75=ff0000 20,25=0000ff 75,25=00ff00 95,25=ffffff 55,25=ffffff 75,58=ffffff 85,85=ffffff 63,85=000000
+# ISO 32000-2:2020, 12.5.3: NoRotate keeps the upper left corner and stays upright on a rotated page.
+render_bytes	tests/corpus/render/annotation-rotated.pdf	100x100 50,20=ff0000 70,20=0000ff 30,20=ffffff 30,70=ff0000 30,90=0000ff
+# ISO 32000-2:2020, 12.5.5: an appearance subdictionary needs AS to choose a state; without it nothing is drawn and
+#   it warns.
+render_bytes	tests/corpus/render/annotation-appearance-without-state.pdf	100x100 20,80=ffffff 80,20=00ff00
+render_bytes	tests/corpus/render/annotation-appearance-without-state.pdf	read=warnings	ISO 32000-2:2020, 12.5.5
+# ISO 32000-2:2020, 8.11.2, 8.11.3 and 8.11.4: what the default configuration hides makes no marks but keeps its state changes;
+#   membership by P or VE, which wins; sections, nested ones, XObjects and annotations.
+render_bytes	tests/corpus/render/layer-hidden.pdf	100x100 10,12=ffffff 30,12=ff0000 50,12=ffffff 70,12=ffffff 90,12=ff0000 10,37=ffffff 30,37=ffffff 50,37=ffffff 70,37=ff0000 90,37=ffffff 10,62=ff0000 30,62=ffffff 50,62=ffffff 70,62=ff0000 90,62=ffffff 10,87=ff0000 30,87=ffffff 50,87=0000ff 70,87=ff0000 90,87=ff0000
+render_bytes	tests/corpus/render/layer-hidden.pdf	usage=Print	100x100 10,12=ffffff 30,12=ff0000 50,12=ffffff 70,12=ffffff 90,12=ff0000 10,37=ffffff 30,37=ffffff 50,37=ffffff 70,37=ff0000 90,37=ffffff 10,62=ff0000 30,62=ffffff 50,62=ffffff 70,62=ff0000 90,62=ffffff 10,87=ff0000 30,87=ffffff 50,87=0000ff 70,87=ff0000 90,87=ff0000
+# ISO 32000-2:2020, 8.11.4.3: BaseState, then ON, then OFF. The usage applications of AS are not applied.
+render_bytes	tests/corpus/render/layer-hidden-base.pdf	100x100 16,50=ff0000 49,50=ffffff 82,50=ffffff
+# ISO 32000-2:2020, 8.11.2.3: a visibility expression whose operands are itself and numbers is unusable, so like an
+#   absent one it has no effect: the content in it is drawn.
+render_bytes	tests/corpus/render/layer-visibility-self-referring.pdf	100x100 5,95=0000ff 50,50=ffffff
+# ISO 32000-2:2020, 8.5.3.3: nonzero winding, implicit closing, F as f.
+render_bytes	tests/corpus/render/path-fill-nonzero.pdf	100x100 25,50=ff0000 75,50=ffffff 58,50=ff0000 3,3=ff0000
+# ISO 32000-2:2020, 8.5.3.3: even-odd.
+render_bytes	tests/corpus/render/path-fill-even-odd.pdf	100x100 50,50=ffffff 20,50=ff0000 3,3=ffffff
+# ISO 32000-2:2020, 8.4.3.3: caps reach half the width. 8.5.3.2: a degenerate subpath is a dot only with round caps.
+render_bytes	tests/corpus/render/path-cap-butt.pdf	100x100 50,50=ff0000 35,50=ff0000 25,50=ffffff 50,85=ffffff
+render_bytes	tests/corpus/render/path-cap-round.pdf	100x100 50,50=ff0000 35,50=ff0000 23,50=ff0000 21,41=ffffff 50,85=ff0000
+render_bytes	tests/corpus/render/path-cap-square.pdf	100x100 50,50=ff0000 35,50=ff0000 23,50=ff0000 22,42=ff0000 16,50=ffffff 50,85=ffffff
+# ISO 32000-2:2020, 8.4.3.4: joins; a closed subpath joins at its start.
+render_bytes	tests/corpus/render/path-join-miter.pdf	100x100 45,69=ff0000 79,79=ff0000 5,24=ff0000
+render_bytes	tests/corpus/render/path-join-round.pdf	100x100 45,69=ff0000 77,77=ff0000 79,79=ffffff
+render_bytes	tests/corpus/render/path-join-bevel.pdf	100x100 45,69=ff0000 73,73=ff0000 77,77=ffffff
+# ISO 32000-2:2020, 8.4.3.5: a right angle has a miter ratio of 1.414: bevelled at 1.3, mitred at 1.5.
+render_bytes	tests/corpus/render/path-miter-limit.pdf	100x100 35,45=ffffff 85,45=ff0000 30,25=ff0000
+# ISO 32000-2:2020, 8.4.3.6: phase, an odd array cycled, the pattern restarted at each subpath.
+render_bytes	tests/corpus/render/path-dash.pdf	100x100 10,25=ff0000 24,25=ffffff 40,25=ff0000 2,75=ffffff 15,75=ff0000 30,75=ffffff 7,50=ff0000 22,50=ffffff 60,50=ff0000 72,50=ffffff
+# ISO 32000-2:2020, 8.5.4: clips intersect by their own rule until Q.
+render_bytes	tests/corpus/render/path-clip.pdf	100x100 50,50=ffffff 37,50=ff0000 50,72=ff0000 20,50=ffffff 80,50=ffffff 96,3=0000ff
+# ISO 32000-2:2020, 8.5.2: c takes two control points, v the current point as the first, y the end as the second.
+render_bytes	tests/corpus/render/path-curves.pdf	100x100 50,16=ff0000 50,5=ffffff 75,56=00ff00 25,56=ffffff 25,89=0000ff 75,89=ffffff
+# ISO 32000-2:2020, 8.5.3: S leaves open what s closes; B and b fill nonzero, B* and b* even-odd, then stroke; n paints nothing.
+render_bytes	tests/corpus/render/path-paint-operators.pdf	100x100 16,17=ffffff 3,17=ffffff 49,17=ffffff 36,17=0000ff 82,17=00ff00 69,17=0000ff 16,50=ffffff 3,50=0000ff 49,50=00ff00 36,50=0000ff 82,50=ffffff 69,50=0000ff 16,83=ffffff 3,83=ffffff 49,83=00ff00 82,83=ffffff
+# ISO 32000-2:2020, 8.4.3.2: the width is in user space, so the CTM shapes it.
+render_bytes	tests/corpus/render/path-stroke-transform.pdf	100x100 30,35=ff0000 30,25=ffffff 80,50=ff0000 70,50=ffffff 91,50=ffffff
+# ISO 32000-2:2020, 8.4.2 and 8.4.5: gs sets line parameters and Q restores them.
+render_bytes	tests/corpus/render/path-state.pdf	100x100 25,20=ff0000 50,30=ff0000 50,70=ffffff 16,25=ffffff
+# Coordinates far outside the page clip to it; a singular CTM paints nothing (ISO 32000-2:2020, 8.3.4).
+render_bytes	tests/corpus/render/path-extremes.pdf	100x100 50,25=ff0000 2,2=ff0000 50,75=ffffff
+# ISO 32000-2:2020, 8.5.4: a clip far to the right of the page lets nothing through, until Q.
+render_bytes	tests/corpus/render/path-clip-far.pdf	100x100 50,50=ffffff 99,50=ffffff 0,2=ffffff 10,90=0000ff
+# ISO 32000-2:2020, 8.6.4.2 and 8.6.4.3: device values are the output; out of range clamps.
+render_bytes	tests/corpus/render/colour-device-gray.pdf	100x100 12,50=000000 37,50=333333 62,50=ffffff 87,50=cccccc
+render_bytes	tests/corpus/render/colour-device-rgb.pdf	100x100 12,50=ff0000 37,50=3366cc 62,50=cc6633 87,50=ff0033
+# ISO 32000-2:2020, 10.4.2: R = 1 - min(1, C + K), likewise G with M and B with Y.
+render_bytes	tests/corpus/render/colour-device-cmyk.pdf	100x100 16,50=00ffff 50,50=996633 83,50=006600
+# ISO 32000-2:2020, 8.6.5.2 and 8.6.5.3: gamma, matrix, then XYZ under D65 to sRGB (IEC 61966-2-1); one rounding.
+render_bytes	tests/corpus/render/colour-cal-gray.pdf	100x100 16,50=ffffff~1 50,50=bcbcbc~1 83,50=898989~1
+render_bytes	tests/corpus/render/colour-cal-rgb.pdf	100x100 16,50=ffffff~1 50,50=bc8963~1 83,50=bc8963~1
+# ISO 32000-2:2020, 8.6.5.4: L*a*b*, a* and b* clamped to Range, which is -100 to 100 unless given.
+render_bytes	tests/corpus/render/colour-lab.pdf	100x100 16,50=777777~1 50,50=bc5857~1 83,50=bc5857~1
+# ISO 32000-2:2020, 8.6.5.5; ICC.1:2022, 10.6, 10.18 and Annex F: matrix and curves, versions 2 and 4; one rounding.
+render_bytes	tests/corpus/render/colour-icc.pdf	100x100 25,50=ffffff~1 75,50=bc8963~1
+render_file	tests/corpus/render/colour-icc.pdf	100x100 25,50=ffffff~1 75,50=bc8963~1
+render_bytes	tests/corpus/render/colour-icc-v2.pdf	100x100 25,50=89d147~1 75,50=ff8989~1
+render_bytes	tests/corpus/render/colour-icc-parametric.pdf	100x100 25,50=3366cc~1 75,50=05cc66~1
+# ICC.1:2022, 10.10, 10.11, 10.12 and 6.3.4.2: 8-bit, legacy 16-bit and A-to-B tables to L*a*b* under D50; 2 for the adaptation to D65.
+render_bytes	tests/corpus/render/colour-icc-tables.pdf	100x100 25,50=b95857~2 75,50=b95857~2
+render_bytes	tests/corpus/render/colour-icc-cmyk.pdf	100x100 25,50=777777~2 75,50=ffffff~2
+# ISO 32000-2:2020, 8.6.5.5: a profile that cannot be used gives way to Alternate.
+render_bytes	tests/corpus/render/colour-icc-alternate.pdf	100x100 50,50=bc8963~1
+# ISO 32000-2:2020, 8.6.5.6: DefaultGray stands in for DeviceGray.
+render_bytes	tests/corpus/render/colour-default-space.pdf	100x100 50,50=898989~1
+# ISO 32000-2:2020, 8.6.6.3: the index rounds and clamps to 0..hival; the table is a string or a stream, in the base space.
+render_bytes	tests/corpus/render/colour-indexed.pdf	100x100 10,50=ff0000 30,50=336699 50,50=00cc66 70,50=00cc66 90,50=996633
+# ISO 32000-2:2020, 8.6.6.4: the tint through its function; None marks nothing, All is 1 - tint on every colorant.
+render_bytes	tests/corpus/render/colour-separation.pdf	100x100 12,50=bfcce6~1 37,50=003399 62,50=00ff00 87,50=333333
+# ISO 32000-2:2020, 8.6.6.5: every tint through one function; all None marks nothing.
+render_bytes	tests/corpus/render/colour-device-n.pdf	100x100 16,50=0000ff 50,50=cc66ff 83,50=00ff00
+# ISO 32000-2:2020, 8.6.8: cs sets its space's initial colour: black, the first index, the full tint.
+render_bytes	tests/corpus/render/colour-initial.pdf	100x100 10,50=000000 30,50=000000 50,50=000000 70,50=336699 90,50=003399
+# ISO 32000-2:2020, 8.6.8: stroking operators set the stroking colour only.
+render_bytes	tests/corpus/render/colour-stroke.pdf	100x100 12,50=333333 37,50=3366cc 62,50=996633 87,50=cc6633 25,50=ffffff
+# ISO 32000-2:2020, 8.6.5.6 and 8.6.8: cs on a remapped DeviceCMYK sets 0 0 0 1, which DefaultCMYK takes; here C K 0 as RGB.
+render_bytes	tests/corpus/render/colour-default-space-initial.pdf	100x100 50,50=00ff00
+# ISO 32000-2:2020, 8.6.5.5 and 8.6.8: ICCBased starts with every component 0, also where DeviceCMYK stands in for its profile.
+render_bytes	tests/corpus/render/colour-icc-initial.pdf	100x100 25,50=ffffff 75,50=00ff00
+# ISO 32000-2:2020, 7.10.2: samples interpolated linearly, the first input varying fastest.
+render_bytes	tests/corpus/render/function-0.pdf	100x100 16,50=663300 50,50=cc6600 83,50=33ff66
+render_bytes	tests/corpus/render/function-0-inputs.pdf	100x100 16,50=00ff00 50,50=0000ff 83,50=290aa3~1
+# ISO 32000-2:2020, 7.10.3: C0 + x^N (C1 - C0).
+render_bytes	tests/corpus/render/function-2.pdf	100x100 16,50=bf0040~1 50,50=5c00a3~1 83,50=ff0000
+# ISO 32000-2:2020, 7.10.4: half-open subdomains, each through Encode.
+render_bytes	tests/corpus/render/function-3.pdf	100x100 16,50=cc0000 50,50=0000ff 83,50=00cc33
+# ISO 32000-2:2020, 7.10.5: arithmetic, trigonometric, rounding, stack, relational, bitwise and conditional operators.
+render_bytes	tests/corpus/render/function-4.pdf	100x100 25,50=006600 75,50=330000
+render_bytes	tests/corpus/render/function-4-operators.pdf	100x100 7,50=9933cc 21,50=cc6633~1 36,50=996633 50,50=cc3366 64,50=cc6633 78,50=cc6633~1 93,50=b34d33~1
+# ISO 32000-2:2020, 7.10.3: with a negative N no input may be 0: a warning, and the rest is drawn; strict fails.
+render_bytes	tests/corpus/render/function-2-negative-power.pdf	100x100 25,50=00ff00
+render_bytes	tests/corpus/render/function-2-negative-power.pdf	read=warnings	ISO 32000-2:2020, 7.10.3
+render_bytes	tests/corpus/render/function-2-negative-power.pdf	strict	Malformed
+# ISO 32000-2:2020, 8.7.3: coloured and uncoloured cells in pattern space, not the space painted in.
+render_bytes	tests/corpus/render/pattern-tiling.pdf	100x100 4,25=ff0000 14,25=ffffff 24,25=ff0000 4,75=0000ff 14,75=ffffff 64,75=0000ff
+render_bytes	tests/corpus/render/pattern-tiling-matrix.pdf	100x100 10,84=ff0000 40,44=ff0000 70,84=ff0000 25,84=ffffff 10,64=ffffff 20,84=ffffff
+# ISO 32000-2:2020, 8.7.4.3: as a pattern a shading has its own matrix and shows Background outside.
+render_bytes	tests/corpus/render/pattern-shading.pdf	100x100 30,50=be0041~2 70,50=3e00c1~2 4,50=00ff00 96,50=00ff00
+# Shadings allow 2: one rounding and one of interpolation; a pixel has the colour at its centre, which is also its mean where linear.
+# ISO 32000-2:2020, 8.7.4.5.2: type 1 puts x and y through Matrix and the function, and marks nothing outside Domain.
+render_bytes	tests/corpus/render/shading-1.pdf	100x100 25,25=41be00~2 75,75=c13e00~2 96,50=ffffff
+# ISO 32000-2:2020, 8.7.4.5.3: type 2 along its axis, extended only at the end said; sh ignores Background (8.7.4.3).
+render_bytes	tests/corpus/render/shading-2.pdf	100x100 30,50=be0041~2 70,50=3e00c1~2 30,10=be0041~2 4,50=ffffff 96,50=0000ff
+# ISO 32000-2:2020, 8.7.4.5.4: type 3 between two circles; where two circles cover a point the later shows.
+render_bytes	tests/corpus/render/shading-3.pdf	100x100 80,50=63009c~2 50,20=690096~2 3,3=ffffff
+render_bytes	tests/corpus/render/shading-3-overlap.pdf	100x100 50,50=3e00c1~2 40,50=680097~2 2,50=ffffff 50,30=ffffff
+# ISO 32000-2:2020, 8.7.4.5.5: type 4, Gouraud triangles, sharing an edge by flag; parameters or colours at the vertices.
+render_bytes	tests/corpus/render/shading-4.pdf	100x100 30,70=80413e~2 70,80=20c11e~2 80,20=ffffff
+render_bytes	tests/corpus/render/shading-4-flags.pdf	100x100 35,64=86c23d~2 55,74=61bc00~2 80,52=ffffff 70,5=ffffff
+render_bytes	tests/corpus/render/shading-4-function.pdf	100x100 30,70=ee0011~2 70,80=6d0092~2 80,20=ffffff
+# ISO 32000-2:2020, 8.7.4.5.6: type 5, rows of vertices.
+render_bytes	tests/corpus/render/shading-5.pdf	100x100 50,70=837c00~2 50,30=00837c~2 4,50=ffffff
+# ISO 32000-2:2020, 8.7.4.5.7 and 8.7.4.5.8: types 6 and 7, colours bilinear in the parameters, a side shared by flag;
+#   3 where curved sides or inner points are solved by subdivision.
+render_bytes	tests/corpus/render/shading-6.pdf	100x100 30,50=bb0044~2 70,50=3d00c2~2 4,50=ffffff
+render_bytes	tests/corpus/render/shading-6-flags.pdf	100x100 20,30=a2005e~2 75,70=009669~2 98,50=ffffff
+render_bytes	tests/corpus/render/shading-6-curved.pdf	100x100 50,50=7c0083~3 50,30=ffffff
+render_bytes	tests/corpus/render/shading-7.pdf	100x100 50,50=5200ad~3 40,50=6f0090~3 4,50=ffffff
+render_bytes	tests/corpus/render/shading-7-flags.pdf	100x100 20,83=752d1a~2 20,16=c46d92~2 65,16=92c46d~2 65,83=1a752d~2 98,50=ffffff
+# ISO 32000-2:2020, 8.7, 7.8.3: an unknown PatternType paints nothing and warns; the rest of B is still painted:
+#   a stroke reaching 10 from each side of the triangle, whose middle is over 17 from them.
+render_bytes	tests/corpus/render/pattern-type-unknown.pdf	100x100 50,80=ff0000 50,60=ffffff 5,5=ffffff
+render_bytes	tests/corpus/render/pattern-type-unknown.pdf	read=warnings	ISO 32000-2:2020, 8.7
+# ISO 32000-2:2020, 8.7.3.1: a cell begins as its parent stream began: black on the page, red in a form begun with red.
+render_bytes	tests/corpus/render/pattern-tiling-parent-state.pdf	100x100 12,25=000000 37,25=ffffff 62,25=000000 12,75=ff0000 37,75=ffffff 62,75=ff0000
+# ISO 32000-2:2020, 8.7.4.2: outside its ExtGState a shading pattern has the state its parent stream began with,
+#   so the group of that soft mask paints black, not with the pattern: opaque on the left half.
+render_bytes	tests/corpus/render/pattern-shading-parent-state.pdf	100x100 25,50=ff0000 75,50=ffffff
+# ISO 32000-2:2020, 8.7.3: 33 distinct patterns, each painting with the next, are deeper than content may nest (32):
+#   strict fails LimitExceeded.
+render_bytes	tests/corpus/render/pattern-nested-past-limit.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.9.3 and 8.9.5: 1, 2, 4, 8 and 16 bits, high first, rows padded to bytes, the first row at the top.
+render_bytes	tests/corpus/render/image-bits-1.pdf	100x100 16,25=000000 50,25=ffffff 83,25=000000 16,75=ffffff 50,75=000000 83,75=ffffff
+render_bytes	tests/corpus/render/image-bits-2.pdf	100x100 16,25=000000 50,25=555555 83,25=aaaaaa 16,75=ffffff 50,75=aaaaaa 83,75=555555
+render_file	tests/corpus/render/image-bits-2.pdf	100x100 16,25=000000 50,25=555555 83,25=aaaaaa 16,75=ffffff 50,75=aaaaaa 83,75=555555
+render_bytes	tests/corpus/render/image-bits-4.pdf	100x100 16,25=000000 50,25=555555 83,25=aaaaaa 16,75=ffffff 50,75=aaaaaa 83,75=555555
+render_bytes	tests/corpus/render/image-bits-8.pdf	100x100 12,25=000000 37,25=404040 62,25=808080 87,25=c8c8c8 12,75=ffffff 37,75=101010 62,75=202020 87,75=606060
+render_bytes	tests/corpus/render/image-bits-16.pdf	100x100 25,25=000000 75,25=333333~1 25,75=cbcbcb~1 75,75=ffffff
+# ISO 32000-2:2020, 8.9.5.2: Decode maps samples linearly; its default follows the colour space.
+render_bytes	tests/corpus/render/image-decode.pdf	100x100 25,50=ffffff 75,50=333333
+render_bytes	tests/corpus/render/image-indexed.pdf	100x100 16,25=ff0000 50,25=00ff00 83,25=0000ff 16,75=336699 50,75=0000ff 83,75=00ff00
+render_bytes	tests/corpus/render/image-lab.pdf	100x100 50,50=787777~1
+render_bytes	tests/corpus/render/image-icc.pdf	100x100 50,50=bc8963~1
+render_bytes	tests/corpus/render/image-colour-spaces.pdf	100x100 25,25=00ffff 75,25=996633 25,75=0000ff 75,75=cc66ff
+# ISO 32000-2:2020, 8.9.4: the unit square through the CTM, the first sample at (0, 1).
+render_bytes	tests/corpus/render/image-transform.pdf	100x100 25,75=ff0000 25,25=00ff00 75,75=0000ff 75,25=ffff00
+# ISO 32000-2:2020, 8.9.6.2: a stencil paints the fill colour where the sample is 0, or 1 with Decode [1 0].
+render_bytes	tests/corpus/render/image-mask-stencil.pdf	100x100 25,25=ff0000 75,25=ffffff 25,75=ffffff 75,75=00ff00
+# ISO 32000-2:2020, 8.9.6.3: an explicit mask of its own size leaves the backdrop where it is 1.
+render_bytes	tests/corpus/render/image-mask-explicit.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=0000ff 75,75=ff0000
+# ISO 32000-2:2020, 8.9.6.4: colour key ranges are inclusive, and every component must be inside.
+render_bytes	tests/corpus/render/image-mask-colour-key.pdf	100x100 12,50=ff0000 37,50=ffff00 62,50=0000ff 87,50=06ff00
+# ISO 32000-2:2020, 11.6.5.3: soft-mask images, their size and Matte; opacity allows one rounding.
+render_bytes	tests/corpus/render/image-mask-soft.pdf	100x100 25,25=ff0000 75,25=660099~1 25,75=0000ff 75,75=ff0000
+render_file	tests/corpus/render/image-mask-soft.pdf	100x100 25,25=ff0000 75,25=660099~1 25,75=0000ff 75,75=ff0000
+render_bytes	tests/corpus/render/image-mask-soft-matte.pdf	100x100 50,50=660099~1
+# ISO 32000-2:2020, 7.4.9: SMaskInData 0 ignores the opacity channel, 1 uses it, 2 says the colour is premultiplied.
+render_bytes	tests/corpus/render/image-mask-in-data.pdf	100x100 25,50=ff0000 75,50=bfbfff~1
+render_file	tests/corpus/render/image-mask-in-data.pdf	100x100 25,50=ff0000 75,50=bfbfff~1
+render_bytes	tests/corpus/render/image-mask-in-data-premultiplied.pdf	100x100 25,50=ff0000 75,50=bfbfff~1
+render_bytes	tests/corpus/render/image-mask-in-data-ignored.pdf	100x100 25,50=ff0000 75,50=0000ff
+# ISO 32000-2:2020, 8.9.7: abbreviated and full keys, abbreviated filters, data that holds EI.
+render_bytes	tests/corpus/render/image-inline.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=0000ff
+render_bytes	tests/corpus/render/image-inline-forms.pdf	100x100 16,16=ff0000 49,16=00ff00 82,16=0000ff 16,49=ffff00 49,49=ff00ff 82,49=00ff00 16,82=00ffff 49,82=000000 82,82=333333
+render_bytes	tests/corpus/render/image-inline-no-length.pdf	100x100 12,25=202020 37,25=454545 62,25=494949 87,25=202020 50,75=ff0000
+# ISO 32000-2:2020, 7.4.2 to 7.4.5: ASCIIHex, ASCII85, LZW, Flate, RunLength; also chained, with a predictor (7.4.4.4).
+render_bytes	tests/corpus/render/image-filter-ascii-hex.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_bytes	tests/corpus/render/image-filter-ascii85.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_bytes	tests/corpus/render/image-filter-lzw.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_bytes	tests/corpus/render/image-filter-flate.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_file	tests/corpus/render/image-filter-flate.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_bytes	tests/corpus/render/image-filter-run-length.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+render_bytes	tests/corpus/render/image-filter-chain.pdf	100x100 25,25=ff0000 75,25=0000ff 25,75=00ff00 75,75=000000
+# ISO 32000-2:2020, 7.4.6; ITU-T T.6 and T.4: Group 4, one-dimensional with BlackIs1 and byte alignment, mixed.
+render_bytes	tests/corpus/render/image-filter-ccitt.pdf	100x100 25,50=000000 75,50=ffffff
+render_file	tests/corpus/render/image-filter-ccitt.pdf	100x100 25,50=000000 75,50=ffffff
+render_bytes	tests/corpus/render/image-filter-ccitt-1d.pdf	100x100 25,25=000000 75,25=ffffff 25,75=ffffff 75,75=000000
+render_bytes	tests/corpus/render/image-filter-ccitt-mixed.pdf	100x100 12,25=ffffff 37,25=ffffff 87,25=000000 12,75=ffffff 37,75=000000 87,75=000000
+# ISO 32000-2:2020, 7.4.7; ITU-T T.88: an MMR generic region; a halftone whose patterns are in JBIG2Globals.
+render_bytes	tests/corpus/render/image-filter-jbig2.pdf	100x100 25,50=000000 75,50=ffffff
+render_bytes	tests/corpus/render/image-filter-jbig2-globals.pdf	100x100 25,50=000000 75,50=ffffff
+# ISO 32000-2:2020, 7.4.8; ITU-T T.81, T.871: baseline and progressive, subsampled, with restarts; 3 for IDCT (T.83) and YCbCr.
+render_bytes	tests/corpus/render/image-filter-dct.pdf	100x100 25,12=cc3366~3 75,12=339933~3 25,37=333399~3 75,37=cccc66~3 25,62=cc3366~3 75,62=339933~3 25,87=333399~3 75,87=cccc66~3
+render_file	tests/corpus/render/image-filter-dct.pdf	100x100 25,12=cc3366~3 75,12=339933~3 25,37=333399~3 75,37=cccc66~3 25,62=cc3366~3 75,62=339933~3 25,87=333399~3 75,87=cccc66~3
+# ITU-T T.81, A.3.3: the inverse DCT of given coefficients; 1 (T.83), 2 after a progressive encoder.
+render_bytes	tests/corpus/render/image-filter-dct-ac.pdf	100x100 3,6=aaaaaa~1 45,6=1f1f1f~1 15,93=c3c3c3~1 33,43=535353~1 55,6=aaaaaa~2 97,6=1f1f1f~2 67,93=c3c3c3~2 85,43=535353~2
+# ISO 32000-2:2020, 7.4.8: four components, plain and YCCK by the Adobe marker; stored inverted, put right by Decode.
+render_bytes	tests/corpus/render/image-filter-dct-cmyk.pdf	100x100 25,25=00ffff~1 75,25=996633~1 25,75=00ffff~2 75,75=996633~2
+# ISO 32000-2:2020, 7.4.9; ITU-T T.800: a lossless codestream.
+render_bytes	tests/corpus/render/image-filter-jpx.pdf	100x100 25,25=282828 75,25=808080 25,75=c8c8c8 75,75=ffffff
+render_file	tests/corpus/render/image-filter-jpx.pdf	100x100 25,25=282828 75,25=808080 25,75=c8c8c8 75,75=ffffff
+# ISO 32000-2:2020, 7.4.10: an Identity crypt filter leaves one stream of an encrypted file in clear.
+render_bytes	tests/corpus/render/image-filter-crypt.pdf	100x100 25,25=ff0000 75,25=0000ff 50,75=336699
+render_file	tests/corpus/render/image-filter-crypt.pdf	100x100 25,25=ff0000 75,25=0000ff 50,75=336699
+# Image data decoded, or declared, over the resource policy's decoded limit: LimitExceeded.
+render_bytes	tests/corpus/render/image-decoded-limit.pdf	decoded_limit=100000	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit.pdf	100x100 50,50=000000
+render_bytes	tests/corpus/render/image-decoded-limit-ccitt.pdf	decoded_limit=100000	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit-jbig2.pdf	decoded_limit=1000000	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit-dct.pdf	decoded_limit=100000	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit-jpx.pdf	decoded_limit=1000000	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit-jpx-declared.pdf	LimitExceeded
+render_bytes	tests/corpus/render/image-decoded-limit-jbig2-declared.pdf	decoded_limit=1000000	LimitExceeded
+# ITU-T T.88, 7.2.5: a decoder lists a segment's references before it finds the segment cut short:
+#   300,000 of them take 1,200,000 bytes, over the limit of 1,000,000, and are charged first.
+render_bytes	tests/corpus/render/image-decoded-limit-jbig2-references.pdf	decoded_limit=1000000	LimitExceeded
+# ITU-T T.800, A.6.6 and B.6: rows of precincts in tiles without columns, stepped through again at each of 32
+#   progression changes, are 293 million steps from under 1 KB: over the work limit.
+render_bytes	tests/corpus/render/image-work-limit-jpx-rows.pdf	LimitExceeded
+# ITU-T T.81, A.3.3, G.1.2 and B.2.5: coefficients given, odd terms in both directions, through progressive scans with
+#   spectral selection and successive approximation (DC and AC refined), the same with restarts every 2 blocks, and a
+#   baseline frame of 0 lines whose DNL says 20. Each sample is the inverse DCT of A.3.3, within 1 (ITU-T T.83).
+render_bytes	tests/corpus/render/image-filter-dct-scans.pdf	100x100 0,0=808080~1 1,0=7b7b7b~1 2,0=6f6f6f~1 3,0=686868~1 4,0=717171~1 5,0=6d6d6d~1 6,0=5c5c5c~1 7,0=5b5b5b~1 9,0=838383~1 10,0=797979~1 11,0=737373~1 12,0=7d7d7d~1 13,0=7b7b7b~1 14,0=6a6a6a~1 15,0=6a6a6a~1 16,0=838383~1 17,0=7e7e7e~1 18,0=767676~1 19,0=707070~1 0,1=868686~1 1,1=828282~1 2,1=777777~1 4,1=7b7b7b~1 5,1=717171~1 6,1=646464~1 7,1=626262~1 9,1=8a8a8a~1 10,1=808080~1 11,1=767676~1 12,1=868686~1 13,1=7e7e7e~1 15,1=707070~1 17,1=848484~1 18,1=7b7b7b~1 0,2=868686~1 1,2=888888~1 2,2=747474~1 3,2=727272~1 5,2=777777~1 6,2=656565~1 9,2=8f8f8f~1 10,2=7c7c7c~1 11,2=7b7b7b~1 12,2=858585~1 13,2=828282~1 14,2=727272~1 16,2=858585~1 17,2=898989~1 18,2=767676~1 19,2=777777~1 1,3=8e8e8e~1 2,3=818181~1 3,3=767676~1 4,3=898989~1 5,3=7b7b7b~1 7,3=6e6e6e~1 8,3=959595~1 9,3=959595~1 10,3=888888~1 11,3=7f7f7f~1 12,3=939393~1 13,3=868686~1 15,3=7a7a7a~1 16,3=8d8d8d~1 17,3=8e8e8e~1 18,3=818181~1 19,3=7a7a7a~1 2,4=737373~1 3,4=747474~1 4,4=7a7a7a~1 5,4=787878~1 6,4=696969~1 7,4=676767~1 9,4=8d8d8d~1 10,4=797979~1 11,4=7c7c7c~1 12,4=838383~1 13,4=828282~1 14,4=757575~1 15,4=727272~1 16,4=828282~1 19,4=777777~1 0,5=909090~1 1,5=8b8b8b~1 3,5=787878~1 5,5=7e7e7e~1 6,5=767676~1 7,5=707070~1 8,5=949494~1 9,5=909090~1 10,5=878787~1 12,5=919191~1 13,5=878787~1 15,5=7b7b7b~1 16,5=8b8b8b~1 17,5=888888~1 18,5=7f7f7f~1 19,5=797979~1 0,6=919191~1 1,6=8f8f8f~1 2,6=818181~1 4,6=878787~1 5,6=858585~1 6,6=757575~1 7,6=757575~1 8,6=949494~1 9,6=939393~1 10,6=868686~1 11,6=848484~1 12,6=8e8e8e~1 13,6=8e8e8e~1 14,6=7e7e7e~1 15,6=7f7f7f~1 16,6=8a8a8a~1 17,6=898989~1 18,6=7d7d7d~1 19,6=7c7c7c~1 0,7=979797~1 2,7=8a8a8a~1 3,7=818181~1 4,7=919191~1 5,7=8b8b8b~1 7,7=7c7c7c~1 8,7=9a9a9a~1 10,7=8e8e8e~1 11,7=868686~1 12,7=979797~1 13,7=939393~1 16,7=8f8f8f~1 18,7=858585~1 0,8=8b8b8b~1 1,8=868686~1 2,8=7f7f7f~1 3,8=7a7a7a~1 4,8=868686~1 6,8=777777~1 7,8=797979~1 8,8=858585~1 9,8=808080~1 11,8=767676~1 12,8=838383~1 14,8=767676~1 15,8=797979~1 16,8=818181~1 17,8=7c7c7c~1 18,8=787878~1 19,8=757575~1 0,9=8f8f8f~1 1,9=8c8c8c~1 2,9=848484~1 3,9=7c7c7c~1 4,9=8e8e8e~1 5,9=8a8a8a~1 9,9=858585~1 10,9=7e7e7e~1 13,9=888888~1 14,9=7c7c7c~1 15,9=7d7d7d~1 16,9=838383~1 1,10=909090~1 2,10=7d7d7d~1 3,10=808080~1 4,10=8b8b8b~1 5,10=8b8b8b~1 7,10=7e7e7e~1 8,10=838383~1 9,10=888888~1 10,10=767676~1 11,10=7a7a7a~1 12,10=878787~1 13,10=888888~1 14,10=7a7a7a~1 15,10=7c7c7c~1 16,10=7d7d7d~1 17,10=838383~1 18,10=717171~1 19,10=777777~1 0,11=929292~1 1,11=949494~1 2,11=878787~1 3,11=828282~1 4,11=989898~1 6,11=898989~1 7,11=848484~1 8,11=898989~1 9,11=8c8c8c~1 11,11=7c7c7c~1 12,11=939393~1 13,11=888888~1 14,11=868686~1 15,11=818181~1 16,11=828282~1 17,11=878787~1 18,11=797979~1 0,12=868686~1 1,12=8b8b8b~1 2,12=777777~1 3,12=7e7e7e~1 4,12=878787~1 5,12=878787~1 6,12=7d7d7d~1 7,12=7b7b7b~1 10,12=6e6e6e~1 12,12=818181~1 13,12=828282~1 15,12=777777~1 16,12=757575~1 17,12=7c7c7c~1 18,12=686868~1 19,12=737373~1 2,13=848484~1 6,13=878787~1 7,13=828282~1 8,13=848484~1 9,13=838383~1 10,13=7a7a7a~1 11,13=787878~1 12,13=8c8c8c~1 13,13=868686~1 14,13=828282~1 16,13=7c7c7c~1 18,13=737373~1 0,14=8d8d8d~1 2,14=818181~1 4,14=8e8e8e~1 5,14=919191~1 7,14=848484~1 9,14=818181~1 10,14=777777~1 12,14=868686~1 13,14=8b8b8b~1 15,14=7f7f7f~1 17,14=797979~1 19,14=727272~1 1,15=8f8f8f~1 2,15=898989~1 3,15=828282~1 4,15=959595~1 5,15=959595~1 6,15=858585~1 8,15=858585~1 9,15=838383~1 10,15=7e7e7e~1 11,15=787878~1 12,15=8c8c8c~1 14,15=7e7e7e~1 15,15=848484~1 16,15=7c7c7c~1 17,15=797979~1 18,15=767676~1 19,15=717171~1 30,0=808080~1 31,0=7b7b7b~1 32,0=6f6f6f~1 33,0=686868~1 34,0=717171~1 35,0=6d6d6d~1 36,0=5c5c5c~1 37,0=5b5b5b~1 39,0=838383~1 40,0=797979~1 41,0=737373~1 42,0=7d7d7d~1 43,0=7b7b7b~1 44,0=6a6a6a~1 45,0=6a6a6a~1 46,0=838383~1 47,0=7e7e7e~1 48,0=767676~1 49,0=707070~1 30,1=868686~1 31,1=828282~1 32,1=777777~1 34,1=7b7b7b~1 35,1=717171~1 36,1=646464~1 37,1=626262~1 39,1=8a8a8a~1 40,1=808080~1 41,1=767676~1 42,1=868686~1 43,1=7e7e7e~1 45,1=707070~1 47,1=848484~1 48,1=7b7b7b~1 30,2=868686~1 31,2=888888~1 32,2=747474~1 33,2=727272~1 35,2=777777~1 36,2=656565~1 39,2=8f8f8f~1 40,2=7c7c7c~1 41,2=7b7b7b~1 42,2=858585~1 43,2=828282~1 44,2=727272~1 46,2=858585~1 47,2=898989~1 48,2=767676~1 49,2=777777~1 31,3=8e8e8e~1 32,3=818181~1 33,3=767676~1 34,3=898989~1 35,3=7b7b7b~1 37,3=6e6e6e~1 38,3=959595~1 39,3=959595~1 40,3=888888~1 41,3=7f7f7f~1 42,3=939393~1 43,3=868686~1 45,3=7a7a7a~1 46,3=8d8d8d~1 47,3=8e8e8e~1 48,3=818181~1 49,3=7a7a7a~1 32,4=737373~1 33,4=747474~1 34,4=7a7a7a~1 35,4=787878~1 36,4=696969~1 37,4=676767~1 39,4=8d8d8d~1 40,4=797979~1 41,4=7c7c7c~1 42,4=838383~1 43,4=828282~1 44,4=757575~1 45,4=727272~1 46,4=828282~1 49,4=777777~1 30,5=909090~1 31,5=8b8b8b~1 33,5=787878~1 35,5=7e7e7e~1 36,5=767676~1 37,5=707070~1 38,5=949494~1 39,5=909090~1 40,5=878787~1 42,5=919191~1 43,5=878787~1 45,5=7b7b7b~1 46,5=8b8b8b~1 47,5=888888~1 48,5=7f7f7f~1 49,5=797979~1 30,6=919191~1 31,6=8f8f8f~1 32,6=818181~1 34,6=878787~1 35,6=858585~1 36,6=757575~1 37,6=757575~1 38,6=949494~1 39,6=939393~1 40,6=868686~1 41,6=848484~1 42,6=8e8e8e~1 43,6=8e8e8e~1 44,6=7e7e7e~1 45,6=7f7f7f~1 46,6=8a8a8a~1 47,6=898989~1 48,6=7d7d7d~1 49,6=7c7c7c~1 30,7=979797~1 32,7=8a8a8a~1 33,7=818181~1 34,7=919191~1 35,7=8b8b8b~1 37,7=7c7c7c~1 38,7=9a9a9a~1 40,7=8e8e8e~1 41,7=868686~1 42,7=979797~1 43,7=939393~1 46,7=8f8f8f~1 48,7=858585~1 30,8=8b8b8b~1 31,8=868686~1 32,8=7f7f7f~1 33,8=7a7a7a~1 34,8=868686~1 36,8=777777~1 37,8=797979~1 38,8=858585~1 39,8=808080~1 41,8=767676~1 42,8=838383~1 44,8=767676~1 45,8=797979~1 46,8=818181~1 47,8=7c7c7c~1 48,8=787878~1 49,8=757575~1 30,9=8f8f8f~1 31,9=8c8c8c~1 32,9=848484~1 33,9=7c7c7c~1 34,9=8e8e8e~1 35,9=8a8a8a~1 39,9=858585~1 40,9=7e7e7e~1 43,9=888888~1 44,9=7c7c7c~1 45,9=7d7d7d~1 46,9=838383~1 31,10=909090~1 32,10=7d7d7d~1 33,10=808080~1 34,10=8b8b8b~1 35,10=8b8b8b~1 37,10=7e7e7e~1 38,10=838383~1 39,10=888888~1 40,10=767676~1 41,10=7a7a7a~1 42,10=878787~1 43,10=888888~1 44,10=7a7a7a~1 45,10=7c7c7c~1 46,10=7d7d7d~1 47,10=838383~1 48,10=717171~1 49,10=777777~1 30,11=929292~1 31,11=949494~1 32,11=878787~1 33,11=828282~1 34,11=989898~1 36,11=898989~1 37,11=848484~1 38,11=898989~1 39,11=8c8c8c~1 41,11=7c7c7c~1 42,11=939393~1 43,11=888888~1 44,11=868686~1 45,11=818181~1 46,11=828282~1 47,11=878787~1 48,11=797979~1 30,12=868686~1 31,12=8b8b8b~1 32,12=777777~1 33,12=7e7e7e~1 34,12=878787~1 35,12=878787~1 36,12=7d7d7d~1 37,12=7b7b7b~1 40,12=6e6e6e~1 42,12=818181~1 43,12=828282~1 45,12=777777~1 46,12=757575~1 47,12=7c7c7c~1 48,12=686868~1 49,12=737373~1 32,13=848484~1 36,13=878787~1 37,13=828282~1 38,13=848484~1 39,13=838383~1 40,13=7a7a7a~1 41,13=787878~1 42,13=8c8c8c~1 43,13=868686~1 44,13=828282~1 46,13=7c7c7c~1 48,13=737373~1 30,14=8d8d8d~1 32,14=818181~1 34,14=8e8e8e~1 35,14=919191~1 37,14=848484~1 39,14=818181~1 40,14=777777~1 42,14=868686~1 43,14=8b8b8b~1 45,14=7f7f7f~1 47,14=797979~1 49,14=727272~1 31,15=8f8f8f~1 32,15=898989~1 33,15=828282~1 34,15=959595~1 35,15=959595~1 36,15=858585~1 38,15=858585~1 39,15=838383~1 40,15=7e7e7e~1 41,15=787878~1 42,15=8c8c8c~1 44,15=7e7e7e~1 45,15=848484~1 46,15=7c7c7c~1 47,15=797979~1 48,15=767676~1 49,15=717171~1 60,0=808080~1 61,0=7b7b7b~1 62,0=6f6f6f~1 63,0=686868~1 64,0=717171~1 65,0=6d6d6d~1 66,0=5c5c5c~1 67,0=5b5b5b~1 69,0=838383~1 70,0=797979~1 71,0=737373~1 72,0=7d7d7d~1 73,0=7b7b7b~1 74,0=6a6a6a~1 75,0=6a6a6a~1 60,1=868686~1 61,1=828282~1 62,1=777777~1 64,1=7b7b7b~1 65,1=717171~1 66,1=646464~1 67,1=626262~1 69,1=8a8a8a~1 70,1=808080~1 71,1=767676~1 72,1=868686~1 73,1=7e7e7e~1 75,1=707070~1 60,2=868686~1 61,2=888888~1 62,2=747474~1 63,2=727272~1 65,2=777777~1 66,2=656565~1 69,2=8f8f8f~1 70,2=7c7c7c~1 71,2=7b7b7b~1 72,2=858585~1 73,2=828282~1 74,2=727272~1 61,3=8e8e8e~1 62,3=818181~1 63,3=767676~1 64,3=898989~1 65,3=7b7b7b~1 67,3=6e6e6e~1 68,3=959595~1 69,3=959595~1 70,3=888888~1 71,3=7f7f7f~1 72,3=939393~1 73,3=868686~1 75,3=7a7a7a~1 62,4=737373~1 63,4=747474~1 64,4=7a7a7a~1 65,4=787878~1 66,4=696969~1 67,4=676767~1 69,4=8d8d8d~1 70,4=797979~1 71,4=7c7c7c~1 72,4=838383~1 73,4=828282~1 74,4=757575~1 75,4=727272~1 60,5=909090~1 61,5=8b8b8b~1 63,5=787878~1 65,5=7e7e7e~1 66,5=767676~1 67,5=707070~1 68,5=949494~1 69,5=909090~1 70,5=878787~1 72,5=919191~1 73,5=878787~1 75,5=7b7b7b~1 60,6=919191~1 61,6=8f8f8f~1 62,6=818181~1 64,6=878787~1 65,6=858585~1 66,6=757575~1 67,6=757575~1 68,6=949494~1 69,6=939393~1 70,6=868686~1 71,6=848484~1 72,6=8e8e8e~1 73,6=8e8e8e~1 74,6=7e7e7e~1 75,6=7f7f7f~1 60,7=979797~1 62,7=8a8a8a~1 63,7=818181~1 64,7=919191~1 65,7=8b8b8b~1 67,7=7c7c7c~1 68,7=9a9a9a~1 70,7=8e8e8e~1 71,7=868686~1 72,7=979797~1 73,7=939393~1 60,8=838383~1 61,8=7e7e7e~1 62,8=767676~1 63,8=707070~1 64,8=7b7b7b~1 65,8=7b7b7b~1 66,8=6a6a6a~1 67,8=6b6b6b~1 68,8=8b8b8b~1 69,8=868686~1 70,8=7f7f7f~1 71,8=7a7a7a~1 72,8=868686~1 74,8=777777~1 75,8=797979~1 61,9=848484~1 62,9=7b7b7b~1 64,9=848484~1 66,9=717171~1 67,9=707070~1 68,9=8f8f8f~1 69,9=8c8c8c~1 70,9=848484~1 71,9=7c7c7c~1 72,9=8e8e8e~1 73,9=8a8a8a~1 60,10=858585~1 61,10=898989~1 62,10=767676~1 63,10=777777~1 65,10=808080~1 67,10=727272~1 69,10=909090~1 70,10=7d7d7d~1 71,10=808080~1 72,10=8b8b8b~1 73,10=8b8b8b~1 75,10=7e7e7e~1 60,11=8d8d8d~1 61,11=8e8e8e~1 62,11=818181~1 63,11=7a7a7a~1 64,11=8f8f8f~1 66,11=7e7e7e~1 68,11=929292~1 69,11=949494~1 70,11=878787~1 71,11=828282~1 72,11=989898~1 74,11=898989~1 75,11=848484~1 60,12=828282~1 63,12=777777~1 65,12=7e7e7e~1 66,12=727272~1 67,12=707070~1 68,12=868686~1 69,12=8b8b8b~1 70,12=777777~1 71,12=7e7e7e~1 72,12=878787~1 73,12=878787~1 74,12=7d7d7d~1 75,12=7b7b7b~1 60,13=8b8b8b~1 61,13=888888~1 62,13=7f7f7f~1 63,13=797979~1 64,13=8b8b8b~1 65,13=838383~1 66,13=7d7d7d~1 67,13=787878~1 70,13=848484~1 74,13=878787~1 75,13=828282~1 60,14=8a8a8a~1 61,14=898989~1 62,14=7d7d7d~1 63,14=7c7c7c~1 65,14=898989~1 66,14=797979~1 67,14=7b7b7b~1 68,14=8d8d8d~1 70,14=818181~1 72,14=8e8e8e~1 73,14=919191~1 75,14=848484~1 60,15=8f8f8f~1 62,15=858585~1 64,15=8f8f8f~1 65,15=8e8e8e~1 66,15=7e7e7e~1 67,15=818181~1 69,15=8f8f8f~1 70,15=898989~1 71,15=828282~1 72,15=959595~1 73,15=959595~1 74,15=858585~1 60,16=858585~1 61,16=808080~1 63,16=767676~1 64,16=838383~1 66,16=767676~1 67,16=797979~1 68,16=818181~1 69,16=7c7c7c~1 70,16=787878~1 71,16=757575~1 73,16=898989~1 74,16=777777~1 75,16=7c7c7c~1 61,17=858585~1 62,17=7e7e7e~1 65,17=888888~1 66,17=7c7c7c~1 67,17=7d7d7d~1 68,17=838383~1 72,17=898989~1 73,17=888888~1 75,17=7e7e7e~1 60,18=838383~1 61,18=888888~1 62,18=767676~1 63,18=7a7a7a~1 64,18=878787~1 65,18=888888~1 66,18=7a7a7a~1 67,18=7c7c7c~1 68,18=7d7d7d~1 69,18=838383~1 70,18=717171~1 71,18=777777~1 72,18=858585~1 73,18=878787~1 74,18=7a7a7a~1 60,19=898989~1 61,19=8c8c8c~1 63,19=7c7c7c~1 64,19=939393~1 65,19=888888~1 66,19=868686~1 67,19=818181~1 68,19=828282~1 69,19=878787~1 70,19=797979~1 72,19=909090~1 73,19=868686~1 74,19=868686~1
+# Held codec data counts in one total against the decoded limit of 12 MiB: an 8000 x 8000 CCITT image of 8 MB decoded
+#   renders alone, and after another it replaces; with a soft mask of the same size, both 16 MB held at once, it fails.
+render_bytes	tests/corpus/render/render-images-held.pdf	decoded_limit=12582912	100x100 25,50=ffffff 75,50=ffffff
+render_bytes	tests/corpus/render/render-image-mask-held.pdf	decoded_limit=12582912	LimitExceeded
+# ISO 32000-2:2020, 8.9.5, 7.4.8: a JPEG of more Huffman tables (513) or scans (65) than the decoder reads is capped:
+#   the image warns and is not drawn, the rest of the page is; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/image-filter-dct-tables-over-cap.pdf	100x100 25,50=0000ff 75,50=0000ff
+render_bytes	tests/corpus/render/image-filter-dct-tables-over-cap.pdf	read=warnings	ISO 32000-2:2020, 8.9.5
+render_bytes	tests/corpus/render/image-filter-dct-tables-over-cap.pdf	strict	LimitExceeded
+render_bytes	tests/corpus/render/image-filter-dct-scans-over-cap.pdf	100x100 25,50=0000ff 75,50=0000ff
+render_bytes	tests/corpus/render/image-filter-dct-scans-over-cap.pdf	read=warnings	ISO 32000-2:2020, 8.9.5
+render_bytes	tests/corpus/render/image-filter-dct-scans-over-cap.pdf	strict	LimitExceeded
+# ITU-T T.81, A.2: a JPEG's buffers of a row of blocks count beside what is held: an 8000 x 8000 CCITT image, 8 MB
+#   decoded and kept, then a JPEG of 65,528 x 8 RGB pixels, 4.7 MB of buffers, together pass a decoded limit of 8 MiB, so
+#   the kept image gives way and both are drawn, white then grey; data in use is guarded by the memory test of two
+#   decoders.
+render_bytes	tests/corpus/render/render-image-held-dct.pdf	decoded_limit=8388608	100x100 25,50=ffffff 75,50=808080
+# ISO 32000-2:2020, 8.9.7, 7.4.6: an inline CCITT image of 2.5 MB of 1-D data, white rows for its first 1.05 MB and
+#   black rows for its last third, renders whole.
+render_bytes	tests/corpus/render/image-inline-fax-long.pdf	100x100 50,30=ffffff 50,90=000000
+# ISO 32000-2:2020, 8.7.4.5.5, 8.7.4.5.7: a flag above 2 in a type 4 mesh, or above 3 in a type 6, is damage: it warns.
+render_bytes	tests/corpus/render/shading-4-flag-over.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.5
+render_bytes	tests/corpus/render/shading-6-flag-over.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.5
+# ISO 32000-2:2020, 9.6.4: a Type 3 code whose glyph name has no CharProcs entry paints nothing and warns.
+render_bytes	tests/corpus/render/text-type3-glyph-missing.pdf	100x100 25,50=ff0000 75,50=ffffff
+render_bytes	tests/corpus/render/text-type3-glyph-missing.pdf	read=warnings	ISO 32000-2:2020, 9.6.4
+# Adobe TN 5176, 4, Table 3: a reserved Top DICT operator, 22, is ignored with its operand.
+render_bytes	tests/corpus/render/text-cff-reserved-operator.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# A font entry of the wrong type warns and its default is used: DW (9.7.4.3), FirstChar (9.6.2.1), Flags (9.8.2).
+render_bytes	tests/corpus/render/text-dw-wrong-type.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-dw-wrong-type.pdf	read=warnings	ISO 32000-2:2020, 9.7.4.3
+render_bytes	tests/corpus/render/text-first-char-wrong-type.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-first-char-wrong-type.pdf	read=warnings	ISO 32000-2:2020, 9.6.2.1
+render_bytes	tests/corpus/render/text-flags-wrong-type.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-flags-wrong-type.pdf	read=warnings	ISO 32000-2:2020, 9.8.2
+# An RGB image of 1,500,000 x 1 samples, rows of 4.5 MB, past the implementation's 4 MiB a row: it warns and is not
+#   drawn, the rest of the page is; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/image-row-over-cap.pdf	100x100 25,50=0000ff 75,50=0000ff
+render_bytes	tests/corpus/render/image-row-over-cap.pdf	read=warnings	ISO 32000-2:2020, 8.9.5
+render_bytes	tests/corpus/render/image-row-over-cap.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.5.3.3.2: 32,768 copies of one square, each winding once the same way, fill it by non-zero.
+render_bytes	tests/corpus/render/path-windings-many.pdf	100x100 50,50=000000 1,98=000000
+# ISO 32000-2:2020, 8.7.4.5.5: a mesh Decode of a pair more than its values need, or of an odd count, warns.
+render_bytes	tests/corpus/render/shading-4-decode-long.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.5
+render_bytes	tests/corpus/render/shading-4-decode-odd.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.5
+# ISO 32000-2:2020, 8.7.4.2, 8.7.4.3: a Background of more numbers than the colour space has components is damage: it
+#   warns.
+render_bytes	tests/corpus/render/shading-background-long.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.2
+# ISO 32000-2:2020, 8.7.3.1: inside a tiling cell of 256 x 256 pixels on a page of 1, a sheared tiling of tiles under
+#   a pixel each passes 65,536 tiles: it warns and is not painted; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/pattern-tiles-in-cell.pdf	fit=1	1x1 0,0=0000ff
+render_bytes	tests/corpus/render/pattern-tiles-in-cell.pdf	fit=1	read=warnings	ISO 32000-2:2020, 8.7.3.1
+render_bytes	tests/corpus/render/pattern-tiles-in-cell.pdf	fit=1	strict	LimitExceeded
+# ISO 32000-2:2020, 7.5.7, 7.6.2: a string of a page in an encrypted object stream is not decrypted again: its Indexed
+#   lookup makes the page green.
+render_bytes	tests/corpus/render/render-object-stream-rc4.pdf	100x100 50,50=00ff00
+# A tiling 17 deep (ISO 32000-2:2020, 8.7.3.1) and a Type 3 glyph 17 deep (9.6.4) each nest too deep: both warn.
+render_bytes	tests/corpus/render/render-nested-two-clauses.pdf	read=warnings	ISO 32000-2:2020, 8.7.3.1;ISO 32000-2:2020, 9.6.4
+# ISO 32000-2:2020, 8.4.3.6: a dash of length 0 with round caps is a dot of the line width at each dash; with butt
+#   caps it draws nothing.
+render_bytes	tests/corpus/render/path-dash-dots.pdf	100x100 10,50=ff0000 30,50=ff0000 50,50=ff0000 20,50=ffffff
+render_bytes	tests/corpus/render/path-dash-dots-butt.pdf	100x100 10,50=ffffff 30,50=ffffff 50,50=ffffff 20,50=ffffff
+# ISO 32000-2:2020, 7.7.3.3: a UserUnit that is not a positive number warns and 1 is used; strict fails Malformed.
+render_bytes	tests/corpus/render/page-user-unit-negative.pdf	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/page-user-unit-negative.pdf	read=warnings	ISO 32000-2:2020, 7.7.3.3
+render_bytes	tests/corpus/render/page-user-unit-negative.pdf	strict	Malformed
+render_bytes	tests/corpus/render/page-user-unit-name.pdf	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/page-user-unit-name.pdf	read=warnings	ISO 32000-2:2020, 7.7.3.3
+render_bytes	tests/corpus/render/page-user-unit-name.pdf	strict	Malformed
+# ISO 32000-2:2020, 9.6.4, 9.3.1: a Type 3 font given directly, of 200 Differences, is set by 2,000 Tf under a decoded
+#   limit of 100,000 and strict: read once, it renders.
+render_bytes	tests/corpus/render/text-type3-direct-many-tf.pdf	decoded_limit=100000	strict	100x100 50,50=ff0000 10,10=ffffff
+# ISO 32000-2:2020, 8.4.3.6, 8.5.3: a path of 30,721 segments with a dash array of zeros is filled: strict renders;
+#   stroked, the dash array warns.
+render_bytes	tests/corpus/render/path-long-dash-zero-fill.pdf	strict	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/path-long-dash-zero-stroke.pdf	read=warnings	ISO 32000-2:2020, 8.4.3.6
+# ISO 32000-2:2020, 8.2: w between m and l, inside a path object, warns.
+render_bytes	tests/corpus/render/path-operator-inside.pdf	read=warnings	ISO 32000-2:2020, 8.2
+# ISO 32000-2:2020, 9.6.4, 9.4.4: a Type 3 FontMatrix turned a quarter maps the advance upward: the second glyph sits
+#   above the first.
+render_bytes	tests/corpus/render/text-type3-turned.pdf	100x100 40,80=ff0000 40,45=ff0000 40,63=ffffff 40,30=ffffff
+# ISO 32000-2:2020, 7.8.2: of 100 numbers before 1 0 0 rg, the operator keeps the last 64: it fills red.
+render_bytes	tests/corpus/render/render-operands-kept.pdf	100x100 50,50=ff0000
+# ISO 32000-2:2020, 8.9.7: an inline image dictionary of 4,000 entries is counted before it is copied: under a decoded
+#   limit of 100,000 it fails LimitExceeded.
+render_bytes	tests/corpus/render/image-inline-dictionary-counted.pdf	decoded_limit=100000	LimitExceeded
+# ISO 32000-2:2020, 8.9.5: a 1-bit image of 800 x 800 on 100 x 100 pixels, one in four samples set on the left and three
+#   in four on the right, gives the grey of its share of set samples.
+render_bytes	tests/corpus/render/image-1bit-shrunk.pdf	100x100 25,50=404040~1 75,50=bfbfbf~1
+# ISO 32000-2:2020, 8.4.3.4: a 40 wide stroke with round joins, one join on the page and one past its top: the join on
+#   the page is a disc of radius 20, not a square corner.
+render_bytes	tests/corpus/render/path-round-join-outside.pdf	100x100 80,60=ff0000 88,68=ffffff 70,10=ff0000 30,50=ff0000 30,25=ffffff
+# Under a decoded limit of 100,000 (work of about 18 M): 130 function shadings in a 4-component ICCBased space pay for
+#   each colour through its profile: LimitExceeded.
+render_bytes	tests/corpus/render/shading-function-icc-charged.pdf	decoded_limit=100000	LimitExceeded
+# 85 function shadings of a 2 x 2 sampled function pay for the corners they mix: LimitExceeded.
+render_bytes	tests/corpus/render/shading-function-sampled-charged.pdf	decoded_limit=100000	LimitExceeded
+# ISO 32000-2:2020, 8.4.3.6: 300 strokes 1,000,000 wide of round-capped dots: the arcs off the page cost nothing, so it
+#   renders, black.
+render_bytes	tests/corpus/render/path-dots-huge-charged.pdf	decoded_limit=100000	100x100 50,50=000000 5,95=000000
+# OpenType 1.9.1, glyf: a glyph of 65,000 points through 8 composite levels pays for each level it is scaled at:
+#   shown 100 times under a decoded limit of 4,000,000, LimitExceeded.
+render_bytes	tests/corpus/render/text-truetype-composite-charged.pdf	decoded_limit=4000000	LimitExceeded
+# ISO 32000-2:2020, 7.8.2: a string of 2 MiB in content, past what an operand may hold, is dropped with a warning, as
+#   is the unknown pop after it; both squares around them are drawn; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/render-content-string-long.pdf	100x100 5,95=000000 55,45=ff0000 30,30=ffffff
+render_bytes	tests/corpus/render/render-content-string-long.pdf	read=warnings	ISO 32000-2:2020, 7.8.2;ISO 32000-2:2020, 7.8.2
+render_bytes	tests/corpus/render/render-content-string-long.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 7.8.2, 9.7.5: a string of 2 MiB in an embedded CMap, past what an operand may hold, is dropped
+#   with a warning and the CMap is read; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/text-cmap-string-long.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-cmap-string-long.pdf	read=warnings	ISO 32000-2:2020, 7.8.2
+render_bytes	tests/corpus/render/text-cmap-string-long.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 7.8.2: 900,000 stray ] in content each cost an operator's work: under a decoded limit of
+#   1,000,000 they pass the work limit, LimitExceeded.
+render_bytes	tests/corpus/render/render-stray-brackets.pdf	decoded_limit=1000000	LimitExceeded
+# ISO 32000-2:2020, 7.5.7: reading a page's resources past 128 MiB of padding in an object stream reports progress
+#   (some 18 calls, against 4 for the page alone): the page renders, and a callback that lets four calls through then
+#   returns false cancels it.
+render_bytes	tests/corpus/render/render-object-stream-padded.pdf	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/render-object-stream-padded.pdf	cancel=4	Cancelled
+# ISO 32000-2:2020, 9.7.5.4: 15 embedded CMaps of 330,000 names each, read under a decoded limit of 1,000,000, cost their
+#   tokens: LimitExceeded.
+render_bytes	tests/corpus/render/text-cmap-names-charged.pdf	decoded_limit=1000000	LimitExceeded
+# ISO 32000-2:2020, 8.9.7: a form of 1,000 inline stencil images inside an empty clip, drawn 50 times under a decoded
+#   limit of 100,000: each image costs its reading, LimitExceeded.
+render_bytes	tests/corpus/render/image-inline-many-charged.pdf	decoded_limit=100000	LimitExceeded
+# ISO 32000-2:2020, 7.7.3.4: a page whose Parent is itself, its dictionary 16,000 bytes of tokens: the walk up its
+#   ancestors stops at the page and warns, the page renders under a decoded limit of 20,000; strict fails Malformed.
+render_bytes	tests/corpus/render/page-own-parent-dense.pdf	decoded_limit=20000	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/page-own-parent-dense.pdf	read=warnings	ISO 32000-2:2020, 7.7.3.4
+render_bytes	tests/corpus/render/page-own-parent-dense.pdf	strict	Malformed
+# The same page with 2 MB of tokens, in an object stream: preparing the page reports progress (some 9 calls), so a
+#   callback that lets four calls through then returns false cancels it before it is drawn.
+render_bytes	tests/corpus/render/page-own-parent-packed.pdf	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/page-own-parent-packed.pdf	cancel=4	Cancelled
+# ISO 32000-2:2020, 8.9.7: an inline image of 1 byte, its length given, then 900,000 spaces before EI, read 26 times under
+#   a decoded limit of 1,000,000: each space costs work, LimitExceeded.
+render_bytes	tests/corpus/render/image-inline-white-space.pdf	decoded_limit=1000000	LimitExceeded
+# ISO 32000-2:2020, 8.9.7: inline ASCIIHex data of 900,000 bytes with EI every 3 bytes, read 20 times under a decoded limit
+#   of 1,000,000: each EI it looks past costs work, LimitExceeded.
+render_bytes	tests/corpus/render/image-inline-dense-ei.pdf	decoded_limit=1000000	LimitExceeded
+# ISO 32000-2:2020, 7.5.4: 5,000 empty cross-reference subsections, read again for each of 800 absent objects the page
+#   draws, under a decoded limit of 1,000,000: each subsection read costs work, LimitExceeded.
+render_bytes	tests/corpus/render/render-xref-subsections-charged.pdf	decoded_limit=1000000	LimitExceeded
+# ISO 32000-2:2020, 7.10.5: a calculator function that rolls 97 numbers 100 times, shading the page under a decoded
+#   limit of 100,000: each roll costs the numbers it moves, LimitExceeded.
+render_bytes	tests/corpus/render/function-calculator-roll-charged.pdf	decoded_limit=100000	LimitExceeded
+# ISO 32000-2:2020, 11.6.5.3: the 8000 x 8000 CCITT image of an image of its size as its soft mask fits a decoded limit of
+#   15,000,000 in memory, but each texel averaged through the mask costs work: LimitExceeded.
+render_bytes	tests/corpus/render/render-image-mask-held.pdf	decoded_limit=15000000	LimitExceeded
+# ISO 32000-2:2020, 9.3.8, 11.4.6: with TK true a text object is one knockout group, so a half-transparent red glyph over
+#   an opaque black one before it, in the same object, shows over the white backdrop: ff8080 where they overlap.
+render_bytes	tests/corpus/render/text-knockout-late.pdf	100x100 20,69=000000 40,69=ff8080~1 60,69=ff8080~1 80,69=ffffff
+# ISO 32000-2:2020, 7.7.3.4: a page whose Parent chain runs 260 nodes to its Resources, past the 256 the depth limit
+#   allows, warns that it stops, and the colour space it names is then missing; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/page-parent-chain-deep.pdf	read=warnings	ISO 32000-2:2020, 7.7.3.4;ISO 32000-2:2020, 7.8.3
+render_bytes	tests/corpus/render/page-parent-chain-deep.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.2, 9.3.8, 11.4.6: a fill inside a text object, after an opaque glyph and before a half-transparent
+#   red one over the page, warns and ends the knockout group first, so the red lies over the blue alike in every band:
+#   80007f above and below the band edges at 4,000 rows; strict fails Malformed.
+render_bytes	tests/corpus/render/text-knockout-fill-inside.pdf	fit=4000	400x4000 200,10=800080~1 200,563=800080~1 200,564=800080~1 200,1023=800080~1 200,1024=800080~1 200,2047=800080~1 200,2048=800080~1 200,3990=800080~1
+render_bytes	tests/corpus/render/text-knockout-fill-inside.pdf	read=warnings	ISO 32000-2:2020, 8.2
+render_bytes	tests/corpus/render/text-knockout-fill-inside.pdf	strict	Malformed
+# ISO 32000-2:2020, 8.7.4.5.5, 8.9.5: a type 4 mesh of 2.8 MB decoded and a CCITT image of 2.8 MB of data, each within a
+#   decoded limit of 3,000,000: a mesh held whole is given up when the image needs the room, so the page renders, white.
+render_bytes	tests/corpus/render/render-mesh-and-fax.pdf	decoded_limit=3000000	fit=64	64x64 32,32=ffffff
+# ISO 32000-2:2020, 8.7.4.5.6: a type 5 mesh of 6 rows of 174,762 vertices, 3.1 MB of data, under a decoded limit of
+#   4,800,000: its data and the row it keeps cannot both be held, so it is read again, and the page renders, white.
+render_bytes	tests/corpus/render/shading-5-wide-row.pdf	decoded_limit=4800000	fit=64	64x64 32,32=ffffff
+# ISO 32000-2:2020, 8.7.4.5, 7.4.4: a type 4 mesh whose Flate data is damaged two thirds through draws its triangles before
+#   the damage, black on the left half, and warns.
+render_bytes	tests/corpus/render/shading-4-damaged-tail.pdf	100x100 10,50=000000 40,10=000000
+render_bytes	tests/corpus/render/shading-4-damaged-tail.pdf	read=warnings	ISO 32000-2:2020, 8.7.4.5
+# ITU-T T.81, G.1.2.3: a 1 x 65,535 grey progressive JPEG of 63 AC refinement scans walks blocks 8 samples wide in each;
+#   drawn 20 times under a decoded limit of 3,000,000, where its scans fit, it costs the blocks it walks: LimitExceeded.
+render_bytes	tests/corpus/render/image-dct-progressive-narrow-charged.pdf	decoded_limit=3000000	LimitExceeded
+# ISO 32000-2:2020, 7.10.2: samples 0 255 0 of Order 3 across the page, joined by a Catmull-Rom spline with edge samples
+#   repeated, and no warning: on [0, 1] of the sample index the spline is -382.5 s^3 + 510 s^2 + 127.5 s (tangents 127.5
+#   and 0), mirrored on [1, 2]; at pixel centres 10, 24, 40 and 70 that is 45.7, 139.9, 234.6 and 174.2, where Order 1
+#   gives 53.6, 125.0, 206.6 and 150.5.
+render_bytes	tests/corpus/render/function-sampled-order-3-curve.pdf	fit=100	100x100 10,50=2e2e2e~2 24,50=8c8c8c~2 40,50=ebebeb~2 70,50=aeaeae~2
+render_bytes	tests/corpus/render/function-sampled-order-3-curve.pdf	read=warnings	none
+# ISO 32000-2:2020, 8.7.3.1: a tiling cell 0.001 by 10,000 points, red all over, or 10,000 by 0.001, red from x 0 to 50, is
+#   drawn once as a cell a single texel across, placed along its long side: under strict the page renders.
+render_bytes	tests/corpus/render/pattern-cell-thin.pdf	strict	100x100 50,50=ff0000
+render_bytes	tests/corpus/render/pattern-cell-wide.pdf	strict	100x100 25,50=ff0000 75,50=ffffff
+# ISO 32000-2:2020, 8.9.5: a 64-scan progressive JPEG behind 3 Flate stages and a 12,000 x 12,000 CCITT mask, each within a
+#   decoded limit of 26,000,000 alone: whichever is drawn first gives way to the other, so the page renders in either order.
+render_bytes	tests/corpus/render/render-jpeg-and-fax-jf.pdf	decoded_limit=26000000	100x100 25,25=808080~1 75,75=ffffff
+render_bytes	tests/corpus/render/render-jpeg-and-fax-fj.pdf	decoded_limit=26000000	100x100 25,25=808080~1 75,75=ffffff
+# ISO 32000-2:2020, 8.5.3.2: 4,000 strokes 0.3 wide along the diagonal, each its own path, under a decoded limit of
+#   100,000: each is charged for what it touches in each row, not its whole box, so the page renders; the
+#   diagonal is black, the page away from it white.
+render_bytes	tests/corpus/render/path-strokes-thin-many.pdf	decoded_limit=100000	100x100 50,49=000000~1 10,50=ffffff
+# ISO 32000-2:2020, 8.5.3.2: 3,000 rings 0.1 wide, of 10 radii from 45 to 49.5 about the centre, each its own path,
+#   under a decoded limit of 1,000,000: each crosses a row twice and is charged for the two pieces it touches there, not
+#   the gap between, so the page renders: white inside, dark where the rings lie.
+render_bytes	tests/corpus/render/path-rings-many.pdf	decoded_limit=1000000	100x100 50,49=ffffff 30,50=ffffff 97,50=000000~2
+# A 12 MiB font drawn inside q ... Q is then held only by the cache. Under a decoded limit of 16 MiB an 800,000-byte string
+#   shown in a second font renders, as operands do not depend on the room left; a font of 50,000 widths renders, as the cache
+#   gives way to it.
+render_bytes	tests/corpus/render/render-cache-then-string.pdf	decoded_limit=16777216	100x100 5,95=000000 15,85=000000
+render_bytes	tests/corpus/render/render-cache-then-widths.pdf	decoded_limit=16777216	100x100 5,95=000000 15,85=000000
+# 1,000 annotations dealt in turn to two object streams of 500 KB, each read again in every band, render at a fit of
+#   3,508 pixels within the work an honest page has, both streams kept at once (7.5.7, 12.5).
+render_bytes	tests/corpus/render/render-annotations-packed.pdf	fit=3508	decoded_limit=16777216	3508x3508 17,3490=000000 3455,2157=000000 52,3455=ffffff
+# 5,000 annotations in one object stream, found by an unfiltered cross-reference stream of 35,063 bytes, render at a fit
+#   of 3,508 pixels within the work an honest page has (7.5.7, 7.5.8, 12.5).
+render_bytes	tests/corpus/render/render-annotations-one-stream.pdf	fit=3508	3508x3508 1754,1754=000000 100,100=ffffff
+# 1,500 link annotations packed 100 an object stream, in a document of 100,000 objects whose cross-reference stream is
+#   long, render within the work an honest page has (7.5.8, 12.5.6.5).
+render_bytes	tests/corpus/render/render-links-large-xref.pdf	100x100 5,95=000000 50,50=ffffff
+# 700 link annotations in one object stream of 1.5 MB decoded, past what a render keeps, each read without decoding
+#   the stream whole again, render within the work an honest page has (7.5.7).
+render_bytes	tests/corpus/render/render-links-long-container.pdf	100x100 5,95=000000 50,50=ffffff
+# An object stream damaged after its first member still gives it: the ExtGState is read and the fill is half opaque
+#   (7.5.7, 11.6.4.4).
+render_bytes	tests/corpus/render/render-container-damaged.pdf	100x100 50,50=ff8080~1
+# A form read again after damage found within its first 64 KiB, its first reader holding a 4 MiB predictor row, draws
+#   under a decoded limit of 10 MiB: the first reader goes before the second comes (7.8.2).
+render_bytes	tests/corpus/render/render-retry-after-damage.pdf	decoded_limit=10485760	100x100 5,95=000000
+# The same under a decoded limit of 16 MiB: a larger limit draws it too.
+render_bytes	tests/corpus/render/render-retry-after-damage.pdf	decoded_limit=16777216	100x100 5,95=000000
+# A form whose Flate checksum fails right after its content draws that content, with the damage warned
+#   (7.8.2; RFC 1950, 2.2).
+render_bytes	tests/corpus/render/render-form-checksum-wrong.pdf	100x100 5,95=000000
+render_bytes	tests/corpus/render/render-form-checksum-wrong.pdf	read=warnings	ISO 32000-2:2020, 7.8.2
+# 1,500 link annotations packed 100 an object stream in a document of 100,000 objects, then updated once by a small
+#   cross-reference stream, render within the work an honest page has, the long stream reached through Prev (7.5.6, 7.5.8).
+render_bytes	tests/corpus/render/render-links-updated-xref.pdf	100x100 15,85=000000 50,50=ffffff
+# Two meshes of 4 MiB kept, then a form behind a predictor of 512 KiB rows: the meshes give way, so 7 MiB draws as
+#   6 MiB does (7.4.4.4, 8.7.4.5.5).
+render_bytes	tests/corpus/render/render-meshes-then-predictor.pdf	decoded_limit=6291456	100x100 5,95=000000
+render_bytes	tests/corpus/render/render-meshes-then-predictor.pdf	decoded_limit=7340032	100x100 5,95=000000
+# ISO 32000-2:2020, 7.10.3: x to the 1,000,000,000.5 is 0 for x below 1, however far below: a Type 2 shading of grey
+#   0 to 1 is black across the page.
+render_bytes	tests/corpus/render/function-type2-power-underflow.pdf	100x100 1,50=000000 50,50=000000
+# ICC.1:2022, 7.3: a profile of more tags than the reader takes is past its limit, not malformed: strict fails
+#   LimitExceeded.
+render_bytes	tests/corpus/render/colour-icc-tags-many.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 11.3.7.2, 11.6.4.4: a stroke painted with a shading pattern takes the stroking alpha, CA 0.5, of
+#   the pattern's ExtGState, not ca 1: red at half opacity over white.
+render_bytes	tests/corpus/render/pattern-shading-stroke-alpha.pdf	100x100 50,50=ff8080~1
+# ISO 32000-2:2020, 8.7.4.3: a shading pattern's BBox clips its painting, its Background too: red only inside the box
+#   where the shading is not, blue where it is, white outside the box.
+render_bytes	tests/corpus/render/pattern-shading-background-box.pdf	100x100 50,50=0000ff 42,50=ff0000 10,50=ffffff 90,10=ffffff
+# ISO 32000-2:2020, 9.6.2, 9.9; Adobe Type 1 Font Format: a program with eexec and charstrings.
+render_bytes	tests/corpus/render/text-type1.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_file	tests/corpus/render/text-type1.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# Adobe Type 1 Font Format, 6 and 8: subroutines, div, curves, flex, seac and sbw.
+render_bytes	tests/corpus/render/text-type1-charstrings.pdf	100x100 16,24=ff0000 16,7=ffffff 49,18=ff0000 49,10=ffffff 38,18=ffffff 82,18=ff0000 82,10=ffffff 71,18=ffffff 16,66=ff0000 16,58=ffffff 49,80=ff0000 55,65=ff0000 47,65=ffffff 82,73=ff0000 82,87=ffffff
+# Adobe Type 1 Font Format, 7.2: eexec in hexadecimal.
+render_bytes	tests/corpus/render/text-type1-hexadecimal.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# ISO 32000-2:2020, 9.9; Adobe technical notes 5176 and 5177: a bare CFF program.
+render_bytes	tests/corpus/render/text-cff.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# Adobe technical note 5177: both subroutine biases, hintmask, curves, flex and fixed numbers.
+render_bytes	tests/corpus/render/text-cff-charstrings.pdf	100x100 16,24=ff0000 16,7=ffffff 49,18=ff0000 49,10=ffffff 38,18=ffffff 82,18=ff0000 82,10=ffffff 71,18=ffffff 16,66=ff0000 16,58=ffffff 49,66=ff0000 49,58=ffffff 82,73=ff0000 82,87=ffffff
+# ISO 32000-2:2020, 9.6.3, 9.9; OpenType: glyf outlines.
+render_bytes	tests/corpus/render/text-truetype.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_file	tests/corpus/render/text-truetype.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# OpenType, glyf and loca: implied points, a start off the curve, composites with offset and scale, short offsets.
+render_bytes	tests/corpus/render/text-truetype-glyphs.pdf	100x100 25,16=ff0000 25,4=ffffff 8,15=ffffff 75,10=ff0000 58,8=ffffff 15,85=ff0000 30,75=ff0000 40,75=ffffff 30,65=ffffff 75,66=ff0000 75,54=ffffff 58,65=ffffff
+# ISO 32000-2:2020, 9.9: an OpenType program, with CFF and with glyf outlines.
+render_bytes	tests/corpus/render/text-opentype.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-opentype-glyf.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# ISO 32000-2:2020, 9.6.4: Type 3; d1 takes the text colour and ignores its own, d0 brings its own.
+render_bytes	tests/corpus/render/text-type3.pdf	100x100 25,50=ff0000 75,50=00ff00 55,50=ffffff
+render_file	tests/corpus/render/text-type3.pdf	100x100 25,50=ff0000 75,50=00ff00 55,50=ffffff
+# ISO 32000-2:2020, 9.6.4: Type 3 widths go through FontMatrix.
+render_bytes	tests/corpus/render/text-type3-widths.pdf	100x100 17,50=ff0000 67,50=ff0000 40,50=ffffff 92,50=ffffff
+# ISO 32000-2:2020, 9.7.4, 9.7.5.2: Identity-H; a CID-keyed CFF program maps CIDs by its charset.
+render_bytes	tests/corpus/render/text-type0-identity.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_file	tests/corpus/render/text-type0-identity.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-type0-identity-opentype.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+render_bytes	tests/corpus/render/text-type0-identity-widths.pdf	100x100 12,20=ff0000 62,26=ff0000 37,26=ffffff 62,14=ffffff 12,76=ff0000 87,70=ff0000 62,70=ffffff
+# ISO 32000-2:2020, 9.7.4.3: Identity-V moves down by W1 and hangs each glyph from its position vector.
+render_bytes	tests/corpus/render/text-type0-identity-vertical.pdf	100x100 40,20=ff0000 50,60=ff0000 50,41=ffffff 75,20=ffffff
+# ISO 32000-2:2020, 9.7.5.3, 9.7.6.2: an embedded CMap of one- and two-byte codes, CIDToGIDMap, and UseCMap.
+render_bytes	tests/corpus/render/text-type0-cmap.pdf	100x100 16,50=ff0000 49,50=ffffff 49,65=ff0000 82,50=ff0000
+render_file	tests/corpus/render/text-type0-cmap.pdf	100x100 16,50=ff0000 49,50=ffffff 49,65=ff0000 82,50=ff0000
+render_bytes	tests/corpus/render/text-type0-cmap-use.pdf	100x100 16,50=ff0000 49,50=ffffff 49,65=ff0000 82,50=ff0000
+# ISO 32000-2:2020, 9.7.4.2: a CIDToGIDMap of 131,072 CIDs, more than two bytes can name, warns and is read only as far as
+#   65,536 CIDs: under a limit of 200,000 bytes, which the whole map passes, CID 2 still shows glyph 1.
+render_bytes	tests/corpus/render/render-cid-map-long.pdf	decoded_limit=200000	100x100 35,50=ff0000 80,50=ffffff
+render_bytes	tests/corpus/render/render-cid-map-long.pdf	decoded_limit=200000	read=warnings	ISO 32000-2:2020, 9.7.4.2
+# ISO 32000-2:2020, 9.9: a glyph of 5,000 points whose coordinates stop short warns and paints nothing; the page renders.
+render_bytes	tests/corpus/render/render-glyph-broken-points.pdf	100x100 50,90=0000ff 35,50=ffffff
+render_bytes	tests/corpus/render/render-glyph-broken-points.pdf	read=warnings	ISO 32000-2:2020, 9.9
+# Two embedded fonts of 5 MB each, used in turn a thousand times, are honest: the page renders.
+render_bytes	tests/corpus/render/render-fonts-alternating.pdf	100x100 10,92=ff0000 30,92=ff0000 50,50=ffffff
+# Adobe TN 5177, Appendix B; ISO 32000-2:2020, 9.9: a local subroutine that calls itself never ends; that glyph
+#   warns and paints nothing, the font's other glyph and the rest of the page are drawn; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/text-cff-subroutine-loop.pdf	100x100 25,50=ffffff 70,50=ff0000
+render_bytes	tests/corpus/render/text-cff-subroutine-loop.pdf	read=warnings	ISO 32000-2:2020, 9.9
+render_bytes	tests/corpus/render/text-cff-subroutine-loop.pdf	strict	LimitExceeded
+# OpenType glyf; ISO 32000-2:2020, 9.9: a composite glyph that lists itself never ends; the same.
+render_bytes	tests/corpus/render/text-truetype-composite-loop.pdf	100x100 25,50=ffffff 70,50=ff0000
+render_bytes	tests/corpus/render/text-truetype-composite-loop.pdf	read=warnings	ISO 32000-2:2020, 9.9
+render_bytes	tests/corpus/render/text-truetype-composite-loop.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 9.7.5.3: a CMap whose UseCMap is itself never ends: it warns, the rest is drawn, invisible text
+#   (9.3.6, mode 3) included; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-3.pdf	100x100 80,20=00ff00
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-3.pdf	read=warnings	ISO 32000-2:2020, 9.7.5.3
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-3.pdf	strict	LimitExceeded
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-0.pdf	100x100 80,20=00ff00
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-0.pdf	read=warnings	ISO 32000-2:2020, 9.7.5.3
+render_bytes	tests/corpus/render/text-type0-cmap-use-loop-mode-0.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 9.7.4.2: CIDToGIDMap belongs to CIDFontType2 only; on CIDFontType0 the program's charset maps
+#   CID 7 to its glyph, not the map to glyph 0.
+render_bytes	tests/corpus/render/text-type0-cid-map-ignored.pdf	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# ISO 32000-2:2020, 9.6.5.4: a nonsymbolic TrueType font without Encoding names its codes by StandardEncoding:
+#   047 is quoteright, U+2019, in the (3,1) cmap; the raw code U+0027 has no glyph there.
+render_bytes	tests/corpus/render/text-truetype-no-encoding.pdf	strict	100x100 50,50=ff0000 13,50=ff0000 86,50=ff0000 4,50=ffffff 50,4=ffffff 50,96=ffffff
+# ISO 32000-2:2020, 9.7.4.2: three CID fonts, each with a CIDToGIDMap of all 65,536 CIDs, used in turn 2,000 times are
+#   honest: the page renders under strict. CID 2 is glyph 1, the box 0.1..0.9 x 0..0.8 em, 10 apart from x 0.
+render_bytes	tests/corpus/render/render-cid-fonts-alternating.pdf	strict	100x100 5,95=ff0000 15,95=ff0000 25,95=ff0000 50,50=ffffff
+# ISO 32000-2:2020, 9.7.5.3 and 9.3.6: a CMap of more codespace ranges than read (256) warns; invisible text in it
+#   paints nothing and the rest is drawn; strict fails LimitExceeded.
+render_bytes	tests/corpus/render/text-type0-cmap-codespaces-mode-3.pdf	100x100 80,20=00ff00
+render_bytes	tests/corpus/render/text-type0-cmap-codespaces-mode-3.pdf	read=warnings	ISO 32000-2:2020, 9.7.5.3
+render_bytes	tests/corpus/render/text-type0-cmap-codespaces-mode-3.pdf	strict	LimitExceeded
+# Adobe TN 5176 and 5177: a CID-keyed CFF whose FDSelect gives each glyph its FD, with its own FontMatrix in real
+#   numbers (5E-4 for the second, whose outline is twice as large) and local subroutine; the outlines are built with
+#   arithmetic, storage, stack and logic operators. Both glyphs are the box 0.1..0.9 x 0..0.8 em.
+render_bytes	tests/corpus/render/text-type0-cff-keyed.pdf	strict	100x100 25,54=ff0000 7,54=ffffff 43,54=ffffff 25,36=ffffff 11,68=ff0000 39,40=ff0000 75,54=ff0000 57,54=ffffff 93,54=ffffff 75,36=ffffff 61,68=ff0000 89,40=ff0000
+# ISO 32000-2:2020, 9.6.5 and Annex D: the code picks the glyph by name: 0341 is AE in Standard, aacute in WinAnsi,
+#   periodcentered in MacRoman; 060 is zerooldstyle in MacExpert.
+render_bytes	tests/corpus/render/text-encoding-standard.pdf	100x100 20,50=ff0000 50,50=ffffff 80,50=ffffff
+render_bytes	tests/corpus/render/text-encoding-win-ansi.pdf	100x100 20,50=ffffff 50,50=ff0000 80,50=ffffff
+render_bytes	tests/corpus/render/text-encoding-mac-roman.pdf	100x100 20,50=ffffff 50,50=ffffff 80,50=ff0000
+render_bytes	tests/corpus/render/text-encoding-mac-expert.pdf	100x100 20,50=ffffff 50,50=ffffff 80,50=ff0000
+# ISO 32000-2:2020, 9.6.5: Differences over BaseEncoding.
+render_bytes	tests/corpus/render/text-encoding-differences.pdf	100x100 20,27=ffffff 50,27=ffffff 80,27=ff0000 20,77=ffffff 50,77=ff0000 80,77=ffffff
+# ISO 32000-2:2020, 9.6.5: without Encoding the program's own encoding rules.
+render_bytes	tests/corpus/render/text-encoding-built-in.pdf	100x100 20,50=ffffff 50,50=ff0000 80,50=ffffff
+render_bytes	tests/corpus/render/text-encoding-built-in-cff.pdf	100x100 20,50=ffffff 50,50=ff0000 80,50=ffffff
+# ISO 32000-2:2020, 9.6.5.4: TrueType by name through the Annex D sets to a (3,1) or (1,0) cmap, uniXXXX, uXXXX,
+#   the post table; symbolic by code through (3,0).
+render_bytes	tests/corpus/render/text-encoding-truetype.pdf	100x100 16,25=ff0000 16,7=ffffff 49,25=ff0000 49,7=ffffff 82,25=ff0000 82,7=ffffff 16,75=ff0000 16,57=ffffff 49,75=ff0000 49,57=ffffff 82,75=ff0000 82,57=ffffff
+# ISO 32000-2:2020, 9.6.5.4: a name that resolves to a character without a glyph shows .notdef and is no deviation.
+render_bytes	tests/corpus/render/text-encoding-truetype-notdef.pdf	strict	100x100 16,50=ff0000 16,65=ff0000 49,50=ffffff 49,65=ff0000 82,50=ffffff 82,65=ff0000
+# ISO 32000-2:2020, 9.6.5.4: a name no rule resolves warns, and the rest is drawn; strict fails.
+#   One the post table resolves does not warn.
+render_bytes	tests/corpus/render/text-encoding-truetype-unresolved.pdf	100x100 25,70=ff0000 50,10=00ff00
+render_bytes	tests/corpus/render/text-encoding-truetype-unresolved.pdf	read=warnings	ISO 32000-2:2020, 9.6.5.4
+render_bytes	tests/corpus/render/text-encoding-truetype-unresolved.pdf	strict	Malformed
+render_bytes	tests/corpus/render/text-encoding-truetype.pdf	read=warnings	none
+# ISO 32000-2:2020, 9.3.2: character spacing.
+render_bytes	tests/corpus/render/text-char-spacing.pdf	100x100 22,50=ff0000 77,50=ff0000 47,50=ffffff
+# ISO 32000-2:2020, 9.3.3: word spacing applies to the single-byte code 32 only.
+render_bytes	tests/corpus/render/text-word-spacing.pdf	100x100 15,50=ff0000 85,50=ff0000 55,50=ffffff
+render_bytes	tests/corpus/render/text-word-spacing-composite.pdf	100x100 15,50=ff0000 55,50=ff0000 85,50=ffffff
+# ISO 32000-2:2020, 9.3.4, 9.4.4: horizontal scaling stretches glyphs and spacing.
+render_bytes	tests/corpus/render/text-scaling.pdf	100x100 25,50=ff0000 70,50=ffffff
+render_bytes	tests/corpus/render/text-scaling-spacing.pdf	100x100 20,50=ff0000 45,50=ffffff 70,50=ff0000 84,50=ff0000
+# ISO 32000-2:2020, 9.3.5, 9.4.2, 9.4.3: T* moves by the leading; TD sets it; the quote operators move, show, and set spacing.
+render_bytes	tests/corpus/render/text-leading.pdf	100x100 22,25=ff0000 22,65=ff0000 22,45=ffffff
+render_bytes	tests/corpus/render/text-leading-operators.pdf	100x100 20,13=ff0000 20,39=ff0000 20,65=ff0000 20,91=ff0000 50,91=ff0000 35,91=ffffff 20,26=ffffff
+# ISO 32000-2:2020, 9.3.7: rise.
+render_bytes	tests/corpus/render/text-rise.pdf	100x100 22,30=ff0000 22,70=ffffff
+# ISO 32000-2:2020, 9.4.3: a positive TJ number moves back, a negative one forward.
+render_bytes	tests/corpus/render/text-positioning.pdf	100x100 15,32=ff0000 35,32=ffffff 55,32=ff0000 20,72=ff0000 29,72=ff0000 40,72=ffffff
+# ISO 32000-2:2020, 9.2.4: advances come from Widths and MissingWidth, not the program.
+render_bytes	tests/corpus/render/text-widths.pdf	100x100 10,32=ff0000 24,32=ffffff 40,32=ff0000 20,72=ff0000 6,72=ffffff 33,72=ffffff
+# ISO 32000-2:2020, 9.4.4: the text matrix turns glyphs and advance.
+render_bytes	tests/corpus/render/text-matrix.pdf	100x100 50,77=ff0000 50,52=ff0000 50,65=ffffff 75,77=ffffff
+# ISO 32000-2:2020, 9.3.8: a text object knocks out unless TK is false.
+render_bytes	tests/corpus/render/text-knockout.pdf	100x100 28,25=ff8080~1 10,75=ff8080~1 28,75=ff4040~1
+# ISO 32000-2:2020, 9.3.6: each rendering mode; 4 to 7 clip what follows to the glyphs; stroke width is in user space.
+render_bytes	tests/corpus/render/text-mode-0.pdf	100x100 30,50=ff0000 92,50=ffffff 7,50=ffffff 98,96=00ff00
+render_bytes	tests/corpus/render/text-mode-1.pdf	100x100 30,50=ffffff 92,50=0000ff 7,50=0000ff 98,96=00ff00
+render_bytes	tests/corpus/render/text-mode-2.pdf	100x100 30,50=ff0000 92,50=0000ff 7,50=0000ff 98,96=00ff00
+render_bytes	tests/corpus/render/text-mode-3.pdf	100x100 20,50=ffffff 60,50=ff0000 98,50=00ff00
+render_bytes	tests/corpus/render/text-mode-4.pdf	100x100 30,50=ff0000 92,50=ffffff 7,50=ffffff 70,50=00ff00 98,50=ffffff
+render_bytes	tests/corpus/render/text-mode-5.pdf	100x100 30,50=ffffff 92,50=0000ff 7,50=0000ff 70,50=00ff00 98,50=ffffff
+render_bytes	tests/corpus/render/text-mode-6.pdf	100x100 30,50=ff0000 92,50=0000ff 7,50=0000ff 70,50=00ff00 98,50=ffffff
+render_bytes	tests/corpus/render/text-mode-7.pdf	100x100 30,50=ffffff 92,50=ffffff 7,50=ffffff 70,50=00ff00 98,50=ffffff
+render_bytes	tests/corpus/render/text-mode-7-union.pdf	100x100 20,50=00ff00 60,50=00ff00 40,50=ffffff
+# Text in a font that is not embedded, or with a predefined CMap other than Identity, fails when it would paint or clip.
+render_bytes	tests/corpus/render/text-not-embedded.pdf	Unsupported
+render_bytes	tests/corpus/render/text-not-embedded-clip.pdf	Unsupported
+render_bytes	tests/corpus/render/text-not-embedded-composite.pdf	Unsupported
+render_bytes	tests/corpus/render/text-predefined-cmap.pdf	Unsupported
+# ISO 32000-2:2020, 9.3.6 and 8.11.3: invisible or hidden text paints nothing, so its font is not needed.
+render_bytes	tests/corpus/render/text-mode-3-not-embedded.pdf	100x100 90,10=ff0000 20,20=ffffff 20,80=ffffff
+# ISO 32000-2:2020, 9.3.6 and Annex D: space and nonbreakingspace paint nothing, so their font need not be embedded.
+render_bytes	tests/corpus/render/text-not-embedded-space.pdf	strict	100x100 12,45=ffffff 17,45=ffffff 90,10=ff0000
+# ISO 32000-2:2020, 11.3.3, 11.6.4.4: ca for fills and images, CA for strokes; opacity allows one rounding.
+render_bytes	tests/corpus/render/transparency-alpha.pdf	100x100 50,25=990066~1 50,75=3300cc~1 75,95=990066~1 25,95=ff0000
+render_file	tests/corpus/render/transparency-alpha.pdf	100x100 50,25=990066~1 50,75=3300cc~1 75,95=990066~1 25,95=ff0000
+# ISO 32000-2:2020, 11.3.5.2 and 11.3.5.3: the 16 blend modes on whole-byte inputs; separable 1, non-separable 2 for the luminosity step.
+render_bytes	tests/corpus/render/transparency-blend-normal.pdf	100x100 50,50=66ff33~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-multiply.pdf	100x100 50,50=296629~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-screen.pdf	100x100 50,50=a3ffd6~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-overlay.pdf	100x100 50,50=52ccad~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-darken.pdf	100x100 50,50=666633~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-lighten.pdf	100x100 50,50=66ffcc~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-color-dodge.pdf	100x100 50,50=aaffff~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-color-burn.pdf	100x100 50,50=006600~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-hard-light.pdf	100x100 50,50=52ff52~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-soft-light.pdf	100x100 50,50=5aa1b4~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-difference.pdf	100x100 50,50=009999~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-exclusion.pdf	100x100 50,50=7a99ad~1 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-hue.pdf	100x100 50,50=47932d~2 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-saturation.pdf	100x100 50,50=6060ff~2 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-color.pdf	100x100 50,50=2baa00~2 5,5=6666cc
+render_bytes	tests/corpus/render/transparency-blend-luminosity.pdf	100x100 50,50=b2b2ff~2 5,5=6666cc
+# ISO 32000-2:2020, 11.4.7: the page blends over nothing, then white goes under it.
+render_bytes	tests/corpus/render/transparency-page-backdrop.pdf	100x100 25,50=ff0000 75,50=ffffff
+# ISO 32000-2:2020, 11.4.4, 11.6.6: a group composites as one object, with opacity and blend mode reset inside.
+render_bytes	tests/corpus/render/transparency-group.pdf	100x100 20,25=ff8080~1 50,25=ff8080~1 80,25=ff8080~1 20,75=ff8080~1 50,75=ff4040~1
+# ISO 32000-2:2020, 11.4.5: an isolated group starts transparent, another blends with the backdrop.
+render_bytes	tests/corpus/render/transparency-isolated.pdf	100x100 25,50=33cc99 75,50=29525c~1
+# ISO 32000-2:2020, 11.4.4: the backdrop is removed from a non-isolated group before it composites.
+render_bytes	tests/corpus/render/transparency-non-isolated.pdf	100x100 25,50=990066~1 75,50=ff0000
+# ISO 32000-2:2020, 11.4.6: each element of a knockout group composites with the group's initial backdrop.
+render_bytes	tests/corpus/render/transparency-knockout.pdf	100x100 20,50=ff8080~1 50,50=80ff80~1 80,50=80ff80~1
+render_bytes	tests/corpus/render/transparency-knockout-backdrop.pdf	100x100 20,50=800080~1 50,50=008080~1 95,50=0000ff
+# ISO 32000-2:2020, 11.7.4.4: fill and stroke of one path knock out.
+render_bytes	tests/corpus/render/transparency-fill-stroke.pdf	100x100 25,50=8080ff~1 15,50=8080ff~1 50,50=ff0000
+# ISO 32000-2:2020, 11.5.2, 11.6.5.2: an alpha mask is the group's opacity, 0 outside it; None removes it.
+render_bytes	tests/corpus/render/transparency-smask-alpha.pdf	100x100 30,50=ff0000 70,50=ff9999~1 4,4=ffffff 96,3=0000ff
+# ISO 32000-2:2020, 11.5.3, 11.6.5.2: luminosity over BC, black unless given; TR maps the mask.
+render_bytes	tests/corpus/render/transparency-smask-luminosity.pdf	100x100 30,50=ff0000 70,50=ff6969~1 4,4=ffffff
+render_bytes	tests/corpus/render/transparency-smask-luminosity-backdrop.pdf	100x100 50,50=ffffff 4,4=ff0000
+render_bytes	tests/corpus/render/transparency-smask-luminosity-transfer.pdf	100x100 30,50=ffffff 70,50=ff9696~1 4,4=ff0000
+# ISO 32000-2:2020, 11.6.5.2: the mask takes the CTM in force when gs sets it.
+render_bytes	tests/corpus/render/transparency-smask-position.pdf	100x100 25,75=ff0000 75,25=ffffff 10,90=ff0000
+# ISO 32000-2:2020, 11.6.5.2: a soft mask whose group cannot be read is not set, from the top of the page to the bottom.
+render_bytes	tests/corpus/render/transparency-smask-unopened.pdf	10x1100 5,5=000000 5,1090=000000
+# ISO 32000-2:2020, 8.10.1: Matrix and BBox at each level; the state flows in and not out.
+render_bytes	tests/corpus/render/form-nested.pdf	100x100 40,50=ff0000 80,50=ffffff 40,20=ffffff 5,50=ffffff 90,92=0000ff 96,3=0000ff
+# Content that runs itself, or nests deeper than 32, warns and that run is skipped; what came before it and the rest
+#   of the page are drawn; strict fails LimitExceeded.
+# ISO 32000-2:2020, 8.10.1: a form that draws itself.
+render_bytes	tests/corpus/render/form-draws-itself.pdf	100x100 25,75=ff0000 80,20=00ff00
+render_bytes	tests/corpus/render/form-draws-itself.pdf	read=warnings	ISO 32000-2:2020, 8.10.1
+render_bytes	tests/corpus/render/form-draws-itself.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 12.5.5: an annotation appearance that draws itself.
+render_bytes	tests/corpus/render/annotation-appearance-draws-itself.pdf	100x100 20,80=ff0000 80,20=00ff00
+render_bytes	tests/corpus/render/annotation-appearance-draws-itself.pdf	read=warnings	ISO 32000-2:2020, 12.5.5
+render_bytes	tests/corpus/render/annotation-appearance-draws-itself.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 9.6.4: a Type 3 glyph that shows itself.
+render_bytes	tests/corpus/render/text-type3-shows-itself.pdf	100x100 25,50=ff0000 80,20=00ff00
+render_bytes	tests/corpus/render/text-type3-shows-itself.pdf	read=warnings	ISO 32000-2:2020, 9.6.4
+render_bytes	tests/corpus/render/text-type3-shows-itself.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.7.3.1: a tiling pattern whose cell paints with itself.
+render_bytes	tests/corpus/render/pattern-paints-itself.pdf	100x100 5,95=ff0000 15,85=ffffff 80,20=00ff00
+render_bytes	tests/corpus/render/pattern-paints-itself.pdf	read=warnings	ISO 32000-2:2020, 8.7.3.1
+render_bytes	tests/corpus/render/pattern-paints-itself.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.10.1: 40 distinct forms, each drawing the next; the last, past the 32 levels content may nest,
+#   is skipped.
+render_bytes	tests/corpus/render/form-nested-forty.pdf	100x100 15,85=ffffff 80,20=00ff00
+render_bytes	tests/corpus/render/form-nested-forty.pdf	read=warnings	ISO 32000-2:2020, 8.10.1
+render_bytes	tests/corpus/render/form-nested-forty.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 9.3.8 and 11.3.3: 6,000 words, each in its own text object at opacity 0.6, at 1000 pixels across,
+#   are honest: the page renders. 5,999 words lie on one another (green and blue 255 x 0.4^5999, 0); one lies alone
+#   (255 x 0.4, 102); within a word the glyphs do not overlap, so the knockout of 9.3.8 changes nothing.
+render_bytes	tests/corpus/render/text-translucent-words.pdf	fit=1000	1000x1000 50,360=ff0000~1 350,360=ff0000~1 100,360=ffffff 50,760=ff6666~1 500,500=ffffff
+# ISO 32000-2:2020, 8.7.3.1: pixels never depend on bands: a tiling of cells 140,000 by 0.0156 points, over the 1 MiB a
+#   cell may take so drawn tile by tile, meets 196,607 tiles over the page, past the 65,536 of the cap, though each band of
+#   1024 rows meets at most 65,536: counted over the page, it is not painted in any band, all white.
+render_bytes	tests/corpus/render/pattern-tiles-across-bands.pdf	fit=3072	64x3072 32,100=ffffff 32,1500=ffffff 32,2900=ffffff
+# Pixels never depend on bands: 40 x 3000 pixels, several bands. On rows 1016 to 1032 and 2040 to 2056 and a few others:
+#   an axial shading (8.7.4.5.3, within 2), an image turned 90 degrees (8.9.4), a luminosity soft mask of stripes (11.6.5.2),
+#   a slanted stroke (8.5.3.2); glyphs across rows 1024 and 2048 (9.2).
+render_bytes	tests/corpus/render/render-bands.pdf	fit=3000	40x3000 4,5=ff0000~2 12,5=ff0000 20,5=ff0000 29,5=ff0000 32,5=ffffff 4,505=d4002b~2 12,505=0000ff 20,505=ffffff 29,505=ff0000 32,505=ffffff 4,1005=aa0055~2 12,1005=00ff00 20,1005=ff0000 28,1005=ff0000 31,1005=ffffff 4,1016=a90056~2 12,1016=00ff00 20,1016=ff0000 28,1016=ff0000 31,1016=ffffff 4,1017=a90056~2 12,1017=00ff00 20,1017=ff0000 28,1017=ff0000 31,1017=ffffff 4,1018=a80057~2 12,1018=00ff00 20,1018=ff0000 28,1018=ff0000 31,1018=ffffff 4,1019=a80057~2 12,1019=00ff00 20,1019=ff0000 28,1019=ff0000 31,1019=ffffff 4,1020=a80057~2 12,1020=00ff00 20,1020=ff0000 28,1020=ff0000 31,1020=ffffff 4,1021=a80057~2 12,1021=00ff00 20,1021=ff0000 28,1021=ff0000 31,1021=ffffff 4,1022=a80057~2 12,1022=00ff00 20,1022=ff0000 28,1022=ff0000 31,1022=ffffff 4,1023=a80057~2 12,1023=00ff00 20,1023=ff0000 28,1023=ff0000 31,1023=ffffff 4,1024=a80057~2 12,1024=00ff00 20,1024=ff0000 28,1024=ff0000 31,1024=ffffff 4,1025=a80057~2 12,1025=00ff00 20,1025=ff0000 28,1025=ff0000 31,1025=ffffff 4,1026=a80057~2 12,1026=00ff00 20,1026=ff0000 28,1026=ff0000 31,1026=ffffff 4,1027=a80057~2 12,1027=00ff00 20,1027=ff0000 28,1027=ff0000 31,1027=ffffff 4,1028=a80057~2 12,1028=00ff00 20,1028=ff0000 28,1028=ff0000 31,1028=ffffff 4,1029=a70058~2 12,1029=00ff00 20,1029=ff0000 28,1029=ff0000 31,1029=ffffff 4,1030=a70058~2 12,1030=00ff00 20,1030=ff0000 28,1030=ff0000 31,1030=ffffff 4,1031=a70058~2 12,1031=00ff00 20,1031=ff0000 28,1031=ff0000 31,1031=ffffff 4,1032=a70058~2 12,1032=00ff00 20,1032=ff0000 28,1032=ff0000 31,1032=ffffff 4,1505=7f0080~2 12,1505=ff0000 20,1505=ffffff 27,1505=ff0000 30,1505=ffffff 4,2005=5500aa~2 12,2005=0000ff 20,2005=ff0000 27,2005=ff0000 30,2005=ffffff 4,2040=5200ad~2 12,2040=0000ff 20,2040=ff0000 27,2040=ff0000 30,2040=ffffff 4,2041=5100ae~2 12,2041=0000ff 20,2041=ff0000 27,2041=ff0000 30,2041=ffffff 4,2042=5100ae~2 12,2042=0000ff 20,2042=ff0000 27,2042=ff0000 30,2042=ffffff 4,2043=5100ae~2 12,2043=0000ff 20,2043=ff0000 27,2043=ff0000 30,2043=ffffff 4,2044=5100ae~2 12,2044=0000ff 20,2044=ff0000 27,2044=ff0000 30,2044=ffffff 4,2045=5100ae~2 12,2045=0000ff 20,2045=ff0000 27,2045=ff0000 30,2045=ffffff 4,2046=5100ae~2 12,2046=0000ff 20,2046=ff0000 27,2046=ff0000 30,2046=ffffff 4,2047=5100ae~2 12,2047=0000ff 20,2047=ff0000 27,2047=ff0000 30,2047=ffffff 4,2048=5100ae~2 12,2048=0000ff 20,2048=ff0000 27,2048=ff0000 30,2048=ffffff 4,2049=5100ae~2 12,2049=0000ff 20,2049=ff0000 27,2049=ff0000 30,2049=ffffff 4,2050=5100ae~2 12,2050=0000ff 20,2050=ff0000 27,2050=ff0000 30,2050=ffffff 4,2051=5100ae~2 12,2051=0000ff 20,2051=ff0000 27,2051=ff0000 30,2051=ffffff 4,2052=5100ae~2 12,2052=0000ff 20,2052=ff0000 27,2052=ff0000 30,2052=ffffff 4,2053=5000af~2 12,2053=0000ff 20,2053=ff0000 27,2053=ff0000 30,2053=ffffff 4,2054=5000af~2 12,2054=0000ff 20,2054=ff0000 27,2054=ff0000 30,2054=ffffff 4,2055=5000af~2 12,2055=0000ff 20,2055=ff0000 27,2055=ff0000 30,2055=ffffff 4,2056=5000af~2 12,2056=0000ff 20,2056=ff0000 27,2056=ff0000 30,2056=ffffff 4,2505=2a00d5~2 12,2505=00ff00 20,2505=ffffff 26,2505=ff0000 29,2505=ffffff 36,1020=ff0000 36,1021=ff0000 36,1022=ff0000 36,1023=ff0000 36,1024=ff0000 36,1025=ff0000 36,1026=ff0000 36,1027=ff0000 36,1028=ff0000 36,1029=ff0000 36,1030=ff0000 36,1031=ff0000 36,1017=ffffff 36,2044=ff0000 36,2045=ff0000 36,2046=ff0000 36,2047=ff0000 36,2048=ff0000 36,2049=ff0000 36,2050=ff0000 36,2051=ff0000 36,2052=ff0000 36,2053=ff0000 36,2054=ff0000 36,2055=ff0000 36,2041=ffffff
+# Cancelled after three calls, the first before any band, a render of 6000 rows, six bands or more, stops before its last.
+render_bytes	tests/corpus/render/render-bands.pdf	fit=6000	cancel=3	Cancelled
+# ISO 32000-2:2020, 8.6.5.5: a valid profile over 4 MiB, in which 0 0 1 is green, is not used; its Alternate is.
+#   Under strict a cap of the implementation fails LimitExceeded.
+render_bytes	tests/corpus/render/render-icc-long.pdf	100x100 50,50=0000ff
+render_bytes	tests/corpus/render/render-icc-long.pdf	read=warnings	ISO 32000-2:2020, 8.6.5.5
+render_bytes	tests/corpus/render/render-icc-long.pdf	strict	LimitExceeded
+# A sampled function over 4 MiB and a calculator program over 64 KiB are not evaluated: what they colour is not painted,
+#   the rest is; under strict these caps fail LimitExceeded.
+render_bytes	tests/corpus/render/render-function-sampled-long.pdf	100x100 25,75=0000ff 75,25=0000ff
+render_bytes	tests/corpus/render/render-function-sampled-long.pdf	strict	LimitExceeded
+render_bytes	tests/corpus/render/render-function-calculator-long.pdf	100x100 25,75=0000ff 75,25=0000ff
+render_bytes	tests/corpus/render/render-function-calculator-long.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 8.7.3.1: a tiling of over 65,536 tiles that meet the area it fills warns and is not painted;
+#   under strict, LimitExceeded.
+render_bytes	tests/corpus/render/render-tiles-many.pdf	100x100 25,75=0000ff 75,25=0000ff
+render_bytes	tests/corpus/render/render-tiles-many.pdf	read=warnings	ISO 32000-2:2020, 8.7.3.1
+render_bytes	tests/corpus/render/render-tiles-many.pdf	strict	LimitExceeded
+# ISO 32000-2:2020, 7.8.2: 200 strings of 8,000 bytes before an operator that takes none are dropped with a warning.
+render_bytes	tests/corpus/render/render-operands-dropped.pdf	100x100 50,50=0000ff
+render_bytes	tests/corpus/render/render-operands-dropped.pdf	read=warnings	ISO 32000-2:2020, 7.8.2
+# ISO 32000-2:2020, 7.8.2: an unknown operator warns and the rest is drawn; strict fails; inside BX and EX it is ignored.
+render_bytes	tests/corpus/render/warning-unknown-operator.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-unknown-operator.pdf	read=warnings	ISO 32000-2:2020, 7.8.2
+render_bytes	tests/corpus/render/warning-unknown-operator.pdf	strict	Malformed
+render_bytes	tests/corpus/render/warning-compatibility-section.pdf	strict	100x100 50,50=ff0000
+# ISO 32000-2:2020, 7.8.3: a missing resource warns and the rest is drawn; strict fails.
+render_bytes	tests/corpus/render/warning-missing-resource.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-missing-resource.pdf	read=warnings	ISO 32000-2:2020, 7.8.3
+render_bytes	tests/corpus/render/warning-missing-resource.pdf	strict	Malformed
+render_bytes	tests/corpus/render/warning-missing-resource-state.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-missing-resource-state.pdf	read=warnings	ISO 32000-2:2020, 7.8.3
+render_bytes	tests/corpus/render/warning-missing-resource-state.pdf	strict	Malformed
+render_bytes	tests/corpus/render/warning-missing-resource-colour-space.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-missing-resource-colour-space.pdf	read=warnings	ISO 32000-2:2020, 7.8.3
+render_bytes	tests/corpus/render/warning-missing-resource-colour-space.pdf	strict	Malformed
+render_bytes	tests/corpus/render/warning-missing-resource-shading.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-missing-resource-shading.pdf	read=warnings	ISO 32000-2:2020, 7.8.3
+render_bytes	tests/corpus/render/warning-missing-resource-shading.pdf	strict	Malformed
+render_bytes	tests/corpus/render/warning-missing-resource-font.pdf	100x100 50,50=ff0000 5,5=ffffff
+render_bytes	tests/corpus/render/warning-missing-resource-font.pdf	strict	Malformed
+# A page without faults records no warning.
+render_bytes	tests/corpus/render/form-nested.pdf	read=warnings	none
+render_bytes	tests/corpus/render/text-type1.pdf	read=warnings	none
+render_bytes	tests/corpus/render/image-inline.pdf	read=warnings	none
+render_bytes	tests/corpus/render/transparency-smask-luminosity.pdf	read=warnings	none

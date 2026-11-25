@@ -44,6 +44,11 @@ path = "fuzz_targets/page_count.rs"
 test = false
 
 [[bin]]
+name = "render-file"
+path = "fuzz_targets/render_file.rs"
+test = false
+
+[[bin]]
 name = "xref-stream-flate"
 path = "fuzz_targets/xref_stream_flate.rs"
 test = false
@@ -56,6 +61,71 @@ test = false
 [[bin]]
 name = "save"
 path = "fuzz_targets/save.rs"
+test = false
+
+[[bin]]
+name = "font-type1"
+path = "fuzz_targets/font_type1.rs"
+test = false
+
+[[bin]]
+name = "font-cff"
+path = "fuzz_targets/font_cff.rs"
+test = false
+
+[[bin]]
+name = "font-truetype"
+path = "fuzz_targets/font_truetype.rs"
+test = false
+
+[[bin]]
+name = "font-opentype"
+path = "fuzz_targets/font_opentype.rs"
+test = false
+
+[[bin]]
+name = "font-type3"
+path = "fuzz_targets/font_type3.rs"
+test = false
+
+[[bin]]
+name = "image-codec"
+path = "fuzz_targets/image_codec.rs"
+test = false
+
+[[bin]]
+name = "jbig2-symbols"
+path = "fuzz_targets/jbig2_symbols.rs"
+test = false
+
+[[bin]]
+name = "cmap"
+path = "fuzz_targets/cmap.rs"
+test = false
+
+[[bin]]
+name = "content"
+path = "fuzz_targets/content.rs"
+test = false
+
+[[bin]]
+name = "dct"
+path = "fuzz_targets/dct.rs"
+test = false
+
+[[bin]]
+name = "icc"
+path = "fuzz_targets/icc.rs"
+test = false
+
+[[bin]]
+name = "function"
+path = "fuzz_targets/function.rs"
+test = false
+
+[[bin]]
+name = "shading"
+path = "fuzz_targets/shading.rs"
 test = false
 
 [lints]

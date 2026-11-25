@@ -2,7 +2,7 @@
 # Runs every check of an area.
 set -eu
 
-areas='core python javascript advisories licenses dependencies fuzz workflows hook mods ruff shell'
+areas='core python javascript advisories licenses dependencies fuzz fuzz-files workflows hook mods ruff shell'
 ok=
 for a in ${areas}; do
   case ${a} in
@@ -43,7 +43,7 @@ case $1 in
   core | python) tools='cargo-deny cargo-vet' ;;
   javascript) tools='cargo-deny cargo-vet wasm-bindgen' ;;
   advisories) tools=cargo-deny ;;
-  fuzz) tools=cargo-fuzz ;;
+  fuzz | fuzz-files) tools=cargo-fuzz ;;
   *) tools= ;;
 esac
 for t in ${tools}; do
@@ -99,20 +99,36 @@ case $1 in
     sh ci/dependencies.sh
     exit 0
     ;;
-  fuzz)
+  fuzz | fuzz-files)
     # Nightly for cargo-fuzz only, pinned by date; fetch locks deps as cargo fuzz has no --locked.
     nightly='nightly-2026-11-12'
     rustup toolchain install --no-self-update --profile minimal "${nightly}"
     cargo fetch --locked
     tmp=$(mktemp -d)
     trap 'rm -rf "${tmp}"' EXIT
+    # Runs per target, corpus included: a count, not a time, so each check is the same. Two areas, each within
+    # CI's 10 minutes: the render targets, seeded from the whole corpus; the file targets, from all but the
+    # render corpus, whose PDFs only renders parse, keeping its PNG and JPEG files.
+    if [ "$1" = fuzz ]; then
+      seeds=tests/corpus
+      set -- cmap 2500 content 1500 dct 3000 font-cff 2500 font-opentype 2500 font-truetype 2500 font-type1 2500 \
+        font-type3 2500 function 2500 icc 2500 image-codec 2000 jbig2-symbols 2500 render-file 2000 shading 1000
+    else
+      seeds=${tmp}/seeds
+      mkdir "${seeds}"
+      for dir in tests/corpus/*/; do
+        case ${dir} in
+          tests/corpus/render/) cp tests/corpus/render/*.png tests/corpus/render/*.jpg "${seeds}" ;;
+          *) cp -R "${dir%/}" "${seeds}" ;;
+        esac
+      done
+      set -- encrypted-open 25000 filters 40000 header-version 1000000 jpeg 150000 page-count 45000 png 180000 \
+        rebuild 11000 save 5000 xref-stream-flate 20000
+    fi
     # Corpus, then seeded runs, before lints so a planted fault is a finding; new inputs go to the first dir; cmp and reload off: nondeterministic.
-    # Runs per target, corpus included: a count, not a time, so each check is the same; about 30 seconds each in CI.
-    set -- encrypted-open 25000 filters 40000 header-version 1000000 jpeg 150000 page-count 45000 png 180000 \
-      rebuild 11000 save 5000 xref-stream-flate 20000
     while [ "$#" -gt 0 ]; do
       mkdir "${tmp}/$1"
-      cargo "+${nightly}" fuzz run "$1" "${tmp}/$1" tests/corpus -- \
+      cargo "+${nightly}" fuzz run "$1" "${tmp}/$1" "${seeds}" -- \
         -seed=1 "-runs=$2" -use_cmp=0 -reload=0 -timeout=10 -malloc_limit_mb=256
       shift 2
     done
@@ -227,6 +243,11 @@ if [ "$1" = core ]; then
   cargo fmt --check -p starlightpdf -p starlightpdf-memory
   cargo clippy --all-targets --locked -p starlightpdf -p starlightpdf-memory
   cargo test --locked -p starlightpdf -p starlightpdf-memory
+  # Fails if the default build lost rendering, which the suite would accept.
+  cargo test --locked -p starlightpdf --test render -- --list | grep -qx 'render_writes_baseline_jpeg: test'
+  # Without rendering, alone: the memory crate turns it back on.
+  cargo clippy --all-targets --locked --no-default-features -p starlightpdf
+  cargo test --locked --no-default-features -p starlightpdf
   RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked -p starlightpdf -p starlightpdf-memory
   exit 0
 fi
@@ -242,6 +263,7 @@ if [ "$1" = javascript ]; then
   npx -y prettier@3.10.1 --check bindings/javascript
   cargo fmt --check -p starlightpdf-javascript
   cargo clippy --all-targets --locked --target wasm32-unknown-unknown -p starlightpdf-javascript
+  cargo clippy --all-targets --locked --no-default-features --target wasm32-unknown-unknown -p starlightpdf-javascript
   RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --locked --target wasm32-unknown-unknown -p starlightpdf-javascript
   wasm=target/wasm32-unknown-unknown/release/starlightpdf_javascript.wasm
   # So a build that writes no .wasm fails rather than ship a stale one.
@@ -250,9 +272,16 @@ if [ "$1" = javascript ]; then
   out=target/javascript
   rm -rf "${out}"
   wasm-bindgen --target web --out-dir "${out}/package/wasm" "${wasm}"
+  # Without rendering, for starlightpdf/without-rendering; both builds write the same file.
+  without=${out}/package/without-rendering
+  rm -f "${wasm}"
+  cargo build --release --locked --no-default-features --target wasm32-unknown-unknown -p starlightpdf-javascript
+  wasm-bindgen --target web --out-dir "${without}/wasm" "${wasm}"
   cp bindings/javascript/package.json LICENSE "${out}/package"
   # TypeScript (Apache-2.0): the standard type checker and compiler.
   npx -y -p typescript@7.0.2 tsc -p bindings/javascript
+  # The same API over the other module: every URL in it is relative.
+  cp "${out}/package/"*.js "${out}/package/index.d.ts" "${without}"
   npx -y -p typescript@7.0.2 tsc -p bindings/javascript/tests
   version=$(cargo pkgid -p starlightpdf-javascript)
   (cd "${out}/package" && npm pkg set "version=${version##*[#@]}" && npm pack --pack-destination ..)

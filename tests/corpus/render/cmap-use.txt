@@ -1,0 +1,6 @@
+/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+/SL-H usecmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> def
+/CMapName /SL2-H def /CMapType 1 def
+1 begincidrange <43> <43> 9 endcidrange
+endcmap CMapName currentdict /CMap defineresource pop end end

@@ -1,7 +1,10 @@
 //! Cross-reference tables and streams (ISO 32000-2:2020, 7.5.4 to 7.5.8).
 
 use crate::objects::{XrefEntry, XrefKind};
-use crate::store::Objects;
+use crate::pull;
+use alloc::sync::Arc;
+
+use crate::store::{Meter, Objects};
 use crate::stream::decoder;
 use crate::syntax::{At, Input, Keyword, Reader, Token, is_white_space};
 use crate::xref_stream;
@@ -85,31 +88,36 @@ fn offset_at(objects: Objects<'_>, trailer: At, key: &[u8]) -> Result<Option<u64
     })
 }
 
-/// The newest entry for object `number` along the `Prev` chain from `newest`
+/// The newest entry for object `number` along the `Prev` chain from `newest`, and whether the
+/// lookup walked past a section or read a stream's, so that a render keeps what it found
 /// (ISO 32000-2:2020, 7.5.6 and 7.5.8.4).
 pub(crate) fn entry(
     objects: Objects<'_>,
     newest: u64,
     number: u32,
-) -> Result<Option<XrefEntry>, PdfError> {
+) -> Result<(Option<XrefEntry>, bool), PdfError> {
     let mut chain = Chain::new(newest);
     let mut offset = newest;
+    let mut further = false;
     loop {
+        // A stream's section costs a decode unless kept: as walking further.
+        further |= !is_table(objects, offset)?;
         let trailer = match section(objects, offset, Want::Entry(number))? {
-            Lookup::Entry(entry) => return Ok(Some(entry)),
+            Lookup::Entry(entry) => return Ok((Some(entry), further)),
             Lookup::Trailer(trailer, ..) => trailer,
         };
         if let Some(hybrid) = offset_at(objects, trailer, b"XRefStm")?
             && let Lookup::Entry(entry) = section(objects, hybrid, Want::Entry(number))?
         {
-            return Ok(Some(entry));
+            return Ok((Some(entry), true));
         }
         match offset_at(objects, trailer, b"Prev")? {
             Some(prev) => {
                 chain.step(prev, objects.operation())?;
                 offset = prev;
+                further = true;
             }
-            None => return Ok(None),
+            None => return Ok((None, further)),
         }
     }
 }
@@ -118,6 +126,15 @@ pub(crate) fn entry(
 /// counted once per section that lists it.
 pub(crate) fn in_use(objects: Objects<'_>, newest: u64) -> Result<u64, PdfError> {
     walk_for(objects, newest, Want::Count).map(|(_, used, _)| used)
+}
+
+/// Whether a cross-reference table, not a stream, starts at `offset` (ISO 32000-2:2020, 7.5.4).
+fn is_table(objects: Objects<'_>, offset: u64) -> Result<bool, PdfError> {
+    let mut keyword = [0; XREF.len()];
+    let read = objects
+        .source()
+        .read(offset, &mut keyword, objects.operation())?;
+    Ok(read == keyword.len() && keyword.as_slice() == XREF)
 }
 
 /// Whether a cross-reference table or stream starts at `offset` (ISO 32000-2:2020, 7.5.4 and 7.5.8).
@@ -134,23 +151,31 @@ pub(crate) fn is_section(objects: Objects<'_>, offset: u64) -> Result<bool, PdfE
         return Ok(true);
     }
     let mut reader = Reader::new(objects.source(), offset, objects.operation());
-    Ok(object_header(&mut reader, objects.operation())?.is_some())
+    Ok(object_header(&mut reader, objects)?.is_some())
 }
 
-/// `error`, or [`ErrorCode::Malformed`] unless it is [`ErrorCode::Io`].
-fn malformed_unless_io(error: PdfError, operation: &'static str) -> PdfError {
-    if error.code() == ErrorCode::Io {
+/// `error`, or [`ErrorCode::Malformed`] unless it is [`ErrorCode::Io`] or the operation's end:
+/// cancelled, past its budget, or past the work of a render.
+fn malformed_unless_io(error: PdfError, objects: Objects<'_>) -> PdfError {
+    let spent = objects.work().is_some_and(Meter::exhausted);
+    let code = error.code();
+    let ended = matches!(
+        code,
+        ErrorCode::BudgetExceeded | ErrorCode::Cancelled | ErrorCode::Io
+    ) || (code == ErrorCode::LimitExceeded && spent);
+    if ended {
         error
     } else {
-        PdfError::new(ErrorCode::Malformed, operation)
+        PdfError::new(ErrorCode::Malformed, objects.operation())
     }
 }
 
 /// `number generation obj` right at the reader, the start of an indirect object
-/// (ISO 32000-2:2020, 7.3.10); a failure other than [`ErrorCode::Io`] is [`ErrorCode::Malformed`].
+/// (ISO 32000-2:2020, 7.3.10); a failure other than [`ErrorCode::Io`] or the operation's end is
+/// [`ErrorCode::Malformed`].
 pub(crate) fn object_header<I>(
     reader: &mut Reader<I>,
-    operation: &'static str,
+    objects: Objects<'_>,
 ) -> Result<Option<(i64, i64)>, PdfError>
 where
     I: Input,
@@ -161,7 +186,7 @@ where
     let mut next = || {
         reader
             .token()
-            .map_err(|error| malformed_unless_io(error, operation))
+            .map_err(|error| malformed_unless_io(error, objects))
     };
     if let Token::Integer(number) = next()?
         && let Token::Integer(generation) = next()?
@@ -244,12 +269,14 @@ fn section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfE
     );
     let (mut total, mut size): (u64, u64) = (0, 0);
     loop {
+        objects.charge(&mut reader)?;
         let first = match reader.token()? {
             Token::Keyword(Keyword::Trailer) => {
                 let trailer = reader
                     .head(objects.depth_limit())?
                     .dictionary()
                     .ok_or_else(malformed)?;
+                objects.charge(&mut reader)?;
                 return Ok(Lookup::Trailer(trailer, total, size));
             }
             Token::Integer(first) => first,
@@ -337,14 +364,15 @@ pub(crate) fn startxref(objects: Objects<'_>) -> Result<u64, PdfError> {
 fn stream_section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Lookup, PdfError> {
     let operation = objects.operation();
     let mut reader = Reader::new(objects.source(), offset, operation);
-    if object_header(&mut reader, operation)?.is_none() {
+    if object_header(&mut reader, objects)?.is_none() {
         return Err(objects.malformed());
     }
     let dictionary = reader
         .value(objects.depth_limit())
-        .map_err(|error| malformed_unless_io(error, operation))?
+        .map_err(|error| malformed_unless_io(error, objects))?
         .dictionary()
         .ok_or_else(|| objects.malformed())?;
+    objects.charge(&mut reader)?;
     if !objects
         .get(dictionary, b"Type")?
         .is_some_and(|kind| kind.is_name(b"XRef"))
@@ -357,11 +385,43 @@ fn stream_section(objects: Objects<'_>, offset: u64, want: Want) -> Result<Looku
     }
     let (start, length) = objects.extent(&mut reader, dictionary, false)?;
     let mut data = decoder(objects, None, start, length, dictionary, true)?;
+    let found =
+        |entry: Option<XrefEntry>| entry.map_or(Lookup::Trailer(dictionary, 0, 0), Lookup::Entry);
     match want {
-        Want::Entry(number) => Ok(
-            xref_stream::lookup(objects, dictionary, &mut *data, number)?
-                .map_or(Lookup::Trailer(dictionary, 0, 0), Lookup::Entry),
-        ),
+        Want::Entry(number) if objects.section_most(offset) > 0 => {
+            // A section is looked in for every object: decoded once, where it fits.
+            if let Some(kept) = objects.kept_section(offset) {
+                return Ok(found(xref_stream::lookup_in(
+                    objects, dictionary, &kept, number,
+                )?));
+            }
+            let most = objects.section_most(offset);
+            let size = xref_stream::size(objects, dictionary)?;
+            if size <= u64::try_from(most).unwrap_or(0) && objects.fits_section(size) {
+                let exact = usize::try_from(size).unwrap_or(usize::MAX);
+                if let Some(kept) = pull::exactly(&mut *data, exact)? {
+                    objects.keep_section(offset, Arc::clone(&kept));
+                    return Ok(found(xref_stream::lookup_in(
+                        objects, dictionary, &kept, number,
+                    )?));
+                }
+                // Longer than it declares, or no room: read anew.
+                drop(data);
+                let mut again = decoder(objects, None, start, length, dictionary, true)?;
+                return Ok(found(xref_stream::lookup(
+                    objects,
+                    dictionary,
+                    &mut *again,
+                    number,
+                )?));
+            }
+            Ok(found(xref_stream::lookup(
+                objects, dictionary, &mut *data, number,
+            )?))
+        }
+        Want::Entry(number) => Ok(found(xref_stream::lookup(
+            objects, dictionary, &mut *data, number,
+        )?)),
         Want::Count | Want::Trailer => Ok(Lookup::Trailer(
             dictionary,
             xref_stream::count(objects, dictionary, &mut *data)?,

@@ -1,12 +1,29 @@
 //! PNG files (ISO/IEC 15948:2004): IDAT data kept as `FlateDecode` with PNG predictors, or decoded
 //! to unfiltered samples and a soft mask (ISO 32000-2:2020, 7.4.4.4, 8.9.3, 11.6.5.3).
 
-use super::{Cursor, Image, Profile, READ, STEP, exif, malformed, number};
+use super::{Cursor, Image, Profile, READ, STEP, exif, malformed};
 use crate::inflate::Inflate;
 use crate::input::Source;
 use crate::predictor::Predictor;
-use crate::pull::Pull;
+use crate::pull::{Held, Pull, fill, number};
 use crate::{ErrorCode, PdfError};
+
+/// The CRC-32 of each byte (Annex D), made once.
+const CRCS: [u32; 256] = {
+    let mut table = [0_u32; 256];
+    let mut rest: &mut [u32] = &mut table;
+    let mut index = 0_u32;
+    loop {
+        let current = rest;
+        let Some((slot, tail)) = current.split_first_mut() else {
+            break;
+        };
+        *slot = crc_of(index);
+        rest = tail;
+        index = index.wrapping_add(1);
+    }
+    table
+};
 
 /// Bytes of an eXIf chunk searched for the orientation; Exif data puts its first directory early.
 const EXIF_HEAD: usize = 0x1_0000;
@@ -51,7 +68,7 @@ struct Chunks {
 }
 
 /// The IDAT data, read chunk by chunk.
-pub(super) struct Idat<'source> {
+pub(super) struct Idat {
     /// Bytes left in the current chunk.
     left: u64,
     /// The offset of the next chunk.
@@ -59,7 +76,7 @@ pub(super) struct Idat<'source> {
     /// The offset of the next byte.
     position: u64,
     /// The source.
-    source: &'source Source,
+    source: Source,
 }
 
 /// Takes a decoded row of a pass, with its index in the pass.
@@ -83,7 +100,7 @@ struct Pass {
 }
 
 /// A PNG's layout.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct Png {
     /// The tRNS alpha per palette entry (11.3.2.1).
     alpha: Option<Vec<u8>>,
@@ -105,7 +122,27 @@ pub(super) struct Png {
     width: u32,
 }
 
-impl Pull for Idat<'_> {
+/// An image's colour samples or soft mask, unfiltered, read in order.
+pub(super) struct Rows {
+    /// The row being served.
+    converted: Vec<u8>,
+    /// The unfiltered data; none before the first pull.
+    data: Option<Box<dyn Pull>>,
+    /// Rows left.
+    left: u32,
+    /// The soft mask, not the colour samples.
+    mask: bool,
+    /// The layout.
+    png: Png,
+    /// The row as stored, unfiltered.
+    raw: Vec<u8>,
+    /// How much of `converted` is served.
+    served: usize,
+    /// The file.
+    source: Source,
+}
+
+impl Pull for Idat {
     fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
         while self.left == 0 {
             let mut header = [0; 8];
@@ -127,6 +164,18 @@ impl Pull for Idat<'_> {
         let step = u64::try_from(count).unwrap_or(0);
         self.position = self.position.saturating_add(step);
         self.left = self.left.saturating_sub(step);
+        Ok(count)
+    }
+}
+
+impl Pull for Rows {
+    fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
+        if self.served >= self.converted.len() && !self.fetch()? {
+            return Ok(0);
+        }
+        let mut rest = self.converted.get(self.served..).unwrap_or_default();
+        let count = rest.pull(buf)?;
+        self.served = self.served.saturating_add(count);
         Ok(count)
     }
 }
@@ -256,7 +305,7 @@ impl Png {
             )?;
             let mut row = buffer(self.row_bytes(pass.width))?;
             for index in 0..pass.height {
-                if super::fill(&mut rows, &mut row)? != row.len() {
+                if fill(&mut rows, &mut row)? != row.len() {
                     return Err(malformed());
                 }
                 each(pass, index, &row)?;
@@ -273,72 +322,8 @@ impl Png {
         self.decoded
     }
 
-    /// The IDAT data.
-    pub(super) const fn idat<'source>(&self, source: &'source Source) -> Idat<'source> {
-        Idat {
-            left: 0,
-            next: self.idat,
-            position: 0,
-            source,
-        }
-    }
-
-    /// The soft mask's bits per component and bytes.
-    pub(super) fn mask(&self) -> Option<(u8, u64)> {
-        let bits = if self.alpha_channel() {
-            self.bits
-        } else if self.alpha.is_some() || self.key.is_some() {
-            8
-        } else {
-            return None;
-        };
-        let row = u64::from(self.width).saturating_mul(u64::from(bits >> 3_u32));
-        Some((bits, row.saturating_mul(u64::from(self.height))))
-    }
-
-    /// The passes with pixels.
-    fn passes(&self) -> Vec<Pass> {
-        let whole = [[0; 4]];
-        let passes: &[[u32; 4]] = if self.interlaced { &PASSES } else { &whole };
-        passes
-            .iter()
-            .map(|&[column, row, column_shift, row_shift]| {
-                let count = |size: u32, first: u32, shift: u32| {
-                    size.saturating_sub(first)
-                        .saturating_add(1_u32.wrapping_shl(shift).saturating_sub(1))
-                        .wrapping_shr(shift)
-                };
-                Pass {
-                    column,
-                    column_shift,
-                    height: count(self.height, row, row_shift),
-                    row,
-                    row_shift,
-                    width: count(self.width, column, column_shift),
-                }
-            })
-            .filter(|pass| pass.width > 0 && pass.height > 0)
-            .collect()
-    }
-
-    /// Bytes of a row of `columns` pixels, without its filter type.
-    fn row_bytes(&self, columns: u32) -> u64 {
-        u64::from(columns)
-            .saturating_mul(u64::from(self.channels()))
-            .saturating_mul(u64::from(self.bits))
-            .saturating_add(7)
-            >> 3_u32
-    }
-
-    /// Passes each row of the image in order, unfiltered and deinterlaced.
-    fn rows(
-        &self,
-        source: &Source,
-        each: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
-        if !self.interlaced {
-            return self.decode(source, &mut |_, _, row| each(row));
-        }
+    /// The whole image of an interlaced file, unfiltered.
+    fn deinterlaced(&self, source: &Source) -> Result<Vec<u8>, PdfError> {
         let stride = usize::try_from(self.row_bytes(self.width))
             .ok()
             .ok_or_else(malformed)?;
@@ -383,10 +368,116 @@ impl Png {
             }
             Ok(())
         })?;
-        for row in image.chunks(stride) {
-            each(row)?;
+        Ok(image)
+    }
+
+    /// Bytes a reader of its samples holds whole: an interlaced image's.
+    #[cfg(feature = "rendering")]
+    pub(super) fn held(&self) -> u64 {
+        if self.interlaced {
+            self.row_bytes(self.width)
+                .saturating_mul(u64::from(self.height))
+        } else {
+            0
+        }
+    }
+
+    /// The IDAT data.
+    pub(super) fn idat(&self, source: &Source) -> Idat {
+        Idat {
+            left: 0,
+            next: self.idat,
+            position: 0,
+            source: source.clone(),
+        }
+    }
+
+    /// The soft mask's bits per component and bytes.
+    pub(super) fn mask(&self) -> Option<(u8, u64)> {
+        let bits = if self.alpha_channel() {
+            self.bits
+        } else if self.alpha.is_some() || self.key.is_some() {
+            8
+        } else {
+            return None;
+        };
+        let row = u64::from(self.width).saturating_mul(u64::from(bits >> 3_u32));
+        Some((bits, row.saturating_mul(u64::from(self.height))))
+    }
+
+    /// Appends the soft mask's samples of the unfiltered `row` to `out`.
+    fn mask_row(&self, row: &[u8], out: &mut Vec<u8>) -> Result<(), PdfError> {
+        let bits = u32::from(self.bits);
+        let channels = self.channels();
+        if self.alpha_channel() {
+            let size = usize::from(self.bits >> 3_u32);
+            for pixel in row.chunks_exact(usize::from(channels).wrapping_mul(size)) {
+                let alpha = pixel.len().wrapping_sub(size);
+                out.extend_from_slice(pixel.get(alpha..).unwrap_or_default());
+            }
+        } else if let Some(alpha) = self.alpha.as_deref() {
+            for column in 0..self.width {
+                let index = sample(row, column, bits).ok_or_else(malformed)?;
+                out.push(alpha.get(usize::from(index)).copied().unwrap_or(u8::MAX));
+            }
+        } else {
+            let key = self.key.unwrap_or_default();
+            for column in 0..self.width {
+                let mut matched = true;
+                for (channel, wanted) in (0..channels).zip(key) {
+                    let index = column
+                        .wrapping_mul(u32::from(channels))
+                        .wrapping_add(u32::from(channel));
+                    matched &= sample(row, index, bits).ok_or_else(malformed)? == wanted;
+                }
+                out.push(if matched { 0 } else { u8::MAX });
+            }
         }
         Ok(())
+    }
+
+    /// The soft mask's samples, read in order.
+    pub(super) fn mask_samples(&self, source: &Source) -> Rows {
+        Rows::new(self, source, true)
+    }
+
+    /// The passes with pixels.
+    fn passes(&self) -> Vec<Pass> {
+        let whole = [[0; 4]];
+        let passes: &[[u32; 4]] = if self.interlaced { &PASSES } else { &whole };
+        passes
+            .iter()
+            .map(|&[column, row, column_shift, row_shift]| {
+                let count = |size: u32, first: u32, shift: u32| {
+                    size.saturating_sub(first)
+                        .saturating_add(1_u32.wrapping_shl(shift).saturating_sub(1))
+                        .wrapping_shr(shift)
+                };
+                Pass {
+                    column,
+                    column_shift,
+                    height: count(self.height, row, row_shift),
+                    row,
+                    row_shift,
+                    width: count(self.width, column, column_shift),
+                }
+            })
+            .filter(|pass| pass.width > 0 && pass.height > 0)
+            .collect()
+    }
+
+    /// Bytes of a row of `columns` pixels, without its filter type.
+    fn row_bytes(&self, columns: u32) -> u64 {
+        u64::from(columns)
+            .saturating_mul(u64::from(self.channels()))
+            .saturating_mul(u64::from(self.bits))
+            .saturating_add(7)
+            >> 3_u32
+    }
+
+    /// The colour samples, read in order.
+    pub(super) fn samples(&self, source: &Source) -> Rows {
+        Rows::new(self, source, false)
     }
 
     /// Bytes of the colour samples.
@@ -402,66 +493,83 @@ impl Png {
         row.saturating_mul(u64::from(self.height))
     }
 
-    /// Writes the soft mask's samples a row at a time.
-    pub(super) fn write_mask(
-        &self,
-        source: &Source,
-        out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
-        let bits = u32::from(self.bits);
-        let channels = self.channels();
-        let size = usize::from(self.bits >> 3_u32);
-        let (mask_bits, _) = self.mask().unwrap_or_default();
-        let mut mask =
-            reserved(u64::from(self.width).saturating_mul(u64::from(mask_bits >> 3_u32)))?;
-        self.rows(source, &mut |row| {
-            mask.clear();
-            if self.alpha_channel() {
-                for pixel in row.chunks_exact(usize::from(channels).wrapping_mul(size)) {
-                    let alpha = pixel.len().wrapping_sub(size);
-                    mask.extend_from_slice(pixel.get(alpha..).unwrap_or_default());
-                }
-            } else if let Some(alpha) = self.alpha.as_deref() {
-                for column in 0..self.width {
-                    let index = sample(row, column, bits).ok_or_else(malformed)?;
-                    mask.push(alpha.get(usize::from(index)).copied().unwrap_or(u8::MAX));
-                }
-            } else {
-                let key = self.key.unwrap_or_default();
-                for column in 0..self.width {
-                    let mut matched = true;
-                    for (channel, wanted) in (0..channels).zip(key) {
-                        let index = column
-                            .wrapping_mul(u32::from(channels))
-                            .wrapping_add(u32::from(channel));
-                        matched &= sample(row, index, bits).ok_or_else(malformed)? == wanted;
-                    }
-                    mask.push(if matched { 0 } else { u8::MAX });
-                }
-            }
-            out(&mask)
-        })
-    }
-
-    /// Writes the colour samples a row at a time.
-    pub(super) fn write_samples(
-        &self,
-        source: &Source,
-        out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>,
-    ) -> Result<(), PdfError> {
+    /// Appends the colour samples of the unfiltered `row` to `out`.
+    fn samples_row(&self, row: &[u8], out: &mut Vec<u8>) {
         if !self.alpha_channel() {
-            return self.rows(source, out);
+            out.extend_from_slice(row);
+            return;
         }
         let size = usize::from(self.bits >> 3_u32);
         let pixel = usize::from(self.channels()).wrapping_mul(size);
-        let mut samples = reserved(self.row_bytes(self.width))?;
-        self.rows(source, &mut |row| {
-            samples.clear();
-            for each in row.chunks_exact(pixel) {
-                samples.extend_from_slice(each.get(..pixel.wrapping_sub(size)).unwrap_or_default());
-            }
-            out(&samples)
+        for each in row.chunks_exact(pixel) {
+            out.extend_from_slice(each.get(..pixel.wrapping_sub(size)).unwrap_or_default());
+        }
+    }
+
+    /// The unfiltered data, an interlaced image's held whole.
+    fn unfiltered(&self, source: &Source) -> Result<Box<dyn Pull>, PdfError> {
+        Ok(if self.interlaced {
+            Box::new(Held::new(self.deinterlaced(source)?))
+        } else {
+            Box::new(Predictor::with_parameters(
+                Inflate::new(self.idat(source)),
+                15,
+                i64::from(self.channels()),
+                i64::from(self.bits),
+                i64::from(self.width),
+            )?)
         })
+    }
+}
+
+impl Rows {
+    /// Makes the next row into `converted`; `false` at the end, which fails unless the data
+    /// holds exactly the image.
+    fn fetch(&mut self) -> Result<bool, PdfError> {
+        if self.data.is_none() {
+            self.raw = buffer(self.png.row_bytes(self.png.width))?;
+            self.converted = reserved(if self.mask {
+                let (bits, _) = self.png.mask().unwrap_or_default();
+                u64::from(self.png.width).saturating_mul(u64::from(bits >> 3_u32))
+            } else {
+                self.png.row_bytes(self.png.width)
+            })?;
+            self.data = Some(self.png.unfiltered(&self.source)?);
+        }
+        let data = self.data.as_mut().ok_or_else(malformed)?;
+        self.served = 0;
+        self.converted.clear();
+        if self.left == 0 {
+            return if data.pull(&mut [0])? == 0 {
+                Ok(false)
+            } else {
+                Err(malformed())
+            };
+        }
+        if fill(data, &mut self.raw)? != self.raw.len() {
+            return Err(malformed());
+        }
+        self.left = self.left.saturating_sub(1);
+        if self.mask {
+            self.png.mask_row(&self.raw, &mut self.converted)?;
+        } else {
+            self.png.samples_row(&self.raw, &mut self.converted);
+        }
+        Ok(true)
+    }
+
+    /// The rows of `png` in `source`, or of its soft mask.
+    fn new(png: &Png, source: &Source, mask: bool) -> Self {
+        Self {
+            converted: Vec::new(),
+            data: None,
+            left: png.height,
+            mask,
+            png: png.clone(),
+            raw: Vec::new(),
+            served: 0,
+            source: source.clone(),
+        }
     }
 }
 
@@ -516,15 +624,24 @@ fn chunk(
     Ok(kept)
 }
 
-/// Updates CRC-32 register `register` with `bytes` (ISO 3309; ISO/IEC 15948:2004, Annex D).
-fn crc(register: u32, bytes: &[u8]) -> u32 {
-    bytes.iter().fold(register, |start, byte| {
-        let mut value = start ^ u32::from(*byte);
-        for _ in 0..8_u8 {
-            value = (value >> 1_u32) ^ (0xEDB8_8320 & 0_u32.wrapping_sub(value & 1));
-        }
-        value
+/// Updates CRC-32 register `register` with `bytes` (ISO 3309; ISO/IEC
+/// 15948:2004, Annex D).
+pub(crate) fn crc(register: u32, bytes: &[u8]) -> u32 {
+    bytes.iter().fold(register, |sum, byte| {
+        let index = usize::try_from((sum ^ u32::from(*byte)) & 0xFF).unwrap_or_default();
+        CRCS.get(index).copied().unwrap_or_default() ^ sum.wrapping_shr(8)
     })
+}
+
+/// The CRC-32 of the byte `index` (Annex D).
+const fn crc_of(index: u32) -> u32 {
+    let mut value = index;
+    let mut bit = 0_u8;
+    while bit < 8 {
+        value = value.wrapping_shr(1) ^ (0xEDB8_8320 & 0_u32.wrapping_sub(value & 1));
+        bit = bit.wrapping_add(1);
+    }
+    value
 }
 
 /// Parses IHDR's data (11.2.2).
