@@ -132,6 +132,14 @@ redact_file	tests/corpus/redact/resources-appearance.pdf	marks=1@10,10,60,60	rea
 # A hundred and fifty pages, each drawing a shared image under its mark by a name of its own: it goes.
 redact_bytes	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
 redact_file	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
+# A name to what a mark removed goes from the resources of a page that never draws it (7.8.3).
+redact_bytes	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=464f524d53454352455458	absent
+redact_file	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=464f524d53454352455458	absent
+redact_bytes	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=554e555345444e414d45534543524554	absent
+redact_file	tests/corpus/redact/resources-unused.pdf	marks=0@10,130,70,60	read=text	bytes=554e555345444e414d45534543524554	absent
+# So does one a form on another page draws through resources of its own that the redacted page shared (7.8.3, 8.10.1).
+redact_bytes	tests/corpus/redact/resources-form-elsewhere.pdf	marks=0@10,130,60,60	read=pixels	index=2	same
+redact_file	tests/corpus/redact/resources-form-elsewhere.pdf	marks=0@10,130,60,60	read=pixels	index=2	same
 # ActualText, Alt and E of marked content a mark touches, inline or named in Properties (14.6, 14.9.3, 14.9.4, 14.9.5).
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=41435455414c474f4e45	absent
 redact_bytes	tests/corpus/redact/marked-content.pdf	marks=0@15,35,50,60	read=text	bytes=414c54474f4e45	absent
@@ -352,6 +360,11 @@ redact_bytes	tests/corpus/redact/pattern-reached.pdf	marks=2@40,80,60,40	read=ok
 redact_file	tests/corpus/redact/pattern-reached.pdf	marks=2@40,80,60,40	read=ok	Unsupported
 redact_bytes	tests/corpus/redact/pattern-reached.pdf	marks=3@80,80,40,40	read=ok	Unsupported
 redact_file	tests/corpus/redact/pattern-reached.pdf	marks=3@80,80,40,40	read=ok	Unsupported
+# So is a Type 3 glyph under a mark whose procedure shows text or an image, which would stay in the font (9.6.4).
+redact_bytes	tests/corpus/redact/text-type3-procedure.pdf	marks=0@10,120,70,70	read=ok	Unsupported
+redact_file	tests/corpus/redact/text-type3-procedure.pdf	marks=0@10,120,70,70	read=ok	Unsupported
+redact_bytes	tests/corpus/redact/text-type3-procedure.pdf	marks=1@10,120,70,70	read=ok	Unsupported
+redact_file	tests/corpus/redact/text-type3-procedure.pdf	marks=1@10,120,70,70	read=ok	Unsupported
 redact_bytes	tests/corpus/redact/mark-rect.pdf	cancel	read=ok	Cancelled
 redact_file	tests/corpus/redact/mark-rect.pdf	cancel	read=ok	Cancelled
 redact_bytes	tests/corpus/redact/pages.pdf	cancel=1	read=ok	Cancelled

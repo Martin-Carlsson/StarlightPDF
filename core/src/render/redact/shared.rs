@@ -34,6 +34,9 @@ enum Holder {
 /// The names of a category.
 type Names = BTreeSet<Vec<u8>>;
 
+/// Objects by number and generation.
+type Ids = BTreeSet<(u32, u16)>;
+
 /// A resource's category and name.
 type Named = (&'static [u8], Vec<u8>);
 
@@ -53,6 +56,8 @@ pub(super) struct Released {
     entries: BTreeMap<Place, (Holder, Names)>,
     /// What holds each category for the parent of the page asked last: siblings come in turn.
     last: Vec<(ObjectId, &'static [u8], Option<Holder>)>,
+    /// The forms and images a mark touched: names to them go wherever nothing draws them.
+    objects: Ids,
 }
 
 impl Holder {
@@ -99,6 +104,59 @@ impl Released {
         Ok(())
     }
 
+    /// Adds to the names `held` holds of the category `key` those of objects a mark touched, the
+    /// first time `examined` meets it.
+    fn examine(
+        &mut self,
+        job: &Job<'_>,
+        stage: &Stage,
+        (held, key): (Option<Holder>, &'static [u8]),
+        examined: &mut BTreeSet<Place>,
+    ) -> Result<(), PdfError> {
+        let Some(found) = held else {
+            return Ok(());
+        };
+        if self.objects.is_empty() || !examined.insert((found.key(), key)) {
+            return Ok(());
+        }
+        let category = match found {
+            Holder::Category(id) => stage.get(job, id)?,
+            Holder::Node(id) => stage
+                .get(job, id)?
+                .get(b"Resources")
+                .and_then(|resources| resources.get(key))
+                .unwrap_or(Object::Null),
+            Holder::Resources(id) => stage.get(job, id)?.get(key).unwrap_or(Object::Null),
+        };
+        let pairs = data::pairs(&category).map_or(&[][..], Vec::as_slice);
+        job.spend(u64::try_from(pairs.len()).unwrap_or(u64::MAX))?;
+        let names: Names = pairs
+            .iter()
+            .filter(|pair| {
+                matches!(pair.1, Object::Reference(id)
+                    if self.objects.contains(&(id.number, id.generation)))
+            })
+            .map(|pair| pair.0.clone())
+            .collect();
+        if !names.is_empty() {
+            self.entries
+                .entry((found.key(), key))
+                .or_insert_with(|| (found, Names::new()))
+                .1
+                .extend(names);
+        }
+        Ok(())
+    }
+
+    /// Adds the originals of `moved`, the forms and images a mark touched.
+    pub(super) fn gone(&mut self, moved: &[(ObjectId, Option<ObjectId>, Vec<i64>)]) {
+        self.objects.extend(
+            moved
+                .iter()
+                .map(|entry| (entry.0.number, entry.0.generation)),
+        );
+    }
+
     /// What holds the resources of the category `key` of the page `id`, `node`, through its
     /// parents; none where it has none.
     fn holder(
@@ -128,20 +186,90 @@ impl Released {
         Ok(found)
     }
 
-    /// Removes the names from what holds them where no page or appearance of an annotation kept
-    /// uses them, reading each page once (12.5.5).
+    /// Scans what `resources` names that runs through resources of its own, each once by `seen`,
+    /// for the names wanted of those, examined first; and so on within them, `depth` deep; past
+    /// the deepest, all are kept (7.8.3, 8.10.1).
+    fn owners(
+        &mut self,
+        run: &mut Run<'_, '_>,
+        stage: &Stage,
+        (keys, resources, depth): (&[&'static [u8]], &Resolved, u8),
+        (examined, seen, left): (&mut BTreeSet<Place>, &mut Ids, &mut usize),
+    ) -> Result<(), PdfError> {
+        let job = run.job;
+        if depth >= job::NESTING {
+            for entry in self.entries.values_mut() {
+                entry.1.clear();
+            }
+            return Ok(());
+        }
+        for category in [&b"XObject"[..], b"Pattern", b"Font", b"ExtGState"] {
+            let listed = match data::entry(job, resources.value(), category) {
+                Err(error) if error.code() == ErrorCode::Malformed => continue,
+                other => other?,
+            };
+            for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
+                job.spend(1)?;
+                // What cannot be read draws nothing.
+                let made = match data::resolve(job, &pair.1).and_then(|found| runs(job, &found)) {
+                    Err(error) if error.code() == ErrorCode::Malformed => continue,
+                    other => other?,
+                };
+                for (owner, streams) in made {
+                    if owner
+                        .id()
+                        .is_some_and(|id| !seen.insert((id.number, id.generation)))
+                    {
+                        continue;
+                    }
+                    job.spend(NODE_WORK)?;
+                    let own = match data::entry(job, owner.value(), b"Resources") {
+                        Ok(found) if matches!(*found.value(), Object::Dictionary(_)) => found,
+                        Err(error) if error.code() != ErrorCode::Malformed => return Err(error),
+                        Ok(_) | Err(_) => continue,
+                    };
+                    let stored = owner.value().get(b"Resources").unwrap_or(Object::Null);
+                    for &key in keys {
+                        let held = holding(job, stage, stored.clone(), None, key)?;
+                        self.examine(job, stage, (held, key), examined)?;
+                        let Some(found) = held.filter(|_| self.wanted(held, key)) else {
+                            continue;
+                        };
+                        for stream in &streams {
+                            let opened = data::open(job, &mut run.caches.streams, stream);
+                            let scope = Rc::new(Scope::new(own.clone()));
+                            self.scan(run, stage, (found, key, &mut *left), (opened, scope, 1))?;
+                        }
+                    }
+                    let inner = (keys, &own, depth.saturating_add(1));
+                    self.owners(run, stage, inner, (&mut *examined, &mut *seen, &mut *left))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the names from what holds them, and names to objects a mark touched from what holds
+    /// those, where no page, appearance of an annotation kept or content with resources of its own
+    /// that they name uses them, reading each page once (7.8.3, 12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
         stage: &mut Stage,
     ) -> Result<(), PdfError> {
-        let keys: BTreeSet<&'static [u8]> = self.entries.keys().map(|place| place.1).collect();
+        let mut categories: BTreeSet<&'static [u8]> =
+            self.entries.keys().map(|place| place.1).collect();
+        if !self.objects.is_empty() {
+            let _new: bool = categories.insert(b"XObject");
+        }
+        let keys: Vec<&'static [u8]> = categories.into_iter().collect();
         let mut left = self.entries.len();
+        let (mut examined, mut seen) = (BTreeSet::new(), Ids::new());
         let job = run.job;
         let (objects, overlay) = (job.objects, &*job.overlay);
         let damaged = job.damaged.get();
         let mut pages = Leaves::new(objects, overlay)?;
-        while left > 0
+        while (left > 0 || !self.objects.is_empty())
             && let Some(id) = pages.next(objects, overlay)?
         {
             job.spend(NODE_WORK)?;
@@ -152,9 +280,11 @@ impl Released {
             };
             // As stored: a redacted page's content uses no more than it did.
             let stored = overlay.resolve(objects, id)?;
-            let mut page = None;
+            let inherited = display::inherited(objects, overlay, &stored, b"Resources")?;
+            let within = Rc::new(Scope::new(data::made(job, inherited, None)?));
             for &key in &keys {
                 let held = self.holder(job, stage, (id, &node), key)?;
+                self.examine(job, stage, (held, key), &mut examined)?;
                 let mut owners = Vec::new();
                 for entry in &shown {
                     let (stream, own) = (&entry.0, &entry.1);
@@ -164,21 +294,11 @@ impl Released {
                     } else {
                         held
                     };
+                    self.examine(job, stage, (found, key), &mut examined)?;
                     if self.wanted(found, key) {
                         owners.push((stream, found, own));
                     }
                 }
-                if !self.wanted(held, key) && owners.is_empty() {
-                    continue;
-                }
-                let within = if let Some(ref found) = page {
-                    Rc::clone(found)
-                } else {
-                    let resources = display::inherited(objects, overlay, &stored, b"Resources")?;
-                    let made = Rc::new(Scope::new(data::made(job, resources, None)?));
-                    page = Some(Rc::clone(&made));
-                    made
-                };
                 if let Some(found) = held
                     && self.wanted(held, key)
                 {
@@ -201,6 +321,13 @@ impl Released {
                         self.scan(run, stage, (owner, key, &mut left), (opened, inner, 1))?;
                     }
                 }
+            }
+            // Content with resources of its own that the page's or an appearance's name.
+            let mut named = vec![within.resources.clone()];
+            named.extend(shown.iter().filter_map(|entry| entry.1.clone()));
+            for given in &named {
+                let walked = (&mut examined, &mut seen, &mut left);
+                self.owners(run, stage, (&keys, given, 0), walked)?;
             }
         }
         job.damaged.set(damaged);

@@ -360,7 +360,7 @@ impl Annotation {
     ///
     /// The core's, as details.
     #[wasm_bindgen(
-        unchecked_return_type = "{ color: string; height: number; kind: \"Ellipse\" | \"FileAttachment\" | \"FreeText\" | \"Highlight\" | \"Ink\" | \"Line\" | \"Link\" | \"Media\" | \"Model3d\" | \"Note\" | \"Other\" | \"Polygon\" | \"Polyline\" | \"Popup\" | \"Rectangle\" | \"Redact\" | \"RubberStamp\" | \"Squiggly\" | \"Strikeout\" | \"Underline\" | \"Widget\"; quads: number[]; width: number; x: number; y: number }"
+        unchecked_return_type = "{ color: string; height: number; kind: import(\"../index.js\").AnnotationKind; quads: number[]; width: number; x: number; y: number }"
     )]
     pub fn info(&self) -> Result<JsValue, JsValue> {
         let found = self.0.info().map_err(|error| to_js(&error))?;

@@ -17,6 +17,7 @@ use crate::render::path::Curve;
 use crate::render::redact::marks::{self, Marks};
 use crate::render::redact::shared;
 use crate::render::stroke::{self, Join, Style};
+use crate::render::text::Font;
 use crate::syntax::write_name;
 use crate::{ErrorCode, PdfError};
 
@@ -806,6 +807,33 @@ fn shared(areas: &[Vec<Point>], first: usize, second: usize) -> Option<Point> {
         .or_else(|| kept.first().copied())
 }
 
+/// Fails [`crate::ErrorCode::Unsupported`] where `shown` is a Type 3 font whose glyph procedure
+/// `selector` shows text or images, which removing its glyph would leave in the font (9.6.4).
+pub(super) fn procedure(
+    run: &mut Run<'_, '_>,
+    shown: &Font,
+    selector: u32,
+) -> Result<(), PdfError> {
+    let Some(procedures) = shown.procedures() else {
+        return Ok(());
+    };
+    let Some(id) = procedures.stream(selector) else {
+        return Ok(());
+    };
+    let job = run.job;
+    let found = data::resolved(job, Object::Reference(id))?;
+    let scope = procedures.resources().map_or_else(
+        || Rc::clone(&run.scope),
+        |resources| Rc::new(Scope::new(resources.clone())),
+    );
+    if matches!(*found.value(), Object::Stream(..))
+        && streamed(run, &found, &scope, 0, &mut BTreeSet::new())?
+    {
+        return Err(job.unsupported());
+    }
+    Ok(())
+}
+
 /// Whether content that `found`, a resource, runs shows text or images, it `depth` deep, through
 /// `scope` where it has no resources of its own; damaged content may. Each stream with its own is
 /// read once, its object in `seen` (8.7.3.1, 8.10.1, 11.6.5.2).
@@ -836,42 +864,56 @@ fn shows(
             {
                 continue;
             }
-            let opened = data::open(job, &mut run.caches.streams, &stream)?;
-            let ending = Box::new(content::Ending::new(job, opened));
-            let mut operations = content::Operations::new(ending);
-            let mut operands = Vec::new();
-            loop {
-                let next = match operations.next(job, &mut operands) {
-                    Ok(next) => next,
-                    Err(error) if error.code() == ErrorCode::Malformed => return Ok(true),
-                    Err(error) => return Err(error),
-                };
-                let Some(name) = next else {
-                    break;
-                };
-                let category = match name.bytes() {
-                    b"'" | b"\"" | b"BI" | b"TJ" | b"Tj" => return Ok(true),
-                    b"Do" => Category::XObject,
-                    b"gs" => Category::ExtGState,
-                    b"SCN" | b"scn" => Category::Pattern,
-                    _ => continue,
-                };
-                let Some(key) = operands.last().and_then(data::name) else {
-                    continue;
-                };
-                let Some(named) = data::named(job, &inner, category, key)? else {
-                    continue;
-                };
-                let kind = data::entry(job, named.value(), b"Subtype")?;
-                if data::name(kind.value()) == Some(b"Image")
-                    || shows(run, &named, &inner, depth.saturating_add(1), seen)?
-                {
-                    return Ok(true);
-                }
+            if streamed(run, &stream, &inner, depth, seen)? {
+                return Ok(true);
             }
         }
     }
     Ok(false)
+}
+
+/// Whether `stream`, run `depth` deep through `scope`, shows text or images, as [`shows`].
+fn streamed(
+    run: &mut Run<'_, '_>,
+    stream: &Resolved,
+    scope: &Rc<Scope>,
+    depth: u8,
+    seen: &mut BTreeSet<(u32, u16)>,
+) -> Result<bool, PdfError> {
+    let job = run.job;
+    let opened = data::open(job, &mut run.caches.streams, stream)?;
+    let ending = Box::new(content::Ending::new(job, opened));
+    let mut operations = content::Operations::new(ending);
+    let mut operands = Vec::new();
+    loop {
+        let next = match operations.next(job, &mut operands) {
+            Ok(next) => next,
+            Err(error) if error.code() == ErrorCode::Malformed => return Ok(true),
+            Err(error) => return Err(error),
+        };
+        let Some(name) = next else {
+            return Ok(false);
+        };
+        let category = match name.bytes() {
+            b"'" | b"\"" | b"BI" | b"TJ" | b"Tj" => return Ok(true),
+            b"Do" => Category::XObject,
+            b"gs" => Category::ExtGState,
+            b"SCN" | b"scn" => Category::Pattern,
+            _ => continue,
+        };
+        let Some(key) = operands.last().and_then(data::name) else {
+            continue;
+        };
+        let Some(named) = data::named(job, scope, category, key)? else {
+            continue;
+        };
+        let kind = data::entry(job, named.value(), b"Subtype")?;
+        if data::name(kind.value()) == Some(b"Image")
+            || shows(run, &named, scope, depth.saturating_add(1), seen)?
+        {
+            return Ok(true);
+        }
+    }
 }
 
 /// Each side of `polygon`: a corner and the next.

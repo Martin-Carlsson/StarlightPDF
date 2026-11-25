@@ -32,6 +32,22 @@ enum Piece {
     Shown(Vec<u8>),
 }
 
+/// The move back, in thousandths of `size`, as far as `code` of a font of `divisor` units per
+/// glyph space unit and `spacing` go; none where none goes as far (9.4.3, 9.4.4).
+fn backward(code: &Code, size: Fixed, divisor: Fixed, spacing: Fixed) -> Option<Fixed> {
+    let span = code
+        .advance
+        .times(size)
+        .over(divisor)
+        .unwrap_or_default()
+        .plus(spacing);
+    if span == Fixed::default() {
+        return Some(span);
+    }
+    let thousandths = span.times(THOUSAND).over(size);
+    thousandths.map(|found| Fixed::default().minus(found))
+}
+
 /// The box of the glyph `code` of `shown` at the text matrix of `block`, in default user space;
 /// none: it may paint anywhere (9.2.4).
 fn boxed(
@@ -211,6 +227,9 @@ pub(super) fn show(
                 )?,
                 None => false,
             };
+            if meets {
+                cut::procedure(run, &shown, code.selector)?;
+            }
             let settings = &run.state.text;
             let mut spacing = settings.character;
             if code.spaced {
@@ -218,19 +237,7 @@ pub(super) fn show(
             }
             if meets {
                 removed = true;
-                let span = code
-                    .advance
-                    .times(settings.size)
-                    .over(divisor)
-                    .unwrap_or_default()
-                    .plus(spacing);
-                let back = if span == Fixed::default() {
-                    Some(span)
-                } else {
-                    let thousandths = span.times(THOUSAND).over(settings.size);
-                    thousandths.map(|found| Fixed::default().minus(found))
-                };
-                match back {
+                match backward(&code, settings.size, divisor, spacing) {
                     Some(moved) => {
                         if !kept.is_empty() {
                             pieces.push(Piece::Shown(mem::take(&mut kept)));

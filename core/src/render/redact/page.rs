@@ -429,6 +429,7 @@ fn content(
     };
     let joined = Box::new(Joined::new(job, listing.clone()));
     let mut found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
+    released.gone(&found.moved);
     if !found.removed.is_empty() {
         let damaged = job.damaged.get();
         let shown = shared::appearances(job, kept)?;
