@@ -512,13 +512,15 @@ fn ended(
     {
         frame.found.struck.push((key, id));
     }
-    // Visibility goes by an optional content object, so it keeps its number (8.11.4).
+    // Visibility goes by an optional content object, so it keeps its number (8.11.3.2, 8.11.4).
     if let Some(list) = rewritten.as_ref()
         && let Some(id) = list.id()
-        && optional(run, list)?
+        && level.tag == b"OC"
     {
-        cx.stage
-            .set(run.job, id, structure::stripped(list.value()))?;
+        let held = cx.stage.get(run.job, id)?;
+        if structure::worded(&held) {
+            cx.stage.set(run.job, id, structure::stripped(&held))?;
+        }
         rewritten = None;
     }
     let Some(list) = rewritten else {
@@ -572,7 +574,7 @@ fn marked(
         b"DP" => {
             if let Some(key) = operands.get(1).and_then(data::name) {
                 let _new: bool = frame.found.used.insert((b"Properties", key.to_vec()));
-                if let Some(list) = data::named(run.job, &run.scope, Category::Properties, key)? {
+                if let Some(list) = structure::named(run, key)? {
                     cx.drawn.extend(listed(run, cx, key, &list)?);
                 }
             }
@@ -588,12 +590,6 @@ fn marked(
         _ => {}
     }
     Ok(())
-}
-
-/// Whether `list` is an optional content group or membership dictionary (8.11.2).
-fn optional(run: &Run<'_, '_>, list: &Resolved) -> Result<bool, PdfError> {
-    let kind = data::entry(run.job, list.value(), b"Type")?;
-    Ok(matches!(data::name(kind.value()), Some(b"OCG" | b"OCMD")))
 }
 
 /// A path painted, clipped or ended: `name` (8.5.3, 8.5.4).

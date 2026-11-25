@@ -140,6 +140,16 @@ impl Released {
                     }
                 };
                 found.retain(|id| self.objects.contains(id));
+                // A property list is a dictionary (14.6.2).
+                if category == b"Properties" && !found.is_empty() {
+                    let given = match data::resolve(job, &pair.1) {
+                        Err(error) if error.code() == ErrorCode::Malformed => continue,
+                        other => other?,
+                    };
+                    if !matches!(*given.value(), Object::Dictionary(_)) {
+                        continue;
+                    }
+                }
                 if !found.is_empty() {
                     named.entry(pair.0.clone()).or_default().extend(found);
                 }

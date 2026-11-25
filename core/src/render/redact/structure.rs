@@ -278,7 +278,7 @@ pub(super) fn level(
     let given = operands.get(1).unwrap_or(&Object::Null);
     let found = if let Some(key) = data::name(given) {
         level.name = Some(key.to_vec());
-        data::named(job, &run.scope, Category::Properties, key)?
+        named(run, key)?
     } else if matches!(*given, Object::Dictionary(_)) {
         Some(data::resolve(job, given)?)
     } else {
@@ -290,13 +290,27 @@ pub(super) fn level(
     if let Object::Integer(id) = *data::entry(job, list.value(), b"MCID")?.value() {
         level.id = Some(id);
     }
-    if WORDS
-        .iter()
-        .any(|key| !matches!(*data::stored(list.value(), key), Object::Null))
-    {
+    if worded(list.value()) {
         level.properties = Some(list);
     }
     Ok(level)
+}
+
+/// The property list `name` of `run`'s resources; none where it is not a dictionary (14.6.2).
+///
+/// # Errors
+///
+/// As reading it.
+pub(super) fn named(run: &Run<'_, '_>, name: &[u8]) -> Result<Option<Resolved>, PdfError> {
+    let found = data::named(run.job, &run.scope, Category::Properties, name)?;
+    Ok(found.filter(|list| matches!(*list.value(), Object::Dictionary(_))))
+}
+
+/// Whether `list` says in words what content is.
+pub(super) fn worded(list: &Object) -> bool {
+    WORDS
+        .iter()
+        .any(|key| !matches!(*data::stored(list, key), Object::Null))
 }
 
 /// The values of `keys` in the number tree `tree`, as stored and followed, the first where one is
