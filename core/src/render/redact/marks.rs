@@ -328,10 +328,10 @@ pub(super) fn read(job: &Job<'_>, annotation: &Object) -> Result<Option<Mark>, P
         objects,
         overlay,
         annotation.get(b"QuadPoints").unwrap_or(Object::Null),
-    )?
-    .filter(|found| !found.is_empty() && found.len().is_multiple_of(8));
+    )?;
     let mut areas: Vec<Vec<Point>> = quads
         .iter()
+        .filter(|found| found.len().is_multiple_of(8))
         .flat_map(|found| found.chunks(8))
         .map(|quad| hull(quad.chunks(2).filter_map(at).collect()))
         .filter(|area| area.len() >= 3)

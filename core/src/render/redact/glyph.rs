@@ -11,6 +11,7 @@ use crate::render::fixed::Fixed;
 use crate::render::geometry::{Matrix, Point};
 use crate::render::interpret::Run;
 use crate::render::job;
+use crate::render::redact::cut;
 use crate::render::redact::marks::{self, Marks};
 use crate::render::redact::walk::{self, Context, Ink, Mode};
 use crate::render::stroke::Join;
@@ -63,7 +64,10 @@ fn boxed(
         let [_, bottom, _, top] = inked.unwrap_or_default();
         walk::joined(inked, [none, bottom, wide, top])
     } else {
-        let [descent, ascent] = shown.extent();
+        let read = shown.extent(job);
+        let [descent, ascent] = job
+            .tolerate(read, "9.8.1", "a font descriptor is malformed")?
+            .unwrap_or_default();
         let advance = [none, descent, wide, ascent];
         match shown.outline(job, &mut run.caches.fonts.loaded, code)? {
             Some((traced, units)) => traced.corners().map_or(advance, |found| {
@@ -214,9 +218,6 @@ pub(super) fn show(
             }
             if meets {
                 removed = true;
-                if !kept.is_empty() {
-                    pieces.push(Piece::Shown(mem::take(&mut kept)));
-                }
                 let span = code
                     .advance
                     .times(settings.size)
@@ -224,12 +225,25 @@ pub(super) fn show(
                     .unwrap_or_default()
                     .plus(spacing);
                 let back = if span == Fixed::default() {
-                    span
+                    Some(span)
                 } else {
                     let thousandths = span.times(THOUSAND).over(settings.size);
-                    Fixed::default().minus(thousandths.ok_or_else(|| job.unsupported())?)
+                    thousandths.map(|found| Fixed::default().minus(found))
                 };
-                pieces.push(Piece::Move(back));
+                match back {
+                    Some(moved) => {
+                        if !kept.is_empty() {
+                            pieces.push(Piece::Shown(mem::take(&mut kept)));
+                        }
+                        pieces.push(Piece::Move(moved));
+                    }
+                    // At size 0 it draws nothing and a move is nothing: a code that moves as far
+                    // takes its place (9.4.4).
+                    None if settings.size == Fixed::default() => {
+                        kept.extend(blank(job, &shown, &code)?);
+                    }
+                    None => return Err(job.unsupported()),
+                }
             } else {
                 kept.extend_from_slice(rest.get(..code.length).unwrap_or_default());
                 remains = true;
@@ -245,7 +259,39 @@ pub(super) fn show(
     if !removed {
         return Ok((None, ink, remains));
     }
+    patterned(run, &shown)?;
     Ok((Some(written(pieces)), ink, remains))
+}
+
+/// A code of `shown` that moves as far as `code` at size 0 and is no text: zeros as long, or
+/// the space word spacing follows (9.3.3).
+fn blank(job: &job::Job<'_>, shown: &Font, code: &Code) -> Result<Vec<u8>, PdfError> {
+    let bytes = if code.spaced {
+        vec![b' ']
+    } else {
+        vec![0; code.length]
+    };
+    match shown.next(job, &bytes)? {
+        Some(found) if found.length == code.length && found.spaced == code.spaced => Ok(bytes),
+        _ => Err(job.unsupported()),
+    }
+}
+
+/// Fails [`crate::ErrorCode::Unsupported`] where a pattern paints glyphs of `shown` in the
+/// current mode and its cell shows text or images (8.7.3.1, 9.3.6).
+fn patterned(run: &mut Run<'_, '_>, shown: &Font) -> Result<(), PdfError> {
+    let mode = run.state.text.mode;
+    let procedural = shown.procedures().is_some() && !matches!(mode, 3 | 7);
+    let paints = [
+        (matches!(mode, 0 | 2 | 4 | 6), run.state.fill.clone()),
+        (matches!(mode, 1 | 2 | 5 | 6), run.state.stroke.clone()),
+    ];
+    for (used, paint) in paints {
+        if used || procedural {
+            cut::cell(run, &paint)?;
+        }
+    }
+    Ok(())
 }
 
 /// `pieces` as a `TJ` array, moves next to each other added up.

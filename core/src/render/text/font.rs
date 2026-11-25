@@ -133,10 +133,10 @@ struct Tables {
     blanks: Vec<bool>,
     /// Its part as a Type 0 font.
     composite: Option<Composite>,
+    /// `FontDescriptor` as given, read only for `Font::extent` (9.8).
+    descriptor: Option<Object>,
     /// A program is embedded.
     embedded: bool,
-    /// Descent and ascent, in text space units of size 1 (9.8.1).
-    extent: [Fixed; 2],
     /// That program's stream.
     file: Option<ObjectId>,
     /// Each code's glyph; none is blank by its name, or a name that cannot be resolved (9.6.5.4).
@@ -465,9 +465,20 @@ impl Font {
         }
     }
 
-    /// Descent and ascent, in text space units of size 1: the descriptor's, else its `FontBBox`'s.
-    pub(crate) fn extent(&self) -> [Fixed; 2] {
-        self.tables.extent
+    /// Descent and ascent, in text space units of size 1: the descriptor's, else its `FontBBox`'s
+    /// bottom and top, in thousandths; drawing does not read them (9.8.1).
+    pub(crate) fn extent(&self, job: &Job<'_>) -> Result<[Fixed; 2], PdfError> {
+        let given = self.tables.descriptor.as_ref().unwrap_or(&Object::Null);
+        let descriptor = data::resolve(job, given)?;
+        let number = |key: &[u8]| -> Result<Option<Fixed>, PdfError> {
+            let found = data::entry(job, descriptor.value(), key)?;
+            Ok(Fixed::from_object(found.value()).and_then(|value| value.over(THOUSAND)))
+        };
+        if let (Some(descent), Some(ascent)) = (number(b"Descent")?, number(b"Ascent")?) {
+            return Ok([descent, ascent]);
+        }
+        let [_, bottom, _, top] = bounds(job, descriptor.value())?.unwrap_or_default();
+        Ok([bottom, top].map(|value| value.over(THOUSAND).unwrap_or_default()))
     }
 
     /// Whether the glyph of `code` marks nothing by its name.
@@ -624,6 +635,7 @@ impl Tables {
         TABLE_SIZE
             .saturating_add(composite)
             .saturating_add(procedures)
+            .saturating_add(self.descriptor.as_ref().map_or(0, data::size))
     }
 }
 
@@ -714,21 +726,6 @@ pub(super) fn bounds(job: &Job<'_>, owner: &Object) -> Result<Option<[Fixed; 4]>
         Err(error) if error.code() == ErrorCode::Malformed => Ok(None),
         found => found,
     }
-}
-
-/// Descent and ascent of the font `owner` in units of 1: its descriptor's, else its `FontBBox`'s
-/// bottom and top, in thousandths (9.8.1).
-fn extent(job: &Job<'_>, owner: &Object) -> Result<[Fixed; 2], PdfError> {
-    let descriptor = data::entry(job, owner, b"FontDescriptor")?;
-    let number = |key: &[u8]| -> Result<Option<Fixed>, PdfError> {
-        let found = data::entry(job, descriptor.value(), key)?;
-        Ok(Fixed::from_object(found.value()).and_then(|value| value.over(THOUSAND)))
-    };
-    if let (Some(descent), Some(ascent)) = (number(b"Descent")?, number(b"Ascent")?) {
-        return Ok([descent, ascent]);
-    }
-    let [_, bottom, _, top] = bounds(job, descriptor.value())?.unwrap_or_default();
-    Ok([bottom, top].map(|value| value.over(THOUSAND).unwrap_or_default()))
 }
 
 /// The program's stream the descriptor of `owner` lists, and whether as Type 1's.
@@ -866,7 +863,7 @@ fn made(
         None
     };
     let described = composed.as_ref().map_or(owner, |cid_font| cid_font.value());
-    tables.extent = extent(job, described)?;
+    tables.descriptor = described.get(b"FontDescriptor");
     let listed = file(job, described)?;
     tables.embedded = listed.is_some();
     let program = if let Some(found) = listed.as_ref() {

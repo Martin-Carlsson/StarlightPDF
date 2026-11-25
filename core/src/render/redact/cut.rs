@@ -1,6 +1,8 @@
 //! Paths, shadings and patterns a mark meets: cut where it is and clipped out of it
 //! (ISO 32000-2:2020, 8.5.2 to 8.5.4, 8.7).
 
+use alloc::collections::BTreeSet;
+use alloc::rc::Rc;
 use core::mem;
 
 use crate::overlay::Object;
@@ -13,6 +15,7 @@ use crate::render::job::{self, Job};
 use crate::render::math;
 use crate::render::path::Curve;
 use crate::render::redact::marks::{self, Marks};
+use crate::render::redact::shared;
 use crate::render::stroke::{self, Join, Style};
 use crate::syntax::write_name;
 use crate::{ErrorCode, PdfError};
@@ -465,8 +468,8 @@ pub(super) fn cell(run: &mut Run<'_, '_>, paint: &Fill) -> Result<(), PdfError> 
     };
     let job = run.job;
     let pattern = data::followed(job, &found.pattern)?;
-    let kind = data::entry(job, pattern.value(), b"PatternType")?;
-    if matches!(*kind.value(), Object::Integer(1)) && shows(run, &pattern, 0)? {
+    let scope = Rc::clone(&run.scope);
+    if shows(run, &pattern, &scope, 0, &mut BTreeSet::new())? {
         return Err(job.unsupported());
     }
     Ok(())
@@ -803,49 +806,72 @@ fn shared(areas: &[Vec<Point>], first: usize, second: usize) -> Option<Point> {
         .or_else(|| kept.first().copied())
 }
 
-/// Whether the content of `found`, a pattern or a form, shows text or images, it `depth` forms
-/// deep; damaged content may.
-fn shows(run: &mut Run<'_, '_>, found: &Resolved, depth: u8) -> Result<bool, PdfError> {
+/// Whether content that `found`, a resource, runs shows text or images, it `depth` deep, through
+/// `scope` where it has no resources of its own; damaged content may. Each stream with its own is
+/// read once, its object in `seen` (8.7.3.1, 8.10.1, 11.6.5.2).
+fn shows(
+    run: &mut Run<'_, '_>,
+    found: &Resolved,
+    scope: &Rc<Scope>,
+    depth: u8,
+    seen: &mut BTreeSet<(u32, u16)>,
+) -> Result<bool, PdfError> {
     let job = run.job;
     if depth >= job::NESTING {
         return Ok(true);
     }
-    let resources = data::entry(job, found.value(), b"Resources")?;
-    let scope = Scope::new(resources);
-    let opened = data::open(job, &mut run.caches.streams, found)?;
-    let mut operations = content::Operations::new(Box::new(content::Ending::new(job, opened)));
-    let mut operands = Vec::new();
-    loop {
-        let next = match operations.next(job, &mut operands) {
-            Ok(next) => next,
-            Err(error) if error.code() == ErrorCode::Malformed => return Ok(true),
-            Err(error) => return Err(error),
+    for (owner, streams) in shared::runs(job, found)? {
+        let own = data::entry(job, owner.value(), b"Resources")?;
+        let inherits = !matches!(*own.value(), Object::Dictionary(_));
+        let inner = if inherits {
+            Rc::clone(scope)
+        } else {
+            Rc::new(Scope::new(own))
         };
-        let Some(name) = next else {
-            return Ok(false);
-        };
-        match name.bytes() {
-            b"'" | b"\"" | b"BI" | b"TJ" | b"Tj" => return Ok(true),
-            b"Do" => {
+        for stream in streams {
+            if !inherits
+                && stream
+                    .id()
+                    .is_some_and(|id| !seen.insert((id.number, id.generation)))
+            {
+                continue;
+            }
+            let opened = data::open(job, &mut run.caches.streams, &stream)?;
+            let ending = Box::new(content::Ending::new(job, opened));
+            let mut operations = content::Operations::new(ending);
+            let mut operands = Vec::new();
+            loop {
+                let next = match operations.next(job, &mut operands) {
+                    Ok(next) => next,
+                    Err(error) if error.code() == ErrorCode::Malformed => return Ok(true),
+                    Err(error) => return Err(error),
+                };
+                let Some(name) = next else {
+                    break;
+                };
+                let category = match name.bytes() {
+                    b"'" | b"\"" | b"BI" | b"TJ" | b"Tj" => return Ok(true),
+                    b"Do" => Category::XObject,
+                    b"gs" => Category::ExtGState,
+                    b"SCN" | b"scn" => Category::Pattern,
+                    _ => continue,
+                };
                 let Some(key) = operands.last().and_then(data::name) else {
                     continue;
                 };
-                let Some(xobject) = data::named(job, &scope, Category::XObject, key)? else {
+                let Some(named) = data::named(job, &inner, category, key)? else {
                     continue;
                 };
-                let kind = data::entry(job, xobject.value(), b"Subtype")?;
-                let shown = match data::name(kind.value()) {
-                    Some(b"Image") => true,
-                    Some(b"Form") => shows(run, &xobject, depth.saturating_add(1))?,
-                    Some(_) | None => false,
-                };
-                if shown {
+                let kind = data::entry(job, named.value(), b"Subtype")?;
+                if data::name(kind.value()) == Some(b"Image")
+                    || shows(run, &named, &inner, depth.saturating_add(1), seen)?
+                {
                     return Ok(true);
                 }
             }
-            _ => {}
         }
     }
+    Ok(false)
 }
 
 /// Each side of `polygon`: a corner and the next.

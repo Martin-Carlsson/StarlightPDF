@@ -13,6 +13,7 @@ use crate::render::image::{self as images, Unpacked};
 use crate::render::interpret::{Run, content, inline};
 use crate::render::job::Job;
 use crate::render::output::deflate::Deflate;
+use crate::render::redact::cut;
 use crate::render::redact::marks::{self, Mark};
 use crate::render::redact::stage::Stage;
 
@@ -205,8 +206,9 @@ pub(super) fn inline(
     painted(run, (marks, stage), &found)
 }
 
-/// The low end of each colour key range of `mask`, when it is one of `components` (8.9.6.4).
-fn keyed(mask: &Object, components: usize) -> Vec<u16> {
+/// The low end of each colour key range of `mask`, when it is one of `components` that samples
+/// of `bits` can meet (8.9.6.4).
+fn keyed(mask: &Object, components: usize, bits: u32) -> Vec<u16> {
     let numbers: Vec<Fixed> = data::items(mask)
         .unwrap_or_default()
         .iter()
@@ -215,9 +217,14 @@ fn keyed(mask: &Object, components: usize) -> Vec<u16> {
     if numbers.len() != components.saturating_mul(2) {
         return Vec::new();
     }
-    numbers
-        .as_chunks::<2>()
-        .0
+    let (pairs, top) = (numbers.as_chunks::<2>().0, i64::from(most(bits)));
+    if pairs
+        .iter()
+        .any(|&[low, high]| low.floor() > high.floor().min(top) || high.floor() < 0)
+    {
+        return Vec::new();
+    }
+    pairs
         .iter()
         .map(|&[low, _]| u16::try_from(low.floor().max(0)).unwrap_or(u16::MAX))
         .collect()
@@ -329,6 +336,10 @@ pub(super) fn painted(
     let job = run.job;
     let owner = found.value();
     let stencil = flagged(job, owner)?;
+    if stencil {
+        let paint = run.state.fill.clone();
+        cut::cell(run, &paint)?;
+    }
     let matrix = run.state.matrix;
     // It paints nothing where colour may not be given or it has no area (8.7.3.3).
     if (run.locked_color && !stencil) || matrix.inverse().is_none() || within(marks, &matrix) {
@@ -349,7 +360,7 @@ pub(super) fn painted(
     let veil = veil(
         job,
         owner,
-        (stencil, colours),
+        (stencil, colours, base.bits),
         base.alpha.is_some() && base.opacity,
     )?;
     let blank = match veil {
@@ -654,7 +665,7 @@ fn sample(samples: &[u8], (bits, components, stride): Packing, place: (u32, u32,
 fn veil(
     job: &Job<'_>,
     owner: &Object,
-    (stencil, colours): (bool, usize),
+    (stencil, colours, bits): (bool, usize, u32),
     opacity: bool,
 ) -> Result<Veil, PdfError> {
     if stencil {
@@ -671,7 +682,7 @@ fn veil(
     if matches!(*hard.value(), Object::Stream(..)) {
         return Ok(Veil::Explicit(hard));
     }
-    let lows = keyed(hard.value(), colours);
+    let lows = keyed(hard.value(), colours, bits);
     if !lows.is_empty() {
         return Ok(Veil::Key(lows));
     }

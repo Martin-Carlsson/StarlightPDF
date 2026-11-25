@@ -422,7 +422,7 @@ pub(crate) fn add(
         let right = x.checked_add(width).ok_or_else(invalid)?;
         let bottom = y.checked_add(height).ok_or_else(invalid)?;
         vec![x, y, right, y, x, bottom, right, bottom]
-    } else if quads.len().is_multiple_of(8) {
+    } else if quads.len().is_multiple_of(8) && quads.chunks(8).all(spread) {
         quads
     } else {
         return Err(invalid());
@@ -488,6 +488,24 @@ fn bounds(points: &[i128]) -> [i128; 4] {
         found = [left.min(x), bottom.min(y), right.max(x), top.max(y)];
     }
     found
+}
+
+/// Whether the quadrilateral `quad`, four points, has an area: they are not all on one line.
+fn spread(quad: &[i128]) -> bool {
+    let &[first, second, third, fourth] = quad.as_chunks::<2>().0 else {
+        return false;
+    };
+    let crossed = |[ax, ay]: [i128; 2], [bx, by]: [i128; 2], [cx, cy]: [i128; 2]| {
+        let along = bx.checked_sub(ax)?.checked_mul(cy.checked_sub(ay)?)?;
+        along.checked_sub(by.checked_sub(ay)?.checked_mul(cx.checked_sub(ax)?)?)
+    };
+    [
+        crossed(first, second, third),
+        crossed(first, second, fourth),
+        crossed(first, third, fourth),
+    ]
+    .iter()
+    .any(|found| *found != Some(0))
 }
 
 /// The components, in fixed point, of the colour `text`: `#rgb`, `#rrggbb` or `device-cmyk()`

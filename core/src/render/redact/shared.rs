@@ -515,7 +515,10 @@ fn procedures(
 /// What runs content that `found`, a resource, names, and its streams: a form, a Type 3 font's
 /// glyph procedures, a soft mask's group or font of a graphics state, a tiling pattern
 /// (8.4.5, 8.7.3.1, 8.10.1, 9.6.4, 11.6.5.2).
-fn runs(job: &Job<'_>, found: &Resolved) -> Result<Vec<(Resolved, Vec<Resolved>)>, PdfError> {
+pub(super) fn runs(
+    job: &Job<'_>,
+    found: &Resolved,
+) -> Result<Vec<(Resolved, Vec<Resolved>)>, PdfError> {
     let value = found.value();
     let kind = data::entry(job, value, b"Subtype")?;
     let mut made: Vec<(Resolved, Vec<Resolved>)> = procedures(job, found)?.into_iter().collect();

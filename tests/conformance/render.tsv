@@ -567,6 +567,10 @@ render_file	tests/corpus/render/text-type3.pdf	100x100 25,50=ff0000 75,50=00ff00
 # ISO 32000-2:2020, 9.6.4, 9.8.1: a malformed FontBBox, which drawing does not need, is not read: no warning, and strict draws.
 render_bytes	tests/corpus/render/text-font-bbox-malformed.pdf	read=warnings	none
 render_bytes	tests/corpus/render/text-font-bbox-malformed.pdf	strict	100x100 25,75=ff0000 75,25=ffffff
+# ISO 32000-2:2020, 9.8.1: nor is a font descriptor's Ascent, here an object that cannot be read.
+render_bytes	tests/corpus/render/text-font-descriptor-broken.pdf	read=warnings	none
+render_bytes	tests/corpus/render/text-font-descriptor-broken.pdf	strict	100x100 25,75=ff0000 75,25=ffffff
+render_file	tests/corpus/render/text-font-descriptor-broken.pdf	strict	100x100 25,75=ff0000 75,25=ffffff
 # ISO 32000-2:2020, 9.6.4: Type 3 widths go through FontMatrix.
 render_bytes	tests/corpus/render/text-type3-widths.pdf	100x100 17,50=ff0000 67,50=ff0000 40,50=ffffff 92,50=ffffff
 # ISO 32000-2:2020, 9.7.4, 9.7.5.2: Identity-H; a CID-keyed CFF program maps CIDs by its charset.
