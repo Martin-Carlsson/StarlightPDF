@@ -1,7 +1,7 @@
 //! The image written, a row at a time over white.
 
 mod baseline;
-mod deflate;
+pub(crate) mod deflate;
 mod png;
 
 use crate::output::Sink;

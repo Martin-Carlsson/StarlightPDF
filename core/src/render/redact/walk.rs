@@ -250,6 +250,19 @@ pub(super) fn emit(
     Ok(out)
 }
 
+/// `Do` of the `XObject` `made`, under a name `frame`'s copy adds.
+fn drawn(run: &Run<'_, '_>, frame: &mut Frame, made: ObjectId) -> Result<String, PdfError> {
+    let name = fresh(run, &frame.found.added, (Category::XObject, b"XObject"))?;
+    let mut text = String::new();
+    write_name(&mut text, &name);
+    text.push_str(" Do");
+    frame
+        .found
+        .added
+        .push((b"XObject", name, Object::Reference(made)));
+    Ok(text)
+}
+
 /// A name of `category`, `key` in resources, that neither `run`'s resources nor `added` have.
 fn fresh(
     run: &Run<'_, '_>,
@@ -323,7 +336,7 @@ fn form(
     }
     let reopened = data::open(job, &mut run.caches.streams, found)?;
     let bytes = emit(job, reopened, &walked, cx.stage.room(job))?;
-    let own = if walked.added.is_empty() {
+    let own = if walked.added.is_empty() && walked.removed.is_empty() {
         None
     } else {
         Some(resources_with(job, inner.resources.value(), &walked)?)
@@ -648,12 +661,15 @@ fn step(
         },
         b"'" | b"\"" | b"Tj" | b"TJ" => return shown(run, cx, frame, name, given),
         b"BI" => {
-            inline::pass(run, operations)?;
             let shape = corners(&run.state.matrix, unit());
-            if frame.reach(cx.marks, Some(&shape)) {
-                touched(run, frame)?;
-                return image::inline(job);
+            if !frame.reach(cx.marks, Some(&shape)) {
+                return inline::pass(run, operations).map(|()| None);
             }
+            touched(run, frame)?;
+            return image::inline(run, (cx.marks, &mut *cx.stage), operations)?.map_or_else(
+                || Ok(Some(String::new())),
+                |made| drawn(run, frame, made).map(Some),
+            );
         }
         b"Do" => return xobject(run, cx, frame, name_operand(job, given, 0)?),
         b"sh" => {
@@ -793,14 +809,13 @@ fn xobject(
         return Ok(None);
     };
     let kind = data::entry(job, found.value(), b"Subtype")?;
-    if matches!(*kind.value(), Object::Name(ref name) if name == b"Image") {
-        let shape = corners(&run.state.matrix, unit());
-        if frame.reach(cx.marks, Some(&shape)) {
-            touched(run, frame)?;
-            return image::painted(job);
-        }
-    }
-    let copy = if matches!(*kind.value(), Object::Name(ref name) if name == b"Form") {
+    let shape = corners(&run.state.matrix, unit());
+    let copy = if matches!(*kind.value(), Object::Name(ref name) if name == b"Image")
+        && frame.reach(cx.marks, Some(&shape))
+    {
+        touched(run, frame)?;
+        image::painted(run, (cx.marks, &mut *cx.stage), &found)?.map_or(Copied::Out, Copied::Made)
+    } else if matches!(*kind.value(), Object::Name(ref name) if name == b"Form") {
         form(run, cx, frame, &found)?
     } else {
         Copied::Kept
@@ -822,13 +837,5 @@ fn xobject(
         }
     };
     frame.replaced.push(entry);
-    let name = fresh(run, &frame.found.added, (Category::XObject, b"XObject"))?;
-    let mut text = String::new();
-    write_name(&mut text, &name);
-    text.push_str(" Do");
-    frame
-        .found
-        .added
-        .push((b"XObject", name, Object::Reference(copied)));
-    Ok(Some(text))
+    drawn(run, frame, copied).map(Some)
 }

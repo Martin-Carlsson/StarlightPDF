@@ -27,7 +27,7 @@ const WINDOW: usize = 0x8000;
 const ZLIB: [u8; 2] = [0x78, 0x01];
 
 /// Bytes being compressed as one block of fixed codes.
-pub(super) struct Deflate {
+pub(crate) struct Deflate {
     /// Adler-32's two sums.
     adler: (u32, u32),
     /// Bits not yet written, the first lowest.
@@ -88,7 +88,7 @@ impl Deflate {
     }
 
     /// Ends the stream.
-    pub(super) fn finish(&mut self, out: &mut Vec<u8>) {
+    pub(crate) fn finish(&mut self, out: &mut Vec<u8>) {
         self.compress(out);
         self.symbol(256, out);
         let padding = self.count.wrapping_neg() & 7;
@@ -110,7 +110,7 @@ impl Deflate {
     }
 
     /// A stream begun in `out`.
-    pub(super) fn new(out: &mut Vec<u8>) -> Self {
+    pub(crate) fn new(out: &mut Vec<u8>) -> Self {
         out.extend_from_slice(&ZLIB);
         Self {
             adler: (1, 0),
@@ -156,7 +156,7 @@ impl Deflate {
     }
 
     /// Takes `data`, compressing each time the buffer fills.
-    pub(super) fn write(&mut self, data: &[u8], out: &mut Vec<u8>) {
+    pub(crate) fn write(&mut self, data: &[u8], out: &mut Vec<u8>) {
         for part in data.chunks(SUMMED) {
             let (mut first, mut second) = self.adler;
             for &byte in part {

@@ -273,7 +273,7 @@ fn content(
     } else {
         None
     };
-    if !found.added.is_empty() {
+    if !found.added.is_empty() || !found.removed.is_empty() {
         let made = walk::resources_with(job, run.scope.resources.value(), &found)?;
         dictionary.set(b"Resources", Some(made));
     }
