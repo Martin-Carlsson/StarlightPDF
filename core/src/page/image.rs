@@ -7,7 +7,7 @@ use alloc::sync::Arc;
 use core::iter;
 
 use super::Page;
-use super::display::{Affine, DIGITS, SCALE, display, fixed, inherited, streams};
+use super::display::{Affine, SCALE, decimal, display, fixed, inherited, streams};
 use crate::drawing::DrawImageOptions;
 use crate::input::Source;
 use crate::objects::ObjectId;
@@ -71,24 +71,6 @@ impl Produce for Part {
     fn write(&self, out: &mut dyn FnMut(&[u8]) -> Result<(), PdfError>) -> Result<(), PdfError> {
         raster::copy(&mut self.reader(), out)
     }
-}
-
-/// `units` as the shortest decimal in points.
-fn decimal(units: i128) -> String {
-    let magnitude = units.unsigned_abs();
-    let scale = SCALE.unsigned_abs();
-    let whole = magnitude.checked_div(scale).unwrap_or_default();
-    let fraction = magnitude.checked_rem(scale).unwrap_or_default();
-    let mut text = if units < 0 {
-        format!("-{whole}")
-    } else {
-        whole.to_string()
-    };
-    if fraction != 0 {
-        text.push('.');
-        text.push_str(format!("{fraction:0DIGITS$}").trim_end_matches('0'));
-    }
-    text
 }
 
 /// Draws the image file in `source` on `page` as `options` say: an image `XObject` named in the

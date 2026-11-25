@@ -48,6 +48,24 @@ pub(crate) struct Display {
     pub unit: i128,
 }
 
+/// `units` as the shortest decimal in points.
+pub(crate) fn decimal(units: i128) -> String {
+    let magnitude = units.unsigned_abs();
+    let scale = SCALE.unsigned_abs();
+    let whole = magnitude.checked_div(scale).unwrap_or_default();
+    let fraction = magnitude.checked_rem(scale).unwrap_or_default();
+    let mut text = if units < 0 {
+        format!("-{whole}")
+    } else {
+        whole.to_string()
+    };
+    if fraction != 0 {
+        text.push('.');
+        text.push_str(format!("{fraction:0DIGITS$}").trim_end_matches('0'));
+    }
+    text
+}
+
 /// The page `dictionary` as displayed: through `Rotate`, the crop box clipped to the media box,
 /// and `UserUnit` (ISO 32000-2:2020, 7.7.3.3, 14.11.2).
 pub(crate) fn display(
@@ -252,7 +270,7 @@ pub(crate) fn streams(
 }
 
 /// The number `value` in fixed point.
-fn units(value: &Object) -> Option<i128> {
+pub(crate) fn units(value: &Object) -> Option<i128> {
     match *value {
         Object::Integer(integer) => i128::from(integer).checked_mul(SCALE),
         Object::Real(real) => fixed(real),
