@@ -15,7 +15,8 @@ use crate::part::Leaves;
 use crate::progress::Progress;
 use crate::render::data::{self, Scope};
 use crate::render::fixed::Fixed;
-use crate::render::geometry::{Area, Matrix};
+use crate::render::geometry::{Area, Matrix, Point};
+use crate::render::interpret::annotations::{NO_ROTATE, upright};
 use crate::render::interpret::content::Joined;
 use crate::render::interpret::state::State;
 use crate::render::interpret::{Caches, Run};
@@ -155,27 +156,56 @@ fn job<'job>(
     }
 }
 
-/// The annotations `listed` of a page less the marks, those whose `Rect` meets one and their
-/// pop-ups, and those left without their `IRT` and `Popup` where these are gone (12.5.2,
-/// 12.5.6.14).
+/// The annotations `listed` of a page turned `degrees` less the marks, those whose `Rect`, or
+/// where `NoRotate` its turn upright about its top-left corner, meets one and their pop-ups, and
+/// those left without their `IRT` and `Popup` where these are gone (12.5.2, 12.5.3, 12.5.6.14).
 fn annotations(
     (job, stage): (&Job<'_>, &mut Stage),
-    marks: &Marks,
+    (marks, degrees): (&Marks, i64),
     listed: Vec<Object>,
 ) -> Result<Kept, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
+    // The device map's turn, by which the renderer stands such annotations upright.
+    let (across, down) = match degrees {
+        90 => (0, 1),
+        180 => (-1, 0),
+        270 => (0, -1),
+        _ => (1, 0),
+    };
+    let none = Fixed::default();
+    let device = Matrix {
+        terms: [
+            Fixed::from_i64(across),
+            Fixed::from_i64(down),
+            none,
+            none,
+            none,
+            none,
+        ],
+    };
     let mut read = Vec::new();
     let mut gone = BTreeSet::new();
     for item in listed {
         let (value, id) = overlay.ended(objects, item.clone())?;
         let kind = overlay.entry(objects, &value, b"Subtype")?;
         let named = |name: &[u8]| matches!(kind, Object::Name(ref found) if found == name);
-        let rect = rectangle(objects, overlay, &value)?;
+        let flags =
+            Fixed::from_object(&overlay.entry(objects, &value, b"F")?).map_or(0, Fixed::floor);
         let meets = named(b"Redact")
-            || rect
-                .map(|found| marks.meets(job, &marks::rectangle(found)))
-                .transpose()?
-                .unwrap_or(false);
+            || match rectangle(objects, overlay, &value)? {
+                Some(found) => {
+                    let [left, _, _, top] = found;
+                    let corner = Point {
+                        across: left,
+                        down: top,
+                    };
+                    marks.meets(job, &marks::rectangle(found))?
+                        || (flags & NO_ROTATE != 0
+                            && marks
+                                .meets(job, &walk::corners(&upright(&device, corner), found))?)
+                }
+                None => false,
+            };
         if meets {
             gone.extend(id.map(held));
             if let Some(Object::Reference(popup)) = value.get(b"Popup") {
@@ -421,16 +451,8 @@ fn content(
         stage,
     };
     let joined = Box::new(Joined::new(job, listing.clone()));
-    let mut found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
+    let found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
     released.add(id, &found.moved, &cx.drawn);
-    if !found.removed.is_empty() {
-        let damaged = job.damaged.get();
-        let shown = shared::appearances(job, kept)?;
-        let used = shared::drawn(&mut run, (&shown, &found.removed))?;
-        job.damaged.set(damaged);
-        found.removed.retain(|name| !used.contains(name));
-        cx.measured.extend(used);
-    }
     let rewritten = if found.changed() {
         let again = Box::new(Joined::new(job, listing));
         Some(walk::emit(job, again, &found, cx.stage.room(job))?)
@@ -438,7 +460,9 @@ fn content(
         None
     };
     if !found.added.is_empty() || !found.removed.is_empty() {
-        let made = walk::resources_with(job, run.scope.resources.value(), &found, &cx.measured)?;
+        let shown = shared::appearances(job, kept)?;
+        let scope = Rc::clone(&run.scope);
+        let made = walk::resources_with(&mut run, (&scope, &shown), &found, &cx.measured)?;
         dictionary.set(b"Resources", Some(made));
     }
     Ok((found, rewritten, items))
@@ -522,7 +546,13 @@ fn redact(
         return Ok(false);
     }
     let marks = Marks::new(read);
-    let mut kept = annotations((job, &mut *stage), &marks, listed)?;
+    let rotated = job.tolerate(
+        display::rotation(objects, reading, &dictionary),
+        "7.7.3.4",
+        "the page's Rotate is damaged",
+    )?;
+    let degrees = rotated.map_or(0, |found| found.0);
+    let mut kept = annotations((job, &mut *stage), (&marks, degrees), listed)?;
     let walked = content(
         job,
         (&marks, stage, released),

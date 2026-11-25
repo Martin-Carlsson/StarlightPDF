@@ -400,7 +400,7 @@ fn form(
     frame.found.elements.extend(element);
     let reopened = data::open(job, &mut run.caches.streams, found)?;
     let bytes = emit(job, reopened, &walked, cx.stage.room(job))?;
-    let own = resources_with(job, inner.resources.value(), &walked, &cx.measured)?;
+    let own = resources_with(run, (&inner, &[]), &walked, &cx.measured)?;
     let made = cx.stage.add(job, copied(owner, bytes, own))?;
     if let Some(reached) = id {
         let keys = element.into_iter().chain(own_parents).collect();
@@ -648,14 +648,17 @@ fn path(
     Ok(())
 }
 
-/// The resources `base` with what `found` adds, of the categories copies replace keeping only
-/// what it uses unchanged or `measured` holds (7.8.3).
+/// The resources of `scope` with what `found` adds, of the categories copies replace keeping
+/// only what it uses unchanged, `measured` holds, or the appearances `shown` or content of
+/// `scope` without resources of its own names (7.8.3, 8.7.3.1, 9.6.4, 12.5.5).
 pub(super) fn resources_with(
-    job: &job::Job<'_>,
-    base: &Object,
+    run: &mut Run<'_, '_>,
+    (scope, shown): (&Rc<Scope>, &[shared::Shown]),
     found: &Found,
     measured: &BTreeSet<(&'static [u8], Vec<u8>)>,
 ) -> Result<Object, PdfError> {
+    let job = run.job;
+    let base = scope.resources.value();
     let mut made = if matches!(*base, Object::Dictionary(_)) {
         base.clone()
     } else {
@@ -665,6 +668,30 @@ pub(super) fn resources_with(
         job.overlay
             .direct(job.objects, owner.get(key).unwrap_or(Object::Null))
     };
+    let mut dropped = BTreeSet::new();
+    for key in REPLACED {
+        let listed = direct(&made, key)?;
+        for entry in data::pairs(&listed).map_or(&[][..], Vec::as_slice) {
+            let named = (key, entry.0.clone());
+            if !found.used.contains(&named) && !measured.contains(&named) {
+                let _new: bool = dropped.insert(named);
+            }
+        }
+    }
+    if !dropped.is_empty() {
+        let damaged = job.damaged.get();
+        let outer = mem::replace(&mut run.scope, Rc::clone(scope));
+        let listed: Vec<_> = dropped.iter().cloned().collect();
+        let result = shared::inheriting(job, base).and_then(|mut all| {
+            all.extend_from_slice(shown);
+            shared::drawn(run, (&all, &listed))
+        });
+        run.scope = outer;
+        job.damaged.set(damaged);
+        for entry in result? {
+            let _was: bool = dropped.remove(&entry);
+        }
+    }
     for key in REPLACED {
         let listed = direct(&made, key)?;
         let Some(entries) = data::pairs(&listed) else {
@@ -672,10 +699,7 @@ pub(super) fn resources_with(
         };
         let kept = entries
             .iter()
-            .filter(|entry| {
-                let named = (key, entry.0.clone());
-                found.used.contains(&named) || measured.contains(&named)
-            })
+            .filter(|entry| !dropped.contains(&(key, entry.0.clone())))
             .cloned()
             .collect();
         made.set(key, Some(Object::Dictionary(kept)));

@@ -36,7 +36,7 @@ type Named = (&'static [u8], Vec<u8>);
 type Opened<'data> = Result<Box<dyn Pull + 'data>, PdfError>;
 
 /// An appearance stream and its own resources, where it has them.
-type Shown = (Resolved, Option<Resolved>);
+pub(super) type Shown = (Resolved, Option<Resolved>);
 
 /// The forms and images a mark touched, and what still draws them.
 #[derive(Default)]
@@ -320,9 +320,8 @@ pub(super) fn appearances(job: &Job<'_>, listed: &[Object]) -> Result<Vec<Shown>
     Ok(shown)
 }
 
-/// Of `removed`, by category and name, those that the appearance streams `shown` without
-/// resources of their own name, run within the resources of their page; all where one cannot be
-/// read (12.5.5).
+/// Of `removed`, by category and name, those that the streams `shown` without resources of
+/// their own name, run within the resources of their page; all where one cannot be read (12.5.5).
 pub(super) fn drawn(
     run: &mut Run<'_, '_>,
     (shown, removed): (&[Shown], &[Named]),
@@ -346,6 +345,36 @@ pub(super) fn drawn(
         .filter(|entry| !names.contains(&entry.1))
         .cloned()
         .collect())
+}
+
+/// The streams that the tiling patterns, Type 3 fonts and shading patterns' soft mask groups of
+/// `resources` without resources of their own run within it; those that cannot be read draw
+/// nothing (7.8.3, 8.7.3.1, 9.6.4, 11.6.5.2).
+pub(super) fn inheriting(job: &Job<'_>, resources: &Object) -> Result<Vec<Shown>, PdfError> {
+    let mut shown = Vec::new();
+    for category in [&b"Pattern"[..], b"Font"] {
+        let listed = match data::entry(job, resources, category) {
+            Err(error) if error.code() == ErrorCode::Malformed => continue,
+            other => other?,
+        };
+        for pair in data::pairs(listed.value()).map_or(&[][..], Vec::as_slice) {
+            job.spend(1)?;
+            let made = match data::resolve(job, &pair.1).and_then(|found| runs(job, &found)) {
+                Err(error) if error.code() == ErrorCode::Malformed => continue,
+                other => other?,
+            };
+            for (owner, streams) in made {
+                let own = match data::entry(job, owner.value(), b"Resources") {
+                    Err(error) if error.code() == ErrorCode::Malformed => continue,
+                    other => other?,
+                };
+                if !matches!(*own.value(), Object::Dictionary(_)) {
+                    shown.extend(streams.into_iter().map(|stream| (stream, None)));
+                }
+            }
+        }
+    }
+    Ok(shown)
 }
 
 /// The template pages the catalog's `Templates` name tree holds, each node read once (7.7.4,

@@ -16,7 +16,7 @@ const HIDDEN: i64 = 2;
 const INVISIBLE: i64 = 1;
 
 /// `NoRotate`.
-const NO_ROTATE: i64 = 16;
+pub(crate) const NO_ROTATE: i64 = 16;
 
 /// `NoView`.
 const NO_VIEW: i64 = 32;
@@ -194,7 +194,7 @@ const fn standard(name: &[u8]) -> bool {
 
 /// The turn about `corner` that stands upright under `device`, whose linear part is the page's
 /// `Rotate` and scale (12.5.3).
-fn upright(device: &Matrix, corner: Point) -> Matrix {
+pub(crate) fn upright(device: &Matrix, corner: Point) -> Matrix {
     let [across, down, ..] = device.terms;
     let none = Fixed::default();
     let one = Fixed::from_i64(1);

@@ -96,22 +96,7 @@ pub(crate) fn display(
             ]
         },
     );
-    // The rotation, and whether `Rotate` is wrong.
-    let turned = match inherited(objects, overlay, dictionary, b"Rotate")? {
-        Object::Integer(degrees) if degrees.checked_rem(90) == Some(0) => {
-            (degrees.checked_rem_euclid(360).unwrap_or_default(), false)
-        }
-        Object::Null => (0, false),
-        Object::Array(_)
-        | Object::Boolean(_)
-        | Object::Dictionary(_)
-        | Object::Integer(_)
-        | Object::Name(_)
-        | Object::Real(_)
-        | Object::Reference(_)
-        | Object::Stream(..)
-        | Object::String(_) => (0, true),
-    };
+    let turned = rotation(objects, overlay, dictionary)?;
     let listed = overlay.entry(objects, dictionary, b"UserUnit")?;
     let given = units(&listed).filter(|unit| *unit > 0);
     let unit = given.unwrap_or(SCALE);
@@ -146,6 +131,30 @@ pub(crate) fn display(
         },
         #[cfg(feature = "rendering")]
         unit,
+    })
+}
+
+/// The `Rotate` of the page `dictionary`, inherited, as 0, 90, 180 or 270, and whether it is
+/// wrong and counts as 0 (ISO 32000-2:2020, 7.7.3.3).
+pub(crate) fn rotation(
+    objects: Objects<'_>,
+    overlay: &Overlay,
+    dictionary: &Object,
+) -> Result<(i64, bool), PdfError> {
+    Ok(match inherited(objects, overlay, dictionary, b"Rotate")? {
+        Object::Integer(degrees) if degrees.checked_rem(90) == Some(0) => {
+            (degrees.checked_rem_euclid(360).unwrap_or_default(), false)
+        }
+        Object::Null => (0, false),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Integer(_)
+        | Object::Name(_)
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => (0, true),
     })
 }
 

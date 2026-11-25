@@ -132,6 +132,13 @@ redact_bytes	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	re
 redact_file	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
 redact_bytes	tests/corpus/redact/resources-appearance.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
 redact_file	tests/corpus/redact/resources-appearance.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
+# Or what only such an appearance, or a tiling pattern without Resources, names (7.8.3, 8.7.3.1).
+redact_bytes	tests/corpus/redact/resources-appearance-unnamed.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
+redact_file	tests/corpus/redact/resources-appearance-unnamed.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
+redact_bytes	tests/corpus/redact/resources-appearance-unnamed.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
+redact_file	tests/corpus/redact/resources-appearance-unnamed.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
+redact_bytes	tests/corpus/redact/resources-pattern-unnamed.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
+redact_file	tests/corpus/redact/resources-pattern-unnamed.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
 # A hundred and fifty pages, each drawing a shared image under its mark by a name of its own: it goes.
 redact_bytes	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
 redact_file	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
@@ -289,6 +296,10 @@ redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4649454c4456414
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d425a45524f	absent
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=4641524e4f54454b455054	present
 redact_bytes	tests/corpus/redact/annotations.pdf	read=text	bytes=5448554d424f4e4558	present
+# Or whose appearance, NoRotate turning it upright about its top-left corner on a rotated page, does (12.5.3).
+redact_bytes	tests/corpus/redact/annotations-no-rotate.pdf	marks=0@130,100,20,20@00ff00	read=annotations	index=0	none
+redact_file	tests/corpus/redact/annotations-no-rotate.pdf	marks=0@130,100,20,20@00ff00	read=annotations	index=0	none
+redact_bytes	tests/corpus/redact/annotations-no-rotate.pdf	marks=0@130,100,20,20@00ff00	read=render	index=0	200x200 140,110=00ff00
 # A field removed with its widget leaves the calculation order (12.7.3.3).
 redact_bytes	tests/corpus/redact/acroform-order.pdf	read=text	bytes=4f524445524649454c44474f4e45	absent
 redact_file	tests/corpus/redact/acroform-order.pdf	read=text	bytes=4f524445524649454c44474f4e45	absent
