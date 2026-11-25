@@ -919,7 +919,6 @@ REDACT_READS = {
     "thumb": True,
 }
 IMAGE_SAMPLES = {"image_raw", "image_samples", "mask_samples"}
-MARGIN = 0.01  # How far inside a mark a point counts: room for rounding at a cut.
 DEPTH = 16  # Deepest nesting of forms whose points are counted.
 QUAD = 8  # Numbers of a quadrilateral (ISO 32000-2:2020, 12.5.6.10).
 PLACE = 4  # Numbers of x,y,w,h.
@@ -945,11 +944,8 @@ class Area(NamedTuple):
     high: float
 
     def holds(self, x: float, y: float) -> bool:
-        """Whether `x`, `y` is inside by more than MARGIN."""
-        return (
-            self.left + MARGIN < x < self.right - MARGIN
-            and self.low + MARGIN < y < self.high - MARGIN
-        )
+        """Whether `x`, `y` is inside, not on the edge."""
+        return self.left < x < self.right and self.low < y < self.high
 
     def overlaps(self, column: int, row: int) -> bool:
         """Whether the unit square from `column`, `row` overlaps the area."""
@@ -1379,7 +1375,8 @@ def rendered(document: starlightpdf.Document, index: int) -> decode.Image:
 def same(applied: Applied, index: int, excluded: list[Area]) -> str:
     """Compare the renders before and after outside `excluded`."""
     earlier, later = applied.before, rendered(applied.document, index)
-    if earlier is None or earlier[:3] != later[:3]:
+    size = (later.width, later.height, later.channels)
+    if earlier is None or (earlier.width, earlier.height, earlier.channels) != size:
         msg = "no render before, or one of another size"
         raise ValueError(msg)
     differ = sum(

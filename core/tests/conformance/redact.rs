@@ -56,9 +56,6 @@ const KINDS: [(AnnotationKind, &str); 21] = [
     (AnnotationKind::Widget, "Widget"),
 ];
 
-/// How far inside a mark a point must be to count, in points: room for rounding where a path is cut at its edge.
-const MARGIN: f64 = 0.01_f64;
-
 /// Each `read=` of a redact case, and whether it takes `index=`.
 const READS: [(&str, bool); 11] = [
     ("annotations", true),
@@ -160,12 +157,9 @@ impl Progress for After {
 }
 
 impl Area {
-    /// Whether `x`, `y` is inside by more than [`MARGIN`].
+    /// Whether `x`, `y` is inside, not on the edge.
     fn holds(&self, x: f64, y: f64) -> bool {
-        x > MARGIN.mul_add(1.0_f64, self.left)
-            && x < MARGIN.mul_add(-1.0_f64, self.right)
-            && y > MARGIN.mul_add(1.0_f64, self.low)
-            && y < MARGIN.mul_add(-1.0_f64, self.high)
+        x > self.left && x < self.right && y > self.low && y < self.high
     }
 
     /// The area `x`, `y`, `w`, `h`.

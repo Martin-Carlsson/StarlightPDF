@@ -40,8 +40,8 @@ const SMALL_SPLIT_BOUND: usize = 104_857_600;
 const PACKED_KIDS_BOUND: usize = 98_304;
 
 /// Most bytes opening each file, marking a page and applying the mark may hold allocated at once;
-/// a placeholder until measured.
-const REDACT_BOUND: usize = 1_000_000;
+/// measured 48,460.
+const REDACT_BOUND: usize = 0x1_0000;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).

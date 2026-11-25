@@ -283,6 +283,24 @@ impl Walker<'_> {
         count
     }
 
+    /// The point `part` of the way along `line`, moved toward `limit` until no area holds it, as
+    /// rounding can put a cut just inside one.
+    fn cut(&self, line: (Point, Point), part: Fixed, limit: Fixed) -> Point {
+        let (mut at, mut step) = (part, Fixed::from_bits(1));
+        loop {
+            let found = along(line.0, line.1, at);
+            if at == limit || !self.areas.iter().any(|area| holds(area, found)) {
+                return found;
+            }
+            at = if limit > part {
+                at.plus(step).min(limit)
+            } else {
+                at.minus(step).max(limit)
+            };
+            step = step.plus(step);
+        }
+    }
+
     /// A line from `from` to `to`, less what is in the areas; `continues` a curve, when one of
     /// its pieces.
     fn line(&mut self, from: Point, to: Point, continues: bool) {
@@ -299,8 +317,8 @@ impl Walker<'_> {
         let mut done = Fixed::default();
         for (low, high, area) in spans {
             if low > done {
-                self.out(along(from, to, done), long.times(done));
-                let end = along(from, to, low);
+                self.out(self.cut((from, to), done, low), long.times(done));
+                let end = self.cut((from, to), low, done);
                 self.items.push(Item::Keep(Drawn::Line(end), continues));
             }
             // Past where the one it is in ends, it goes on in this one, which holds `low` too.
@@ -313,7 +331,7 @@ impl Walker<'_> {
             }
         }
         if done < ONE {
-            self.out(along(from, to, done), long.times(done));
+            self.out(self.cut((from, to), done, ONE), long.times(done));
             self.items.push(Item::Keep(Drawn::Line(to), continues));
         }
         self.length = self.length.plus(long);

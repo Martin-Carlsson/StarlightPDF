@@ -981,8 +981,6 @@ const REDACT_READS = new Map([
 ]);
 /** The reads of the ±do=±-th image. */
 const IMAGE_SAMPLES = new Set(["image_raw", "image_samples", "mask_samples"]);
-/** How far inside a mark a point counts, in points: room for rounding where a path is cut at its edge. */
-const MARGIN = 0.01;
 /** Deepest nesting of forms whose points are counted. */
 const DEPTH = 16;
 /** The numbers each path operator takes (ISO 32000-2:2020, 8.5.2.1). */
@@ -1002,9 +1000,9 @@ const INLINE = /(?:(?<=[\0\t\n\f\r ])|^)ID[\0\t\n\f\r ][^]*?(?<=[\0\t\n\f\r ])EI
  * @typedef {{ before: import("./decode.mjs").Image | undefined, document: Document, marks: Area[], saved: Uint8Array }} Applied
  */
 
-/** Whether ±x±, ±y± is inside ±area± by more than ±MARGIN±. @type {(area: Area, x: number, y: number) => boolean} */
+/** Whether ±x±, ±y± is inside ±area±, not on its edge. @type {(area: Area, x: number, y: number) => boolean} */
 function holds(area, x, y) {
-  return area.left + MARGIN < x && x < area.right - MARGIN && area.low + MARGIN < y && y < area.high - MARGIN;
+  return area.left < x && x < area.right && area.low < y && y < area.high;
 }
 
 /** Whether the unit square from ±column±, ±row± overlaps ±area±. @type {(area: Area, column: number, row: number) => boolean} */
