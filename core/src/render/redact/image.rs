@@ -41,6 +41,9 @@ type Entry = (&'static [u8], Option<Object>);
 /// Where samples lie: bits per sample, samples per pixel and bytes per row.
 type Packing = (u32, usize, usize);
 
+/// Gives each sample of a row a mark replaces, before a column, to a closure; how many.
+type Cover<'cover> = dyn FnMut(u32, u32, &mut dyn FnMut(u32)) -> Result<u64, PdfError> + 'cover;
+
 /// Samples coded, those of a plane beside them, and how many a mark meets.
 type Streamed = (Vec<u8>, Option<Vec<u8>>, u64);
 
@@ -220,15 +223,59 @@ fn keyed(mask: &Object, components: usize) -> Vec<u16> {
         .collect()
 }
 
-/// The mask image `mask`, soft when `soft`, with each sample a mark meets transparent.
+/// The mask image `mask`, soft when `soft`, of an image of `size`, with each sample that meets a
+/// sample of the image a mark meets transparent.
 fn masked(
     run: &mut Run<'_, '_>,
     (marks, stage, matrix): (&[Mark], &mut Stage, &Matrix),
-    mask: &Resolved,
+    (mask, size): (&Resolved, [u32; 2]),
     soft: bool,
 ) -> Result<ObjectId, PdfError> {
     let job = run.job;
     let mut found = images::unpacked(run, mask, soft)?;
+    let spans = spanned(marks, matrix, size);
+    let ([columns, rows], [wide, tall]) = (size, [found.columns, found.height]);
+    // The places of `of` along a side whose areas meet place `at` of `from`; past the last excluded.
+    let under = |at: u32, of: u32, from: u32| {
+        let scaled = |place: u32| u64::from(place).saturating_mul(u64::from(of));
+        let (low, top) = (scaled(at), scaled(at.saturating_add(1)));
+        let parts = u64::from(from.max(1));
+        let (start, end) = (low.checked_div(parts).unwrap_or(0), top.div_ceil(parts));
+        (
+            u32::try_from(start).unwrap_or(u32::MAX),
+            u32::try_from(end).unwrap_or(u32::MAX).min(of),
+        )
+    };
+    let mut cover = |row: u32, present: u32, each: &mut dyn FnMut(u32)| -> Result<u64, PdfError> {
+        let mut hit = vec![false; usize::try_from(present.min(wide)).unwrap_or(usize::MAX)];
+        let (first, last) = under(row, rows, tall);
+        for line in first..last {
+            let mut mapped = 0_u64;
+            let _count: u64 = covered(
+                job,
+                (&spans, matrix),
+                (size, line, columns),
+                &mut |column| {
+                    let (from, to) = under(column, wide, columns);
+                    mapped = mapped.saturating_add(u64::from(to.saturating_sub(from)));
+                    for place in from..to {
+                        if let Some(slot) =
+                            usize::try_from(place).ok().and_then(|at| hit.get_mut(at))
+                        {
+                            *slot = true;
+                        }
+                    }
+                },
+            )?;
+            job.spend(mapped)?;
+        }
+        let mut count = 0_u64;
+        for (place, _) in hit.iter().enumerate().filter(|entry| *entry.1) {
+            each(u32::try_from(place).unwrap_or(u32::MAX));
+            count = count.saturating_add(1);
+        }
+        Ok(count)
+    };
     let value = if soft {
         let decode = numbers(job, mask.value(), b"Decode")?;
         match *decode.as_slice() {
@@ -240,7 +287,7 @@ fn masked(
     };
     let blank = vec![value; found.components];
     let room = stage.room(job);
-    let (coded, _plane, _count) = streamed(job, (marks, matrix), &mut found, (&blank, None), room)?;
+    let (coded, _plane, _count) = streamed(job, &mut cover, &mut found, (&blank, None), room)?;
     let set = sizes(&found);
     copy(job, stage, mask.value(), coded, set)
 }
@@ -317,7 +364,12 @@ pub(super) fn painted(
         Veil::Explicit(_) | Veil::Key(_) | Veil::Soft(_) | Veil::Stencil(_) => None,
     };
     let room = stage.room(job);
-    let read = streamed(job, (marks, &matrix), &mut base, (&blank, plane), room);
+    let size = [base.columns, base.height];
+    let spans = spanned(marks, &matrix, size);
+    let mut cover = |row: u32, present: u32, each: &mut dyn FnMut(u32)| {
+        covered(job, (&spans, &matrix), (size, row, present), each)
+    };
+    let read = streamed(job, &mut cover, &mut base, (&blank, plane), room);
     let Some((coded, beside, count)) = job.tolerate(read, "8.9.5", UNUSABLE)? else {
         return Ok(None);
     };
@@ -485,20 +537,18 @@ fn spanned<'marks>(
     found
 }
 
-/// The samples of `base` row by row, each sample a mark meets under `matrix` `blank`, without
+/// The samples of `base` row by row, each sample `cover` gives `blank`, without
 /// its channel that is no colour, and beside them a plane where one is given: its packing, and
 /// the sample those a mark meets take; its rows are that channel where it is opacity, else 0.
 /// Both Flate-coded within `room` bytes, the samples ending where the data does, and how many
 /// samples a mark meets or the data lacks (7.4.9, 8.9.5).
 fn streamed(
     job: &Job<'_>,
-    (marks, matrix): (&[Mark], &Matrix),
+    cover: &mut Cover<'_>,
     base: &mut Unpacked<'_>,
     (blank, plane): (&[u16], Option<(Packing, u16)>),
     room: u64,
 ) -> Result<Streamed, PdfError> {
-    let size = [base.columns, base.height];
-    let spans = spanned(marks, matrix, size);
     let (bits, count, channel) = (base.bits, base.components, base.alpha);
     let colours = count.saturating_sub(usize::from(channel.is_some()));
     let packing = (bits, colours, stride(base.columns, colours, bits));
@@ -538,19 +588,14 @@ fn streamed(
             found.resize(veiled.2, 0);
             (found, veiled, value)
         });
-        total = total.saturating_add(covered(
-            job,
-            (&spans, matrix),
-            (size, row, present),
-            &mut |column| {
-                for (component, value) in blank.iter().enumerate() {
-                    put(samples, packing, (column, 0, component), *value);
-                }
-                if let Some(&mut (ref mut found, veiled, value)) = veil.as_mut() {
-                    put(found, veiled, (column, 0, 0), value);
-                }
-            },
-        )?);
+        total = total.saturating_add(cover(row, present, &mut |column| {
+            for (component, value) in blank.iter().enumerate() {
+                put(samples, packing, (column, 0, component), *value);
+            }
+            if let Some(&mut (ref mut found, veiled, value)) = veil.as_mut() {
+                put(found, veiled, (column, 0, 0), value);
+            }
+        })?);
         // What the data lacks stays unpainted: the copy's data lacks it too.
         let lacking = base.columns.saturating_sub(present);
         total = total.saturating_add(u64::from(lacking));
@@ -642,10 +687,17 @@ fn veiled(
     (veil, plane): (Veil, Option<Vec<u8>>),
 ) -> Result<Option<Entry>, PdfError> {
     let job = run.job;
+    let size = [base.columns, base.height];
     let (key, made): (&[u8], _) = match veil {
         Veil::Key(_) | Veil::Stencil(_) => return Ok(None),
-        Veil::Soft(found) => (b"SMask", masked(run, (marks, stage, matrix), &found, true)?),
-        Veil::Explicit(found) => (b"Mask", masked(run, (marks, stage, matrix), &found, false)?),
+        Veil::Soft(found) => (
+            b"SMask",
+            masked(run, (marks, stage, matrix), (&found, size), true)?,
+        ),
+        Veil::Explicit(found) => (
+            b"Mask",
+            masked(run, (marks, stage, matrix), (&found, size), false)?,
+        ),
         Veil::Opacity => {
             let mut entries = sizes(base);
             entries.push((b"ColorSpace", Some(name(b"DeviceGray"))));

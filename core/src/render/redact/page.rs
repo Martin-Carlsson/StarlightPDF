@@ -22,7 +22,7 @@ use crate::render::interpret::{Caches, Run};
 use crate::render::job::{Job, Pace, WORK_STEP, work_limit};
 use crate::render::plane::Planes;
 use crate::render::redact::marks::{self, Mark, Marks};
-use crate::render::redact::shared::Released;
+use crate::render::redact::shared::{self, Released};
 use crate::render::redact::stage::Stage;
 use crate::render::redact::structure;
 use crate::render::redact::walk::{self, Context, Found, Mode};
@@ -387,11 +387,11 @@ fn rectangle(
 
 /// Walks the content of the page `id`, `dictionary`, for what `marks` meet: what it found, the
 /// content rewritten when changed, and its streams; sets the resources a copy adds, and adds
-/// those it no longer uses to `released`.
+/// those it and the appearances of the annotations `kept` no longer use to `released`.
 fn content(
     job: &Job<'_>,
     (marks, stage, released): (&Marks, &mut Stage, &mut Released),
-    (id, dictionary): (ObjectId, &mut Object),
+    (id, dictionary, kept): (ObjectId, &mut Object, &[Object]),
 ) -> Result<Walked, PdfError> {
     let (objects, reading) = (job.objects, &*job.overlay);
     let inherited = job.tolerate(
@@ -428,7 +428,15 @@ fn content(
         stage,
     };
     let joined = Box::new(Joined::new(job, listing.clone()));
-    let found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
+    let mut found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
+    if !found.removed.is_empty() {
+        let damaged = job.damaged.get();
+        let shown = shared::appearances(job, kept)?;
+        let used = shared::drawn(&mut run, cx.stage, id, (&shown, &found.removed))?;
+        job.damaged.set(damaged);
+        found.removed.retain(|name| !used.contains(name));
+        cx.measured.extend(used);
+    }
     let rewritten = if found.changed() {
         let again = Box::new(Joined::new(job, listing));
         Some(walk::emit(job, again, &found, cx.stage.room(job))?)
@@ -521,8 +529,12 @@ fn redact(
         return Ok(false);
     }
     let marks = Marks::new(read);
-    let walked = content(job, (&marks, stage, released), (id, &mut dictionary))?;
     let mut kept = annotations((job, &mut *stage), &marks, listed)?;
+    let walked = content(
+        job,
+        (&marks, stage, released),
+        (id, &mut dictionary, &kept.left),
+    )?;
     // A form a mark touched is one content item, as an annotation is (14.7.5.3).
     kept.parents
         .extend(walked.0.elements.iter().map(|&key| (key, None)));

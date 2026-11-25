@@ -41,6 +41,9 @@ redact_bytes	tests/corpus/redact/mark-rect.pdf	read=text	bytes=4b4545504d45	pres
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=text	bytes=515541444f4e45	absent
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=text	bytes=5155414454574f	absent
 redact_bytes	tests/corpus/redact/mark-quads.pdf	read=text	bytes=474150574f5244	present
+# QuadPoints that cover no area give way to Rect (12.5.6.23).
+redact_bytes	tests/corpus/redact/mark-quads-flat.pdf	read=text	bytes=464c4154534543524554	absent
+redact_file	tests/corpus/redact/mark-quads-flat.pdf	read=text	bytes=464c4154534543524554	absent
 redact_bytes	tests/corpus/redact/rotated.pdf	marks=0@75,45,20,100@00ff00	read=text	bytes=524f54534543524554	absent
 redact_bytes	tests/corpus/redact/rotated.pdf	marks=0@75,45,20,100@00ff00	read=text	bytes=524f544b454550	present
 # Text in rendering mode 3, clipped away or in a hidden layer (9.3.6, 8.5.4, 8.11.3).
@@ -109,6 +112,11 @@ redact_bytes	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	re
 redact_file	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=1	same
 redact_bytes	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=2	same
 redact_file	tests/corpus/redact/resources-procedures.pdf	marks=0@5,135,60,60	read=pixels	index=2	same
+# Or with a kept annotation's appearance, through its own Resources or the page's (12.5.5).
+redact_bytes	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
+redact_file	tests/corpus/redact/resources-appearance.pdf	marks=0@10,10,60,60	read=pixels	index=0	same
+redact_bytes	tests/corpus/redact/resources-appearance.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
+redact_file	tests/corpus/redact/resources-appearance.pdf	marks=1@10,10,60,60	read=pixels	index=1	same
 # A hundred and fifty pages, each drawing a shared image under its mark by a name of its own: it goes.
 redact_bytes	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
 redact_file	tests/corpus/redact/resources-many-pages.pdf	read=text	bytes=4d414e59504147455353454352455431	absent
@@ -168,6 +176,11 @@ redact_file	tests/corpus/redact/image-masks.pdf	marks=0@42,15,13,50;0@112,15,13,
 redact_bytes	tests/corpus/redact/image-masks.pdf	marks=0@42,15,13,50;0@112,15,13,50;0@182,15,13,50	read=mask_samples	do=1	10101010
 redact_bytes	tests/corpus/redact/image-masks.pdf	marks=0@42,15,13,50;0@112,15,13,50;0@182,15,13,50	read=image_samples	do=2	434f4cff55524bff595341ff504c45ff
 redact_bytes	tests/corpus/redact/image-masks.pdf	marks=0@42,15,13,50;0@112,15,13,50;0@182,15,13,50	read=mask_samples	do=2	key 255 255
+# A soft mask finer than its image hides the whole of each sample replaced (11.6.5.3).
+redact_bytes	tests/corpus/redact/image-mask-fine.pdf	marks=0@60,130,10,10	read=mask_samples	do=0	ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff
+redact_file	tests/corpus/redact/image-mask-fine.pdf	marks=0@60,130,10,10	read=mask_samples	do=0	ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000ffffffff00000000ffffffff00000000ffffffff00000000ffffffff
+redact_bytes	tests/corpus/redact/image-mask-fine.pdf	marks=0@60,130,10,10	read=render	index=0	200x200 90,110=ffffff 120,60=424242
+redact_file	tests/corpus/redact/image-mask-fine.pdf	marks=0@60,130,10,10	read=render	index=0	200x200 90,110=ffffff 120,60=424242
 # A DCT image of two flat blocks, 64 and 192 (ITU-T T.81, A.3.3), partly covered, is re-encoded without loss.
 redact_bytes	tests/corpus/redact/image-dct.pdf	marks=0@142,15,43,90	read=image_samples	do=0	4040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c0000000004040404040404040c0c0c0c000000000
 redact_bytes	tests/corpus/redact/image-dct.pdf	marks=0@142,15,43,90	read=mask_samples	do=0	000f000f000f000f000f000f000f000f

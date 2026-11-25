@@ -3,6 +3,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
+use core::mem;
 
 use crate::objects::ObjectId;
 use crate::overlay::Object;
@@ -32,6 +33,15 @@ enum Holder {
 
 /// The names of a category.
 type Names = BTreeSet<Vec<u8>>;
+
+/// A resource's category and name.
+type Named = (&'static [u8], Vec<u8>);
+
+/// Content opened, or why it could not be.
+type Opened<'data> = Result<Box<dyn Pull + 'data>, PdfError>;
+
+/// An appearance stream and its own resources, where it has them.
+type Shown = (Resolved, Option<Resolved>);
 
 /// What holds names, ordered, and their category.
 type Place = ((u8, u32, u16), &'static [u8]);
@@ -118,7 +128,8 @@ impl Released {
         Ok(found)
     }
 
-    /// Removes the names from what holds them where no page uses them, reading each page once.
+    /// Removes the names from what holds them where no page or appearance of an annotation kept
+    /// uses them, reading each page once (12.5.5).
     pub(super) fn release(
         mut self,
         run: &mut Run<'_, '_>,
@@ -128,39 +139,67 @@ impl Released {
         let mut left = self.entries.len();
         let job = run.job;
         let (objects, overlay) = (job.objects, &*job.overlay);
-        let (scope, damaged) = (Rc::clone(&run.scope), job.damaged.get());
+        let damaged = job.damaged.get();
         let mut pages = Leaves::new(objects, overlay)?;
         while left > 0
             && let Some(id) = pages.next(objects, overlay)?
         {
             job.spend(NODE_WORK)?;
             let node = stage.get(job, id)?;
+            let shown = match data::entry(job, &node, b"Annots") {
+                Err(error) if error.code() == ErrorCode::Malformed => Vec::new(),
+                other => appearances(job, data::items(other?.value()).unwrap_or_default())?,
+            };
+            // As stored: a redacted page's content uses no more than it did.
+            let stored = overlay.resolve(objects, id)?;
+            let mut page = None;
             for &key in &keys {
-                let Some(held) = self.holder(job, stage, (id, &node), key)? else {
-                    continue;
-                };
-                let Some(&mut (_, ref mut names)) = self.entries.get_mut(&(held.key(), key)) else {
-                    continue;
-                };
-                if names.is_empty() {
+                let held = self.holder(job, stage, (id, &node), key)?;
+                let mut owners = Vec::new();
+                for entry in &shown {
+                    let (stream, own) = (&entry.0, &entry.1);
+                    let found = if own.is_some() {
+                        let given = stream.value().get(b"Resources");
+                        holding(job, stage, given.unwrap_or(Object::Null), None, key)?
+                    } else {
+                        held
+                    };
+                    if self.wanted(found, key) {
+                        owners.push((stream, found, own));
+                    }
+                }
+                if !self.wanted(held, key) && owners.is_empty() {
                     continue;
                 }
-                // As stored: a redacted page's content uses no more than it did.
-                let stored = overlay.resolve(objects, id)?;
-                let resources = display::inherited(objects, overlay, &stored, b"Resources")?;
-                let streams = display::streams(objects, overlay, stored.get(b"Contents"))?;
-                let listing = data::made(job, Object::Array(streams), None)?;
-                run.scope = Rc::new(Scope::new(data::made(job, resources, None)?));
-                let joined = Box::new(Joined::new(job, listing));
-                let result = mentioned(run, stage, (held, key), joined, (&mut *names, 0));
-                run.scope = Rc::clone(&scope);
-                match result {
-                    // Content that cannot be read may use any of them.
-                    Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
-                    other => other?,
+                let within = if let Some(ref found) = page {
+                    Rc::clone(found)
+                } else {
+                    let resources = display::inherited(objects, overlay, &stored, b"Resources")?;
+                    let made = Rc::new(Scope::new(data::made(job, resources, None)?));
+                    page = Some(Rc::clone(&made));
+                    made
+                };
+                if let Some(found) = held
+                    && self.wanted(held, key)
+                {
+                    let streams = display::streams(objects, overlay, stored.get(b"Contents"))?;
+                    let listing = data::made(job, Object::Array(streams), None)?;
+                    let joined: Box<dyn Pull + '_> = Box::new(Joined::new(job, listing));
+                    let scoped = (Ok(joined), Rc::clone(&within), 0);
+                    self.scan(run, stage, (found, key, &mut left), scoped)?;
                 }
-                if names.is_empty() {
-                    left = left.saturating_sub(1);
+                for (stream, found, own) in owners {
+                    if let Some(owner) = found
+                        && self.wanted(found, key)
+                    {
+                        job.spend(NODE_WORK)?;
+                        let opened = data::open(job, &mut run.caches.streams, stream);
+                        let inner = own.as_ref().map_or_else(
+                            || Rc::clone(&within),
+                            |resources| Rc::new(Scope::new(resources.clone())),
+                        );
+                        self.scan(run, stage, (owner, key, &mut left), (opened, inner, 1))?;
+                    }
                 }
             }
         }
@@ -171,6 +210,39 @@ impl Released {
             }
         }
         Ok(())
+    }
+
+    /// Removes from the names `held` holds of the category `key` those `data`, run `depth` deep
+    /// within `scope`, names; all where it cannot be read. Counts down `left` where none are left.
+    fn scan(
+        &mut self,
+        run: &mut Run<'_, '_>,
+        stage: &Stage,
+        (held, key, left): (Holder, &'static [u8], &mut usize),
+        (data, scope, depth): (Opened<'_>, Rc<Scope>, u8),
+    ) -> Result<(), PdfError> {
+        let Some(&mut (_, ref mut names)) = self.entries.get_mut(&(held.key(), key)) else {
+            return Ok(());
+        };
+        let outer = mem::replace(&mut run.scope, scope);
+        let result = data
+            .and_then(|opened| mentioned(run, stage, (held, key), opened, (&mut *names, depth)));
+        run.scope = outer;
+        match result {
+            // Content that cannot be read may use any of them.
+            Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
+            other => other?,
+        }
+        if names.is_empty() {
+            *left = left.saturating_sub(1);
+        }
+        Ok(())
+    }
+
+    /// Whether names that `held` holds of the category `key` are still to be found.
+    fn wanted(&self, held: Option<Holder>, key: &[u8]) -> bool {
+        held.and_then(|found| self.entries.get(&(found.key(), key)))
+            .is_some_and(|entry| !entry.1.is_empty())
     }
 }
 
@@ -209,6 +281,96 @@ fn dropped(
             stage.set(job, id, within(resources))
         }
     }
+}
+
+/// The appearance streams of the annotations `listed`, normal, rollover and down, of each state,
+/// and their own resources; those that cannot be read draw nothing (12.5.3, 12.5.5).
+pub(super) fn appearances(job: &Job<'_>, listed: &[Object]) -> Result<Vec<Shown>, PdfError> {
+    let mut streams = Vec::new();
+    for item in listed {
+        job.spend(NODE_WORK)?;
+        let given = data::resolve(job, item)
+            .and_then(|annotation| data::entry(job, annotation.value(), b"AP"));
+        let appearances = match given {
+            Err(error) if error.code() == ErrorCode::Malformed => continue,
+            other => other?,
+        };
+        for key in [&b"N"[..], b"R", b"D"] {
+            let found = match data::entry(job, appearances.value(), key) {
+                Err(error) if error.code() == ErrorCode::Malformed => continue,
+                other => other?,
+            };
+            if matches!(*found.value(), Object::Stream(..)) {
+                streams.push(found);
+                continue;
+            }
+            for pair in data::pairs(found.value()).map_or(&[][..], Vec::as_slice) {
+                job.spend(1)?;
+                match data::resolve(job, &pair.1) {
+                    Ok(state) if matches!(*state.value(), Object::Stream(..)) => {
+                        streams.push(state);
+                    }
+                    Err(error) if error.code() != ErrorCode::Malformed => return Err(error),
+                    Ok(_) | Err(_) => {}
+                }
+            }
+        }
+    }
+    let mut shown = Vec::new();
+    for stream in streams {
+        let resources = match data::entry(job, stream.value(), b"Resources") {
+            Err(error) if error.code() == ErrorCode::Malformed => continue,
+            other => other?,
+        };
+        let own = matches!(*resources.value(), Object::Dictionary(_)).then_some(resources);
+        shown.push((stream, own));
+    }
+    Ok(shown)
+}
+
+/// Of `removed`, by category and name, those that the appearance streams `shown` without
+/// resources of their own name, run within the resources of the page `page`; all where one
+/// cannot be read (12.5.5).
+pub(super) fn drawn(
+    run: &mut Run<'_, '_>,
+    stage: &Stage,
+    page: ObjectId,
+    (shown, removed): (&[Shown], &[Named]),
+) -> Result<Vec<Named>, PdfError> {
+    let job = run.job;
+    let mut used = Vec::new();
+    let keys: BTreeSet<&'static [u8]> = removed.iter().map(|entry| entry.0).collect();
+    for key in keys {
+        let all: Names = removed
+            .iter()
+            .filter(|entry| entry.0 == key)
+            .map(|entry| entry.1.clone())
+            .collect();
+        let mut names = all.clone();
+        for entry in shown.iter().filter(|entry| entry.1.is_none()) {
+            if names.is_empty() {
+                break;
+            }
+            let stream = &entry.0;
+            job.spend(NODE_WORK)?;
+            // The page's own resources: no form with its own holds them.
+            let result = data::open(job, &mut run.caches.streams, stream).and_then(|opened| {
+                mentioned(
+                    run,
+                    stage,
+                    (Holder::Node(page), key),
+                    opened,
+                    (&mut names, 1),
+                )
+            });
+            match result {
+                Err(error) if error.code() == ErrorCode::Malformed => names.clear(),
+                other => other?,
+            }
+        }
+        used.extend(all.difference(&names).map(|name| (key, name.clone())));
+    }
+    Ok(used)
 }
 
 /// What holds the resources of the category `key` of the page tree node `id`, `node`, through

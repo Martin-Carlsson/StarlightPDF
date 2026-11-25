@@ -312,8 +312,8 @@ pub(super) fn overlap(first: &[Point], second: &[Point]) -> bool {
         })
 }
 
-/// The mark `annotation` is, when it is one: over its `QuadPoints`, else its `Rect`; none, with a
-/// warning, where it has neither.
+/// The mark `annotation` is, when it is one: over its `QuadPoints`, else, or where they cover no
+/// area, its `Rect`; none, with a warning, where it has neither.
 pub(super) fn read(job: &Job<'_>, annotation: &Object) -> Result<Option<Mark>, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
     let kind = overlay.entry(objects, annotation, b"Subtype")?;
@@ -330,12 +330,16 @@ pub(super) fn read(job: &Job<'_>, annotation: &Object) -> Result<Option<Mark>, P
         annotation.get(b"QuadPoints").unwrap_or(Object::Null),
     )?
     .filter(|found| !found.is_empty() && found.len().is_multiple_of(8));
-    let areas = if let Some(found) = quads {
-        found
-            .chunks(8)
-            .map(|quad| hull(quad.chunks(2).filter_map(at).collect()))
-            .collect()
-    } else {
+    let mut areas: Vec<Vec<Point>> = quads
+        .iter()
+        .flat_map(|found| found.chunks(8))
+        .map(|quad| hull(quad.chunks(2).filter_map(at).collect()))
+        .filter(|area| area.len() >= 3)
+        .collect();
+    if quads.is_some() && areas.is_empty() {
+        job.warn("12.5.6.23", "a mark's QuadPoints cover no area")?;
+    }
+    if areas.is_empty() {
         let rect = numbers(
             objects,
             overlay,
@@ -345,13 +349,13 @@ pub(super) fn read(job: &Job<'_>, annotation: &Object) -> Result<Option<Mark>, P
             job.warn("12.5.2", "a mark has neither a valid Rect nor QuadPoints")?;
             return Ok(None);
         };
-        vec![rectangle([
+        areas.push(rectangle([
             left.min(right),
             bottom.min(top),
             left.max(right),
             bottom.max(top),
-        ])]
-    };
+        ]));
+    }
     let color = numbers(
         objects,
         overlay,

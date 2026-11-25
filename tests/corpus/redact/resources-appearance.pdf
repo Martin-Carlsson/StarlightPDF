@@ -1,0 +1,73 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 9 0 R] /Count 2 /MediaBox [0 0 200 200] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Resources 8 0 R /Contents 4 0 R /Annots [5 0 R] >>
+endobj
+4 0 obj
+<< /Length 30 >>
+stream
+q 40 0 0 40 20 140 cm /Im Do Q
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Square /Rect [120 20 160 60] /AP << /N 6 0 R >> >>
+endobj
+6 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 40 40] /Resources 8 0 R /Length 27 >>
+stream
+q 40 0 0 40 0 0 cm /Im Do Q
+endstream
+endobj
+7 0 obj
+<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>
+stream
+0@P`
+endstream
+endobj
+8 0 obj
+<< /XObject << /Im 7 0 R >> >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im 7 0 R >> >> /Contents 10 0 R /Annots [11 0 R] >>
+endobj
+10 0 obj
+<< /Length 30 >>
+stream
+q 40 0 0 40 20 140 cm /Im Do Q
+endstream
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Square /Rect [120 20 160 60] /AP << /N 12 0 R >> >>
+endobj
+12 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 40 40] /Length 27 >>
+stream
+q 40 0 0 40 0 0 cm /Im Do Q
+endstream
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000151 00000 n 
+0000000247 00000 n 
+0000000327 00000 n 
+0000000419 00000 n 
+0000000561 00000 n 
+0000000708 00000 n 
+0000000754 00000 n 
+0000000877 00000 n 
+0000000958 00000 n 
+0000001052 00000 n 
+trailer
+<< /Size 13 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+1178
+%%EOF
