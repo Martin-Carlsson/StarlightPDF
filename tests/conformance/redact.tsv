@@ -1,7 +1,8 @@
 # Redaction (ISO 32000-2:2020, 12.5.6.23). annotate: <path> index=N [kind=Redact x= y= width= height= | quads=8k numbers] [color=] [delete=K] [saved]: the page's
 # annotations, ';'-joined, each 'Kind x,y,w,h[ q=quads][ c=colour without #]' in page coordinates, 4 fraction digits; 'none' when there are none.
-# redact: <path> [marks=page@x,y,w,h[@rrggbb];...] [pages=list] [cancel] [mode=] read=...: adds the marks, applies them, saves, reopens and reads; a failed apply gives its
-# code when the saves before and after give the same bytes and the marks stay, else '<code> changed'. Coordinates are page coordinates; renders are at 72 per inch.
+# redact: <path> [marks=page@x,y,w,h[@rrggbb];...] [pages=list] [cancel[=N]] [mode=] read=...: adds the marks, applies them, saves, reopens and reads; a failed apply gives its
+# code when the saves before and after give the same bytes and the marks stay, else '<code> changed'. cancel=N lets N progress calls through, and none reporting more done than
+# its total. Coordinates are page coordinates; renders are at 72 per inch.
 # A mark over a rectangle or quadrilaterals is listed, deleted and kept by a save (12.5.2, 12.5.6.23: Rect, QuadPoints, IC).
 annotate_bytes	tests/corpus/redact/no-marks.pdf	index=0	none
 annotate_file	tests/corpus/redact/no-marks.pdf	index=0	none
@@ -126,6 +127,9 @@ redact_bytes	tests/corpus/redact/structure.pdf	marks=0@15,30,110,30	read=annotat
 # Of the element of a form that is one content item (14.7.5.3).
 redact_bytes	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
 redact_file	tests/corpus/redact/structure-form.pdf	marks=0@10,110,80,80	read=text	bytes=464f524d464947555245474f4e45	absent
+# Of the element of a pop-up removed with its parent (12.5.6.14, 14.7.5.4).
+redact_bytes	tests/corpus/redact/annotations-popup-structure.pdf	read=text	bytes=504f505550414c54474f4e45	absent
+redact_file	tests/corpus/redact/annotations-popup-structure.pdf	read=text	bytes=504f505550414c54474f4e45	absent
 # Elements of a form or image a mark copies or removes refer to the copy, or no longer to it (14.7.4.3, 14.7.5.3).
 redact_bytes	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32332e34353637	absent
 redact_file	tests/corpus/redact/structure-copied.pdf	read=text	bytes=32332e34353637	absent
@@ -192,6 +196,9 @@ redact_file	tests/corpus/redact/path-curve-control.pdf	marks=0@50,10,20,20	read=
 # A move alone under a mark goes (8.5.2.1).
 redact_bytes	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
 redact_file	tests/corpus/redact/path-lone-move.pdf	read=points	index=0	0
+# A path of 16,502 points, fewer than the renderer draws, is cut (8.5.2).
+redact_bytes	tests/corpus/redact/path-points.pdf	marks=0@80,10,40,180	read=points	index=0	0
+redact_file	tests/corpus/redact/path-points.pdf	marks=0@80,10,40,180	read=points	index=0	0
 # A graphics state whose soft mask cannot be read keeps its other parameters (8.4.5, 11.6.5.2).
 redact_bytes	tests/corpus/redact/graphics-mask-damaged.pdf	marks=0@10,40,180,20	read=pixels	index=0	except=10,40,180,20	same
 redact_file	tests/corpus/redact/graphics-mask-damaged.pdf	marks=0@10,40,180,20	read=pixels	index=0	except=10,40,180,20	same
@@ -241,6 +248,9 @@ redact_file	tests/corpus/redact/annotations-reply-page.pdf	marks=0@10,150,40,40	
 redact_bytes	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
 redact_file	tests/corpus/redact/annotations-direct-marked.pdf	read=annotations	index=0	Note 150,40,10,10
 redact_bytes	tests/corpus/redact/annotations-direct-marked.pdf	read=text	bytes=4c494e4b534543524554	absent
+# Only annotations go: a widget's Parent of another generation finds nothing, and a Popup naming the catalog leaves it (7.3.10, 12.5.2).
+redact_bytes	tests/corpus/redact/annotations-references.pdf	read=pixels	index=0	same
+redact_file	tests/corpus/redact/annotations-references.pdf	read=pixels	index=0	same
 # Each mark's area is filled with its IC, or left empty without one, and the marks are gone (12.5.6.23).
 redact_bytes	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
 redact_file	tests/corpus/redact/mark-rect.pdf	read=render	index=0	200x200 60,95=ff0000 15,85=ff0000 25,45=000000 150,150=ffffff 5,100=ffffff 115,100=ffffff 60,78=ffffff 60,122=ffffff
@@ -287,12 +297,16 @@ redact_bytes	tests/corpus/redact/pages.pdf	pages=1	read=annotations	index=1	none
 redact_bytes	tests/corpus/redact/pages.pdf	pages=0,2	read=text	bytes=5345435245545041474531	present
 redact_bytes	tests/corpus/redact/pages.pdf	pages=0,2	read=text	bytes=5345435245545041474532	absent
 redact_bytes	tests/corpus/redact/pages.pdf	pages=3	read=ok	InvalidArgument
-# A page tree node reached twice is malformed: its pages would be visited without end (7.7.3.2).
+# A page tree reaching more nodes and pages than the file has objects is malformed: they would be visited without end, here 2^30 nodes after a page (7.7.3.2).
 redact_bytes	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
 redact_file	tests/corpus/redact/pages-dag.pdf	read=ok	Malformed
-# A root Count below the pages the tree holds still reaches every page (7.7.3.2).
+redact_bytes	tests/corpus/redact/pages-doubled.pdf	read=ok	Malformed
+redact_file	tests/corpus/redact/pages-doubled.pdf	read=ok	Malformed
+# A root Count below the pages the tree holds still reaches every page, and progress never reports more done than its total (7.7.3.2).
 redact_bytes	tests/corpus/redact/pages-count-low.pdf	read=text	bytes=434f554e54534543524554	absent
 redact_file	tests/corpus/redact/pages-count-low.pdf	read=text	bytes=434f554e54534543524554	absent
+redact_bytes	tests/corpus/redact/pages-count-low.pdf	cancel=100	read=text	bytes=434f554e54534543524554	absent
+redact_file	tests/corpus/redact/pages-count-low.pdf	cancel=100	read=text	bytes=434f554e54534543524554	absent
 # What cannot be removed fails and leaves the document unchanged: a font not embedded (9.6.2.2), an image of an unknown filter (7.4), text in a pattern cell (8.7.3); so does a cancel.
 redact_bytes	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported
 redact_file	tests/corpus/redact/font-not-embedded.pdf	marks=0@150,10,40,40	read=ok	Unsupported

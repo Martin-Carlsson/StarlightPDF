@@ -79,7 +79,7 @@ const REDACT: [&str; 9] = [
 /// White-space bytes (ISO 32000-2:2020, 7.2.3).
 const WHITE: &[u8] = b"\0\t\n\x0C\r ";
 
-/// A progress callback that returns false after `allowed` calls.
+/// A progress callback that returns false after `allowed` calls, or on more done than a known total.
 struct After {
     /// The calls let through.
     allowed: u64,
@@ -151,8 +151,7 @@ struct Walk<'doc> {
 
 impl Progress for After {
     fn update(&self, done: u64, total: u64) -> bool {
-        let _: (u64, u64) = (done, total);
-        self.calls.fetch_add(1, Ordering::Relaxed) < self.allowed
+        self.calls.fetch_add(1, Ordering::Relaxed) < self.allowed && (total == 0 || done <= total)
     }
 }
 

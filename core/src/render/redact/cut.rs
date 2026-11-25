@@ -26,7 +26,7 @@ const FAR: i64 = 0x10_0000;
 /// A half.
 const HALF: Fixed = Fixed::from_bits(1 << 31_u32);
 
-/// The most points of a path held to be cut.
+/// The most points of a path held to be cut: more than the renderer holds before it streams one.
 const HELD: usize = 0x8000;
 
 /// One.
@@ -128,16 +128,17 @@ impl Outline {
         name: &[u8],
         operands: &[Object],
     ) -> Result<(), PdfError> {
-        let given: Vec<Fixed> = match name {
-            b"l" | b"m" => numbers::<2>(job, operands)?.to_vec(),
-            b"c" => numbers::<6>(job, operands)?.to_vec(),
-            b"re" | b"v" | b"y" => numbers::<4>(job, operands)?.to_vec(),
-            _ => Vec::new(),
+        let (given, points): (Vec<Fixed>, usize) = match name {
+            b"l" | b"m" => (numbers::<2>(job, operands)?.to_vec(), 1),
+            b"c" => (numbers::<6>(job, operands)?.to_vec(), 3),
+            b"re" => (numbers::<4>(job, operands)?.to_vec(), 4),
+            b"v" | b"y" => (numbers::<4>(job, operands)?.to_vec(), 2),
+            _ => (Vec::new(), 0),
         };
         if self.over {
             return Ok(());
         }
-        self.points = self.points.saturating_add(given.len());
+        self.points = self.points.saturating_add(points);
         if self.points > HELD {
             self.over = true;
             self.subpaths = Vec::new();

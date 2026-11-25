@@ -312,12 +312,10 @@ pub(super) fn overlap(first: &[Point], second: &[Point]) -> bool {
         })
 }
 
-/// The mark `annotation` is, when it is one: over its `QuadPoints`, else its `Rect`.
-pub(super) fn read(
-    objects: Objects<'_>,
-    overlay: &Overlay,
-    annotation: &Object,
-) -> Result<Option<Mark>, PdfError> {
+/// The mark `annotation` is, when it is one: over its `QuadPoints`, else its `Rect`; none, with a
+/// warning, where it has neither.
+pub(super) fn read(job: &Job<'_>, annotation: &Object) -> Result<Option<Mark>, PdfError> {
+    let (objects, overlay) = (job.objects, &*job.overlay);
     let kind = overlay.entry(objects, annotation, b"Subtype")?;
     if !matches!(kind, Object::Name(ref name) if name == b"Redact") {
         return Ok(None);
@@ -343,15 +341,16 @@ pub(super) fn read(
             overlay,
             annotation.get(b"Rect").unwrap_or(Object::Null),
         )?;
-        match rect.as_deref() {
-            Some(&[left, bottom, right, top]) => vec![rectangle([
-                left.min(right),
-                bottom.min(top),
-                left.max(right),
-                bottom.max(top),
-            ])],
-            _ => Vec::new(),
-        }
+        let Some(&[left, bottom, right, top]) = rect.as_deref() else {
+            job.warn("12.5.2", "a mark has neither a valid Rect nor QuadPoints")?;
+            return Ok(None);
+        };
+        vec![rectangle([
+            left.min(right),
+            bottom.min(top),
+            left.max(right),
+            bottom.max(top),
+        ])]
     };
     let color = numbers(
         objects,

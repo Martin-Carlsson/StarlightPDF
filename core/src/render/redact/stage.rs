@@ -61,13 +61,21 @@ impl Stage {
         job.objects.decoded_limit().saturating_sub(self.bytes)
     }
 
-    /// Stages `object` as object `id`, all staged within the decoded limit.
+    /// Stages `object` as object `id`, all staged within the decoded limit; not where its number
+    /// holds another generation, which `id` does not name (7.3.10).
     pub(super) fn set(
         &mut self,
         job: &Job<'_>,
         id: ObjectId,
         object: Object,
     ) -> Result<(), PdfError> {
+        let generation = match self.objects.get(&id.number) {
+            Some(&(found, _)) => Some(found),
+            None => job.overlay.generation(job.objects, id.number)?,
+        };
+        if generation.is_some_and(|found| found != id.generation) {
+            return Ok(());
+        }
         // One staged again counts as it is now.
         let before = self
             .objects

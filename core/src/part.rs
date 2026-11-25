@@ -79,7 +79,8 @@ struct Level {
 /// A document's pages in page tree order, its kids read a batch at a time (ISO 32000-2:2020,
 /// 7.7.3.2).
 pub(crate) struct Leaves {
-    /// The pages it may still give, one per object: more come only through a node reached twice.
+    /// The nodes and pages it may still reach, one per object: more come only through a node
+    /// reached twice.
     left: u32,
     /// The nodes descended through, the root's first, and their kids left.
     stack: Vec<(ObjectId, Level)>,
@@ -263,7 +264,8 @@ impl Leaves {
         })
     }
 
-    /// The next page; more than the document has objects, or a node within itself, is malformed.
+    /// The next page; more nodes and pages than the document has objects, or a node within
+    /// itself, is malformed.
     pub(crate) fn next(
         &mut self,
         objects: Objects<'_>,
@@ -275,11 +277,11 @@ impl Leaves {
                 drop(self.stack.pop());
                 continue;
             };
+            self.left = self
+                .left
+                .checked_sub(1)
+                .ok_or_else(|| objects.malformed())?;
             if !kind(objects, overlay, id)?.0 {
-                self.left = self
-                    .left
-                    .checked_sub(1)
-                    .ok_or_else(|| objects.malformed())?;
                 return Ok(Some(id));
             }
             if self.stack.len() >= depth {

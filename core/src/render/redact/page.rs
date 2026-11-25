@@ -45,7 +45,7 @@ struct Kept {
     left: Vec<Object>,
     /// The `StructParent` keys of those removed, and them; then of forms a mark touched.
     parents: Vec<(i64, Option<ObjectId>)>,
-    /// Those removed that are objects.
+    /// Those removed that are annotation objects.
     removed: Vec<ObjectId>,
     /// The widgets removed, and their parents.
     widgets: Vec<(ObjectId, Option<ObjectId>)>,
@@ -108,6 +108,8 @@ pub(crate) fn apply(
         let job = job(objects, (overlay, &pace));
         changed |= redact(&job, (&mut stage, &mut released, &mut widgets), id)?;
         pace.done.set(pace.done.get().saturating_add(1));
+        // A root Count below the pages found raises the total.
+        pace.height.set(pace.height.get().max(pace.done.get()));
         pace.report()?;
     }
     if !changed {
@@ -167,7 +169,6 @@ fn annotations(
     let (objects, overlay) = (job.objects, &*job.overlay);
     let mut read = Vec::new();
     let mut gone = BTreeSet::new();
-    let mut parents = Vec::new();
     for item in listed {
         let (value, id) = overlay.ended(objects, item.clone())?;
         let kind = overlay.entry(objects, &value, b"Subtype")?;
@@ -179,23 +180,32 @@ fn annotations(
                 .transpose()?
                 .unwrap_or(false);
         if meets {
-            if let Object::Integer(key) = overlay.entry(objects, &value, b"StructParent")? {
-                parents.push((key, id));
-            }
             gone.extend(id.map(held));
             if let Some(Object::Reference(popup)) = value.get(b"Popup") {
                 let _new: bool = gone.insert(held(popup));
             }
         }
-        read.push((item, value, id, meets, meets && named(b"Widget")));
+        // Only annotations go null: whatever else Annots lists stays (12.5.2).
+        let typed = overlay.entry(objects, &value, b"Type")?;
+        let annotation = matches!(value, Object::Dictionary(_))
+            && matches!(kind, Object::Name(_))
+            && (matches!(typed, Object::Null)
+                || matches!(typed, Object::Name(ref found) if found == b"Annot"));
+        read.push((
+            item,
+            value,
+            id,
+            meets,
+            (annotation, meets && named(b"Widget")),
+        ));
     }
     let mut kept = Kept {
         left: Vec::new(),
-        parents,
+        parents: Vec::new(),
         removed: Vec::new(),
         widgets: Vec::new(),
     };
-    for (item, value, id, meets, widget) in read {
+    for (item, value, id, meets, (annotation, widget)) in read {
         let parent = match value.get(b"Parent") {
             Some(Object::Reference(found)) => Some(found),
             Some(_) | None => None,
@@ -207,7 +217,12 @@ fn annotations(
                 .push(unlinked((job, &mut *stage), (item, value, id), &gone)?);
             continue;
         }
-        kept.removed.extend(id);
+        if let Object::Integer(key) = overlay.entry(objects, &value, b"StructParent")? {
+            kept.parents.push((key, id));
+        }
+        if annotation {
+            kept.removed.extend(id);
+        }
         if widget && let Some(found) = id {
             kept.widgets.push((found, parent));
         }
@@ -297,6 +312,9 @@ fn detach(
         for (number, generation) in parents {
             let parent = ObjectId { generation, number };
             let mut node = stage.get(job, parent)?;
+            if !matches!(node, Object::Dictionary(_)) {
+                continue;
+            }
             if detached(job, stage, &mut node, (b"Kids", &gone))? {
                 let above = match node.get(b"Parent") {
                     Some(Object::Reference(found)) => Some(found),
@@ -497,7 +515,7 @@ fn redact(
     let mut read: Vec<Mark> = Vec::new();
     for item in &listed {
         let value = reading.direct(objects, item.clone())?;
-        read.extend(marks::read(objects, reading, &value)?);
+        read.extend(marks::read(job, &value)?);
     }
     if read.is_empty() {
         return Ok(false);

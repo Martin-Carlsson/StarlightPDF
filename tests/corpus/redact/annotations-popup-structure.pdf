@@ -1,0 +1,53 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 9 0 R /MarkInfo << /Marked true >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Annots [5 0 R 6 0 R 7 0 R] >>
+endobj
+4 0 obj
+<<  /Length 0 >>
+stream
+
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Popup 6 0 R /P 3 0 R >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Popup /Rect [120 120 180 180] /Parent 5 0 R /StructParent 0 /P 3 0 R >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Redact /Rect [10 10 50 50] >>
+endobj
+8 0 obj
+<< /Type /StructElem /S /Annot /P 9 0 R /Pg 3 0 R /K << /Type /OBJR /Obj 6 0 R >> /Alt (POPUPALTGONE) >>
+endobj
+9 0 obj
+<< /Type /StructTreeRoot /K 8 0 R /ParentTree 10 0 R /ParentTreeNextKey 1 >>
+endobj
+10 0 obj
+<< /Nums [0 8 0 R] >>
+endobj
+xref
+0 11
+0000000000 65535 f 
+0000000015 00000 n 
+0000000115 00000 n 
+0000000172 00000 n 
+0000000287 00000 n 
+0000000337 00000 n 
+0000000428 00000 n 
+0000000541 00000 n 
+0000000612 00000 n 
+0000000732 00000 n 
+0000000824 00000 n 
+trailer
+<< /Size 11 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+862
+%%EOF

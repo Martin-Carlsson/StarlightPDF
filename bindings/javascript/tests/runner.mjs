@@ -1269,10 +1269,15 @@ async function kid(document, index) {
 /** The contents `value` names, decoded, each followed by a newline. @type {(api: Api, document: Document, value: Obj | undefined) => Promise<Uint8Array>} */
 async function contents(api, document, value) {
   const items = value !== undefined && "array" in value ? value.array : [value];
+  /** @type {number[]} */
   const parts = [];
   for (const item of items) {
     if (item !== undefined && "ref" in item) {
-      parts.push(...(await decoded(api, document, item.ref)), 10);
+      // Byte by byte: spread, a long stream overflows a worker's stack.
+      for (const byte of await decoded(api, document, item.ref)) {
+        parts.push(byte);
+      }
+      parts.push(10);
     }
   }
   return Uint8Array.from(parts);
@@ -1628,9 +1633,10 @@ async function redact(api, environment, file, args, expected) {
   const shown = given.get("read") === "pixels" ? await renderedImage(api, document, index) : undefined;
   const pages = given.get("pages");
   let calls = 0;
-  const stop = () => {
+  /** @type {(done: number, total: number) => boolean} */
+  const stop = (done, total) => {
     calls += 1;
-    return calls <= allowed;
+    return calls <= allowed && (total === 0 || done <= total);
   };
   try {
     await document.applyRedactions(

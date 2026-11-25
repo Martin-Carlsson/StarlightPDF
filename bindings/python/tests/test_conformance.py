@@ -1498,9 +1498,15 @@ def redact(kind: str, args: list[str], expected: str) -> str:
     before = snapshot(document)
     shown = rendered(document, index) if given["read"] == "pixels" else None
     pages = given.get("pages")
+    calls = after(allowed)
+
+    def stop(done: int, total: int) -> bool:
+        """Stop after the calls let through, or on more done than a known total."""
+        return calls(done, total) and (total == 0 or done <= total)
+
     try:
         document.apply_redactions(
-            after(allowed) if "cancel" in given else None,
+            stop if "cancel" in given else None,
             pages=None
             if pages is None
             else [int(item) for item in pages.split(",") if item],
