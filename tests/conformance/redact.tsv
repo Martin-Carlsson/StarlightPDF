@@ -147,6 +147,10 @@ redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,5
 redact_file	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=text	bytes=504945434553454352455431	absent
 redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=text	bytes=534841524544434f4e54454e5431	present
 redact_bytes	tests/corpus/redact/content-replaced.pdf	marks=0@10,50,40,40;1@10,50,40,40	read=pixels	index=2	same
+# An operator split between content streams is changed whole; the streams no mark changes stay (7.8.2).
+redact_bytes	tests/corpus/redact/content-split.pdf	marks=0@10,50,40,40	read=points	index=0	0
+redact_file	tests/corpus/redact/content-split.pdf	marks=0@10,50,40,40	read=points	index=0	0
+redact_bytes	tests/corpus/redact/content-split.pdf	marks=0@10,50,40,40	read=pixels	index=0	same
 # A touched property list in shared resources loses its words unless kept content elsewhere names it (14.6.2, 14.9.3 to 14.9.5).
 redact_bytes	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455431	absent
 redact_file	tests/corpus/redact/properties-shared.pdf	marks=0@10,50,40,40	read=text	bytes=50524f5053454352455431	absent

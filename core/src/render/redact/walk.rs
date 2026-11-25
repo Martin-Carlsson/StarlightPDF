@@ -251,20 +251,25 @@ pub(super) fn corners(matrix: &Matrix, corners: [Fixed; 4]) -> Vec<Point> {
         .collect()
 }
 
-/// `data` with `found`'s edits made, cut where damage ended it, Flate-coded within `room` bytes.
+/// `data`, the bytes `from` up to `to` of what `found` walked, with the edits begun there made,
+/// cut where damage ended it, Flate-coded within `room` bytes.
 pub(super) fn emit(
     job: &job::Job<'_>,
     data: Box<dyn Pull + '_>,
-    found: &Found,
+    (found, from, to): (&Found, u64, u64),
     room: u64,
 ) -> Result<Vec<u8>, PdfError> {
     let outer = job.damaged.get();
     let mut reader = content::Ending::new(job, data);
-    let mut edits = found.edits.iter().peekable();
+    let mut edits = found.edits.iter().filter(|edit| edit.from < to).peekable();
     let end = found.end.unwrap_or(u64::MAX);
     let (mut out, mut buffer, mut plain) = (Vec::new(), vec![0; 0x4000], Vec::new());
     let mut deflate = Deflate::new(&mut out);
-    let (mut at, mut skipped) = (0_u64, 0_u64);
+    let (mut at, mut skipped) = (from, from);
+    // Those begun before are written there; what they replace is skipped here.
+    while let Some(edit) = edits.next_if(|edit| edit.from < from) {
+        skipped = skipped.max(edit.to);
+    }
     'read: loop {
         let count = reader.pull(&mut buffer)?;
         if count == 0 {
@@ -406,7 +411,7 @@ fn form(
     }
     frame.found.elements.extend(element);
     let reopened = data::open(job, &mut run.caches.streams, found)?;
-    let bytes = emit(job, reopened, &walked, cx.stage.room(job))?;
+    let bytes = emit(job, reopened, (&walked, 0, u64::MAX), cx.stage.room(job))?;
     let own = resources_with(run, (&inner, &[]), &walked, &cx.measured)?;
     let made = cx.stage.add(job, copied(owner, bytes, own))?;
     if let Some(reached) = id {

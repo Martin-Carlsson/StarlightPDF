@@ -41,6 +41,10 @@ pub(super) type Keys = BTreeSet<Key>;
 /// Where resources are: the object they are, 1 deep, or that holds them directly, 2 deep.
 pub(super) type Place = Option<(ObjectId, u8)>;
 
+/// Resources pages use, by the object they are or the parent they inherit them from, where they
+/// are and what of them they name.
+type Inherited = ((ObjectId, bool), Rc<Scope>, Place, Naming);
+
 /// Names of resources and the objects of those it draws.
 type Naming = BTreeMap<Vec<u8>, Keys>;
 
@@ -57,10 +61,14 @@ pub(super) type Shown = (Resolved, Option<Resolved>);
 /// what still draws them.
 #[derive(Default)]
 pub(super) struct Released {
+    /// The `Contents` reference read last.
+    contents: Option<ObjectId>,
     /// Of them, those drawn.
     drawn: Keys,
     /// What each of them with resources of its own draws of them.
     edges: BTreeMap<Key, Keys>,
+    /// The resources the page read last uses.
+    inherited: Option<Inherited>,
     /// They, soft mask groups included.
     objects: Keys,
     /// The redacted pages.
@@ -212,28 +220,60 @@ impl Released {
             Err(error) if error.code() == ErrorCode::Malformed => Vec::new(),
             other => appearances(job, data::items(other?.value()).unwrap_or_default())?,
         };
-        let inherited = job.tolerate(
-            display::inherited(objects, overlay, node, b"Resources"),
-            "7.7.3.4",
-            "the page's Resources are damaged",
-        )?;
-        let made = data::made(job, inherited.unwrap_or(Object::Null), None)?;
-        let within = Rc::new(Scope::new(made));
-        let place = job
-            .tolerate(
-                located(job, node, id),
+        // Pages that use the same resources, or inherit them from the same parent, read them once.
+        let source = match (node.get(b"Resources"), node.get(b"Parent")) {
+            (Some(Object::Reference(found)), _) => Some((found, true)),
+            (None, Some(Object::Reference(found))) => Some((found, false)),
+            _ => None,
+        };
+        let cached = self
+            .inherited
+            .as_ref()
+            .filter(|entry| source == Some(entry.0))
+            .map(|entry| (Rc::clone(&entry.1), entry.2, entry.3.clone()));
+        let read = cached.is_some();
+        let (within, place, named) = if let Some(found) = cached {
+            found
+        } else {
+            let inherited = job.tolerate(
+                display::inherited(objects, overlay, node, b"Resources"),
                 "7.7.3.4",
                 "the page's Resources are damaged",
-            )?
-            .flatten();
-        let named = self.naming(job, (&within.resources, place))?;
-        let listed = job.tolerate(
-            display::streams(objects, overlay, node.get(b"Contents")),
-            "7.7.3.3",
-            "Contents is neither a stream nor an array",
-        )?;
-        let streams = listed.unwrap_or_default();
-        for found in references(&streams) {
+            )?;
+            let made = data::made(job, inherited.unwrap_or(Object::Null), None)?;
+            let within = Rc::new(Scope::new(made));
+            let place = job
+                .tolerate(
+                    located(job, node, id),
+                    "7.7.3.4",
+                    "the page's Resources are damaged",
+                )?
+                .flatten();
+            let named = self.naming(job, (&within.resources, place))?;
+            // A reference to null leaves them inherited.
+            let kept = source.filter(|&(found, own)| !own || place == Some((found, 1)));
+            if let Some(found) = kept {
+                self.inherited = Some((found, Rc::clone(&within), place, named.clone()));
+            }
+            (within, place, named)
+        };
+        // A content stream is compared by reference; one read is not read again.
+        let contents = node.get(b"Contents");
+        let reference = match contents {
+            Some(Object::Reference(found)) => Some(found),
+            Some(_) | None => None,
+        };
+        let mut streams = Vec::new();
+        if reference.is_none() || reference != self.contents || !named.is_empty() {
+            let listed = job.tolerate(
+                display::streams(objects, overlay, contents),
+                "7.7.3.3",
+                "Contents is neither a stream nor an array",
+            )?;
+            streams = listed.unwrap_or_default();
+            self.contents = reference;
+        }
+        for found in references(&streams).chain(reference.map(key)) {
             if self.objects.contains(&found) {
                 let _new: bool = self.drawn.insert(found);
             }
@@ -265,7 +305,9 @@ impl Released {
                 self.drawn.extend(scanned(run, (opened, scope, 1), &given)?);
             }
         }
-        self.owners(run, (&within.resources, place), (redacted, 0))?;
+        if !read || redacted {
+            self.owners(run, (&within.resources, place), (redacted, 0))?;
+        }
         for entry in &shown {
             if let Some(ref resources) = entry.1 {
                 let at = own_place(resources, entry.0.id());

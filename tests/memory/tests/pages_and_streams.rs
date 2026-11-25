@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use starlightpdf::annotations::{AddAnnotationOptions, AnnotationKind};
 use starlightpdf::arrange::{SplitBy, SplitOptions};
 use starlightpdf::document::{Document, OpenOptions, PageOptions, SaveOptions};
+use starlightpdf::drawing::DrawImageOptions;
 use starlightpdf::edit::ApplyRedactionsOptions;
 use starlightpdf::input::{FileSourceOptions, ReadAt, ReadAtSourceOptions, Source};
 use starlightpdf::objects::{ObjectId, StreamDataOptions};
@@ -39,9 +40,9 @@ const SMALL_SPLIT_BOUND: usize = 104_857_600;
 /// 78,936.
 const PACKED_KIDS_BOUND: usize = 98_304;
 
-/// Most bytes opening each file, marking a page and applying the mark, which fills it, may hold
-/// allocated at once; measured 48,694.
-const REDACT_BOUND: usize = 57_344;
+/// Most bytes opening each file, drawing an image on a page, marking it and applying the mark,
+/// which rewrites its content and reads every page, may hold allocated at once; measured 160,817.
+const REDACT_BOUND: usize = 196_608;
 
 /// The shortest page object a saved part can hold: a page needs its type, its parent and here its
 /// contents (ISO 32000-2:2020, 7.3.10, 7.7.3.3).
@@ -815,7 +816,8 @@ fn split_of_more_packed_kids_than_objects_is_bounded() {
     bounded(Some(top), PACKED_KIDS_BOUND);
 }
 
-/// A page deep in each file, marked across its middle, redacts (ISO 32000-2:2020, 12.5.6.23).
+/// A page deep in each file, an image drawn and marked across its middle, redacts
+/// (ISO 32000-2:2020, 12.5.6.23).
 #[test]
 fn redaction_is_bounded() {
     for case in cases() {
@@ -830,9 +832,18 @@ fn redaction_is_bounded() {
                 [206.0_f64, 296.0_f64, 200.0_f64, 200.0_f64];
             let mut options = ApplyRedactionsOptions::default();
             options.pages = Some(vec![found.page]);
+            let mut image = FileSourceOptions::default();
+            image.file = PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../corpus/images/c0-b8.png"
+            ));
+            let mut drawn = DrawImageOptions::default();
+            [drawn.x, drawn.y] = [256.0_f64, 346.0_f64];
             let (result, bytes) = peak(|| -> Result<(), PdfError> {
                 let document = open(&read_at)?;
-                drop(document.page(&page)?.add_annotation(None, &mark)?);
+                let marked = document.page(&page)?;
+                marked.draw_image(&Source::from_file(&image)?, None, None, &drawn)?;
+                drop(marked.add_annotation(None, &mark)?);
                 document.apply_redactions(None, &options)
             });
             (result.map_err(|error| error.code()), bytes)

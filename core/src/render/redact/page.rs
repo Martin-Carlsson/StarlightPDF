@@ -13,6 +13,7 @@ use crate::page;
 use crate::page::display;
 use crate::part::Leaves;
 use crate::progress::Progress;
+use crate::pull::Pull;
 use crate::render::data::{self, Scope};
 use crate::render::fixed::Fixed;
 use crate::render::geometry::{Area, Matrix, Point};
@@ -31,11 +32,52 @@ use crate::render::surface::Surface;
 use crate::rendering::RenderUsage;
 use crate::store::{Bounds, Objects, Store};
 
+/// Work of a page the last pass reads, beyond that of one redacted.
+const SCAN_WORK: u64 = 0x1000;
+
 /// The operation errors name.
 const OPERATION: &str = "Document::apply_redactions";
 
-/// What walking a page's content found, the content rewritten when changed, and its streams.
-type Walked = (Found, Option<Vec<u8>>, Vec<Object>);
+/// What walking a page's content found, its streams where changed, and its streams.
+type Walked = (Found, Option<Vec<Object>>, Vec<Object>);
+
+/// Content streams read as [`Joined`] reads them, noting where each ends.
+struct Parts<'run, 'doc, 'ends> {
+    /// The stream being read.
+    current: Option<Joined<'run, 'doc>>,
+    /// Where each stream read ends.
+    ends: &'ends RefCell<Vec<u64>>,
+    /// The streams.
+    items: &'ends [Object],
+    /// The job.
+    job: &'run Job<'doc>,
+    /// The bytes read.
+    read: u64,
+}
+
+impl Pull for Parts<'_, '_, '_> {
+    fn pull(&mut self, buf: &mut [u8]) -> Result<usize, PdfError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if let Some(part) = self.current.as_mut() {
+                let count = part.pull(buf)?;
+                if count > 0 {
+                    let more = u64::try_from(count).unwrap_or(u64::MAX);
+                    self.read = self.read.saturating_add(more);
+                    return Ok(count);
+                }
+                self.current = None;
+                self.ends.borrow_mut().push(self.read);
+            }
+            let Some(item) = self.items.get(self.ends.borrow().len()) else {
+                return Ok(0);
+            };
+            self.current = Some(part(self.job, item)?);
+        }
+    }
+}
 
 /// What the annotations of a page become.
 struct Kept {
@@ -113,8 +155,10 @@ pub(crate) fn apply(
     if !changed {
         return Ok(());
     }
-    bounds.work.set(work);
-    pace.checkpoint.set(work.saturating_sub(WORK_STEP));
+    // The last pass reads every page as far as its dictionaries.
+    let scan = work.saturating_add(u64::from(count).saturating_mul(SCAN_WORK));
+    bounds.work.set(scan);
+    pace.checkpoint.set(scan.saturating_sub(WORK_STEP));
     let job = job(objects, (overlay, &pace));
     detach(&job, &mut stage, widgets)?;
     let mut caches = Caches::default();
@@ -435,7 +479,6 @@ fn content(
         "Contents is neither a stream nor an array",
     )?;
     let items = contents.unwrap_or_default();
-    let listing = data::made(job, Object::Array(items.clone()), None)?;
     let mut caches = Caches::default();
     let mut surface = Surface::new(job, Area::default(), None)?;
     let mut run = Run {
@@ -458,16 +501,21 @@ fn content(
         procedures: BTreeMap::new(),
         stage,
     };
-    let joined = Box::new(Joined::new(job, listing.clone()));
-    let found = walk::stream(&mut run, &mut cx, joined, Mode::Rewrite, false)?;
-    let rewritten = if found.changed() {
-        let again = Box::new(Joined::new(job, listing));
-        Some(walk::emit(job, again, &found, cx.stage.room(job))?)
+    let ends = RefCell::new(Vec::new());
+    let parts = Box::new(Parts {
+        current: None,
+        ends: &ends,
+        items: &items,
+        job,
+        read: 0,
+    });
+    let found = walk::stream(&mut run, &mut cx, parts, Mode::Rewrite, false)?;
+    let (rewritten, replaced) = if found.changed() {
+        rewrite(job, cx.stage, (&found, &items, &ends.into_inner()))?
     } else {
-        None
+        (None, Vec::new())
     };
-    let replaced = if rewritten.is_some() { &*items } else { &[] };
-    released.add(id, (&found, replaced), &cx.drawn);
+    released.add(id, (&found, &replaced), &cx.drawn);
     if !found.added.is_empty() || !found.removed.is_empty() {
         let shown = shared::appearances(job, kept)?;
         let scope = Rc::clone(&run.scope);
@@ -482,22 +530,19 @@ fn content(
 fn filled(
     (job, stage): (&Job<'_>, &mut Stage),
     dictionary: &mut Object,
-    (found, rewritten, items): (&Found, Option<Vec<u8>>, Vec<Object>),
+    (found, rewritten, items): (&Found, Option<Vec<Object>>, Vec<Object>),
     marks: &[Mark],
 ) -> Result<(), PdfError> {
     let fill = marks::fill(marks);
     let stream = |bytes: Vec<u8>| Object::Stream(Vec::new(), Data::Bytes(Arc::from(bytes)));
     let mut middle = match rewritten {
-        Some(bytes) => {
-            let mut coded = stream(bytes);
-            coded.set(b"Filter", Some(Object::Name(b"FlateDecode".to_vec())));
-            vec![Object::Reference(stage.add(job, coded)?)]
-        }
+        Some(made) => made,
         None if fill.is_empty() => return Ok(()),
         None => items,
     };
     if fill.is_empty() {
-        dictionary.set(b"Contents", middle.pop());
+        let one = (middle.len() == 1).then(|| middle.pop()).flatten();
+        dictionary.set(b"Contents", Some(one.unwrap_or(Object::Array(middle))));
         return Ok(());
     }
     // What the content leaves open is closed first.
@@ -516,6 +561,52 @@ fn filled(
     ));
     dictionary.set(b"Contents", Some(Object::Array(all)));
     Ok(())
+}
+
+/// A reader of the content stream `item`, as [`Joined`] reads it.
+fn part<'run, 'doc>(job: &'run Job<'doc>, item: &Object) -> Result<Joined<'run, 'doc>, PdfError> {
+    let listing = data::made(job, Object::Array(vec![item.clone()]), None)?;
+    Ok(Joined::new(job, listing))
+}
+
+/// The content streams `items`, ending at `ends` as walked, with `found`'s edits made: each
+/// an edit reaches copied, the rest as they are, or one copy of all where damaged; and those
+/// replaced.
+fn rewrite(
+    job: &Job<'_>,
+    stage: &mut Stage,
+    (found, items, ends): (&Found, &[Object], &[u64]),
+) -> Result<(Option<Vec<Object>>, Vec<Object>), PdfError> {
+    let add = |staged: &mut Stage, bytes: Vec<u8>| -> Result<Object, PdfError> {
+        let mut coded = Object::Stream(Vec::new(), Data::Bytes(Arc::from(bytes)));
+        coded.set(b"Filter", Some(Object::Name(b"FlateDecode".to_vec())));
+        Ok(Object::Reference(staged.add(job, coded)?))
+    };
+    if found.damaged || ends.len() != items.len() {
+        let listing = data::made(job, Object::Array(items.to_vec()), None)?;
+        let all = Box::new(Joined::new(job, listing));
+        let bytes = walk::emit(job, all, (found, 0, u64::MAX), stage.room(job))?;
+        return Ok((Some(vec![add(stage, bytes)?]), items.to_vec()));
+    }
+    let (mut made, mut replaced) = (Vec::new(), Vec::new());
+    let (mut next, mut reach, mut from) = (0, 0, 0);
+    for (item, &to) in items.iter().zip(ends) {
+        job.spend(1)?;
+        let mut reached = reach > from;
+        while let Some(edit) = found.edits.get(next).filter(|edit| edit.from < to) {
+            (reached, reach, next) = (true, reach.max(edit.to), next.saturating_add(1));
+        }
+        if reached {
+            let data = Box::new(part(job, item)?);
+            let bytes = walk::emit(job, data, (found, from, to), stage.room(job))?;
+            made.push(add(stage, bytes)?);
+            replaced.push(item.clone());
+        } else {
+            made.push(item.clone());
+        }
+        from = to;
+    }
+    Ok((Some(made), replaced))
 }
 
 /// Redacts the page `id` where it has a mark, staging what changes and adding the widgets it
