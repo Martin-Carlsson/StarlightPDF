@@ -12,7 +12,7 @@ use crate::render::interpret::{Run, content, numbers};
 use crate::render::job::{self, Job};
 use crate::render::math;
 use crate::render::path::Curve;
-use crate::render::redact::marks::{self, Mark};
+use crate::render::redact::marks::{self, Marks};
 use crate::render::stroke::{self, Join, Style};
 use crate::syntax::write_name;
 use crate::{ErrorCode, PdfError};
@@ -335,7 +335,8 @@ impl Walker<'_> {
         let [start, one, two, finish] = split(corners, curves.0, (from, to), count);
         let pieces = to.saturating_sub(from);
         let lines = Curve::new(page_start, [page_one, page_two, page_end]).pieces();
-        if pieces > 1 && lines != pieces {
+        // Halved where drawn by other lines, or where a control point is in an area.
+        if pieces > 1 && (lines != pieces || self.meets(&[start, one, two, finish])) {
             let middle = from.saturating_add(pieces >> 1_u32);
             let first = self.kept((corners, defaults), curves, (from, middle, count));
             return first.saturating_add(self.kept(
@@ -421,14 +422,30 @@ fn along(from: Point, to: Point, part: Fixed) -> Point {
 
 /// The areas of `marks` that meet `near`, none being anywhere, in the user space `inverse` maps
 /// default user space to: convex and counterclockwise.
-fn areas(marks: &[Mark], near: Option<&[Point]>, inverse: &Matrix) -> Vec<Vec<Point>> {
-    marks
-        .iter()
-        .flat_map(|mark| mark.areas.iter())
-        .filter(|area| near.is_none_or(|shape| marks::overlap(area, shape)))
+fn areas(
+    job: &Job<'_>,
+    marks: &Marks,
+    near: Option<&[Point]>,
+    inverse: &Matrix,
+) -> Result<Vec<Vec<Point>>, PdfError> {
+    let found: Vec<&Vec<Point>> = if let Some(shape) = near {
+        marks
+            .find(job, shape, true)?
+            .into_iter()
+            .filter_map(|(mark, place)| marks.list().get(mark)?.areas.get(place))
+            .collect()
+    } else {
+        marks
+            .list()
+            .iter()
+            .flat_map(|mark| mark.areas.iter())
+            .collect()
+    };
+    Ok(found
+        .into_iter()
         .map(|area| marks::hull(area.iter().map(|point| inverse.apply(*point)).collect()))
         .filter(|area| area.len() >= 3)
-        .collect()
+        .collect())
 }
 
 /// The vector from `from` to `to`.
@@ -478,7 +495,7 @@ fn chorded(
                 .collect();
             if entered.is_empty() {
                 if !alone(areas, subpath) {
-                    written(out, subpath);
+                    unentered(out, subpath, &items, true);
                 }
                 continue;
             }
@@ -591,11 +608,25 @@ fn holds(area: &[Point], point: Point) -> bool {
     sides(area).all(|(corner, next)| marks::cross(corner, next, point) > 0)
 }
 
+/// Appends a point far outside the page and the marks under `matrix`: a path that clips all away
+/// (8.5.4).
+pub(super) fn nowhere(out: &mut String, matrix: &Matrix) {
+    let near = Fixed::from_i64(0_i64.saturating_sub(FAR));
+    let corner = Point {
+        across: near,
+        down: near,
+    };
+    let at = matrix
+        .inverse()
+        .map_or_else(Point::default, |inverse| inverse.apply(corner));
+    point(out, at, "m");
+}
+
 /// What paints `outline` as `name` does, cut where the areas of `marks` that meet `shape`, where
 /// it paints, are and clipped out of them, then clips as it did (8.5.3, 8.5.4).
 pub(super) fn path(
     run: &Run<'_, '_>,
-    (marks, shape): (&[Mark], &[Point]),
+    (marks, shape): (&Marks, &[Point]),
     outline: Outline,
     name: &[u8],
 ) -> Result<String, PdfError> {
@@ -605,7 +636,7 @@ pub(super) fn path(
     }
     let matrix = run.state.matrix;
     let inverse = matrix.inverse().ok_or_else(|| job.unsupported())?;
-    let areas = areas(marks, Some(shape), &inverse);
+    let areas = areas(job, marks, Some(shape), &inverse)?;
     let mut subpaths = outline.subpaths;
     if outline
         .matrix
@@ -646,7 +677,12 @@ pub(super) fn path(
         out.push_str(" Q");
     }
     if let Some(even) = outline.clip {
+        let before = out.len();
         chorded(job, &mut out, &areas, &subpaths)?;
+        if out.len() == before {
+            // All of it is in the marks.
+            nowhere(&mut out, &matrix);
+        }
         out.push_str(if even { " W* n" } else { " W n" });
     }
     Ok(out)
@@ -724,7 +760,7 @@ fn polygon(out: &mut String, corners: &[Point]) {
 /// anywhere (8.7.4.2).
 pub(super) fn shading(
     run: &Run<'_, '_>,
-    (marks, clip): (&[Mark], Option<&[Point]>),
+    (marks, clip): (&Marks, Option<&[Point]>),
     key: &[u8],
 ) -> Result<String, PdfError> {
     let inverse = run
@@ -733,7 +769,7 @@ pub(super) fn shading(
         .inverse()
         .ok_or_else(|| run.job.unsupported())?;
     let mut out = String::from("q");
-    excluded(&mut out, &areas(marks, clip, &inverse), &inverse);
+    excluded(&mut out, &areas(run.job, marks, clip, &inverse)?, &inverse);
     out.push(' ');
     write_name(&mut out, key);
     out.push_str(" sh Q");
@@ -876,7 +912,7 @@ fn stroked(
         let items = walked(job, areas, subpath, subpath.closed)?;
         if !items.iter().any(|item| matches!(*item, Item::Enter(..))) {
             if !alone(areas, subpath) {
-                written(&mut whole, subpath);
+                unentered(&mut whole, subpath, &items, subpath.closed);
             }
             continue;
         }
@@ -908,6 +944,31 @@ fn stroked(
     }
     out.push_str(&apart);
     Ok(())
+}
+
+/// Appends `subpath`, which enters no area, as walking it, and back to its start when `closing`,
+/// left it: as it was where it left each segment whole (8.5.2).
+fn unentered(out: &mut String, subpath: &Subpath, items: &[Item], closing: bool) {
+    let kept: Vec<Drawn> = items
+        .iter()
+        .filter_map(|item| match *item {
+            Item::Keep(step, _) => Some(step),
+            Item::Enter(..) | Item::Exit(..) => None,
+        })
+        .collect();
+    if kept.len() == subpath.steps.len().saturating_add(usize::from(closing)) {
+        written(out, subpath);
+        return;
+    }
+    point(out, subpath.start.user, "m");
+    // The last is the way back.
+    let count = kept.len().saturating_sub(usize::from(closing));
+    for step in kept.into_iter().take(count) {
+        drawn(out, step);
+    }
+    if subpath.closed {
+        out.push_str(" h");
+    }
 }
 
 /// What walking `subpath`, and back to its start when `closing`, meets of `areas`.

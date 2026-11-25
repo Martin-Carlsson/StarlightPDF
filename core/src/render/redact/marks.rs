@@ -4,10 +4,32 @@ use crate::PdfError;
 use crate::overlay::{Object, Overlay};
 use crate::render::fixed::Fixed;
 use crate::render::geometry::Point;
+use crate::render::job::Job;
+use crate::render::redact::walk;
 use crate::store::Objects;
 
 /// Units of a fraction digit written: ten of them.
 const DIGITS: u128 = 10_000_000_000;
+
+/// The most areas a leaf of [`Marks`]' tree holds.
+const LEAF: usize = 4;
+
+/// Work of testing a box of [`Marks`]' tree, or an area.
+const TEST_WORK: u64 = 8;
+
+/// An area of [`Marks`]: its box, its mark and its place there.
+type Entry = ([Fixed; 4], usize, usize);
+
+/// The marks of a page, their areas in a tree of boxes halving them by turns across and up, so
+/// that finding those a shape meets tests few.
+pub(super) struct Marks {
+    /// The areas, in the tree's order.
+    areas: Vec<Entry>,
+    /// The marks.
+    list: Vec<Mark>,
+    /// The box of each node: the first holds all, node `n` the halves `2n + 1` and `2n + 2`.
+    nodes: Vec<[Fixed; 4]>,
+}
 
 /// A redaction mark.
 pub(super) struct Mark {
@@ -15,6 +37,141 @@ pub(super) struct Mark {
     pub areas: Vec<Vec<Point>>,
     /// `IC`; empty leaves the area empty.
     pub color: Vec<Fixed>,
+}
+
+impl Marks {
+    /// The areas of `list` that `shape` meets, by mark and place, in order; only the first unless
+    /// `all`. Each box tested is counted.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::ErrorCode::LimitExceeded`] past the work limit.
+    pub(super) fn find(
+        &self,
+        job: &Job<'_>,
+        shape: &[Point],
+        all: bool,
+    ) -> Result<Vec<(usize, usize)>, PdfError> {
+        let mut found = Vec::new();
+        if let Some(bounds) = extent(shape) {
+            self.visit(
+                job,
+                (shape, bounds),
+                (0, 0, self.areas.len()),
+                (&mut found, all),
+            )?;
+        }
+        found.sort_unstable();
+        Ok(found)
+    }
+
+    /// The marks.
+    pub(super) fn list(&self) -> &[Mark] {
+        &self.list
+    }
+
+    /// Whether `shape` meets a mark's area, as [`Self::find`] counts.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::find`].
+    pub(super) fn meets(&self, job: &Job<'_>, shape: &[Point]) -> Result<bool, PdfError> {
+        Ok(!self.find(job, shape, false)?.is_empty())
+    }
+
+    /// `list` with its areas in a tree.
+    pub(super) fn new(list: Vec<Mark>) -> Self {
+        let mut areas: Vec<Entry> = list
+            .iter()
+            .enumerate()
+            .flat_map(|(at, mark)| {
+                mark.areas
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(place, area)| extent(area).map(|found| (found, at, place)))
+            })
+            .collect();
+        let mut nodes = Vec::new();
+        built(&mut areas, &mut nodes, 0, true);
+        Self { areas, list, nodes }
+    }
+
+    /// Adds to `found` the areas from `low` to `high` under `node` that `shape`, within
+    /// `bounds`, meets; stops at the first unless `all`.
+    fn visit(
+        &self,
+        job: &Job<'_>,
+        (shape, bounds): (&[Point], [Fixed; 4]),
+        (node, low, high): (usize, usize, usize),
+        (found, all): (&mut Vec<(usize, usize)>, bool),
+    ) -> Result<(), PdfError> {
+        job.spend(TEST_WORK)?;
+        if !self
+            .nodes
+            .get(node)
+            .is_some_and(|held| touches(*held, bounds))
+        {
+            return Ok(());
+        }
+        let count = high.saturating_sub(low);
+        if count > LEAF {
+            let middle = low.saturating_add(count >> 1_u32);
+            let first = node.saturating_mul(2).saturating_add(1);
+            self.visit(
+                job,
+                (shape, bounds),
+                (first, low, middle),
+                (&mut *found, all),
+            )?;
+            if !all && !found.is_empty() {
+                return Ok(());
+            }
+            let second = first.saturating_add(1);
+            return self.visit(job, (shape, bounds), (second, middle, high), (found, all));
+        }
+        for &(held, mark, place) in self.areas.get(low..high).unwrap_or_default() {
+            job.spend(TEST_WORK)?;
+            let area = self.list.get(mark).and_then(|owner| owner.areas.get(place));
+            if touches(held, bounds) && area.is_some_and(|inside| overlap(inside, shape)) {
+                found.push((mark, place));
+                if !all {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Orders `areas` as the tree of node `node` takes them, halved `across` or up, and sets the
+/// boxes of its nodes in `nodes`.
+fn built(areas: &mut [Entry], nodes: &mut Vec<[Fixed; 4]>, node: usize, across: bool) {
+    if areas.len() > LEAF {
+        areas.sort_unstable_by_key(|entry| {
+            let [left, bottom, right, top] = entry.0;
+            if across {
+                (left.plus(right), bottom.plus(top))
+            } else {
+                (bottom.plus(top), left.plus(right))
+            }
+        });
+        let (low, high) = areas.split_at_mut(areas.len() >> 1_u32);
+        let first = node.saturating_mul(2).saturating_add(1);
+        built(low, nodes, first, !across);
+        built(high, nodes, first.saturating_add(1), !across);
+    }
+    let held = areas
+        .iter()
+        .fold(None, |held, entry| Some(walk::joined(held, entry.0)));
+    let Some(found) = held else {
+        return;
+    };
+    if nodes.len() <= node {
+        nodes.resize(node.saturating_add(1), [Fixed::default(); 4]);
+    }
+    if let Some(slot) = nodes.get_mut(node) {
+        *slot = found;
+    }
 }
 
 /// Twice the signed area of the triangle `origin`, `first`, `second`, in squared bits.
@@ -107,14 +264,6 @@ pub(super) fn hull(mut points: Vec<Point>) -> Vec<Point> {
     lower
 }
 
-/// Whether the polygon `shape` meets the area of a mark: their insides overlap.
-pub(super) fn meets(marks: &[Mark], shape: &[Point]) -> bool {
-    marks
-        .iter()
-        .flat_map(|mark| mark.areas.iter())
-        .any(|area| overlap(area, shape))
-}
-
 /// The numbers of the array `value`, through references; `None` when another object.
 fn numbers(
     objects: Objects<'_>,
@@ -141,29 +290,26 @@ pub(super) fn overlap(first: &[Point], second: &[Point]) -> bool {
         return false;
     }
     let one = Fixed::from_i64(1).bits();
-    let mut axes = vec![(one, 0_i64), (0_i64, one)];
-    for polygon in [first, second] {
-        for (at, start) in polygon.iter().enumerate() {
-            let Some(end) = polygon
-                .get(at.saturating_add(1))
-                .or_else(|| polygon.first())
-            else {
-                continue;
-            };
-            let normal = (
-                start.down.bits().saturating_sub(end.down.bits()),
-                end.across.bits().saturating_sub(start.across.bits()),
-            );
-            if normal != (0, 0) {
-                axes.push(normal);
-            }
-        }
-    }
-    axes.iter().all(|axis| {
-        let (low, high) = span(first, *axis);
-        let (other_low, other_high) = span(second, *axis);
-        high > other_low && other_high > low
-    })
+    let normals = [first, second].into_iter().flat_map(|polygon| {
+        polygon
+            .iter()
+            .zip(polygon.iter().skip(1).chain(polygon.first()))
+            .map(|(start, end)| {
+                (
+                    start.down.bits().saturating_sub(end.down.bits()),
+                    end.across.bits().saturating_sub(start.across.bits()),
+                )
+            })
+    });
+    [(one, 0_i64), (0_i64, one)]
+        .into_iter()
+        .chain(normals)
+        .filter(|normal| *normal != (0, 0))
+        .all(|axis| {
+            let (low, high) = span(first, axis);
+            let (other_low, other_high) = span(second, axis);
+            high > other_low && other_high > low
+        })
 }
 
 /// The mark `annotation` is, when it is one: over its `QuadPoints`, else its `Rect`.
@@ -226,6 +372,16 @@ pub(super) fn rectangle(corners: [Fixed; 4]) -> Vec<Point> {
         .to_vec()
 }
 
+/// The box of `points`: left, bottom, right and top; none where there are none.
+fn extent(points: &[Point]) -> Option<[Fixed; 4]> {
+    points.iter().fold(None, |held, point| {
+        Some(walk::joined(
+            held,
+            [point.across, point.down, point.across, point.down],
+        ))
+    })
+}
+
 /// The least and most of `polygon` along `axis`.
 fn span(polygon: &[Point], axis: (i64, i64)) -> (i128, i128) {
     let (ax, ay) = (i128::from(axis.0), i128::from(axis.1));
@@ -237,4 +393,12 @@ fn span(polygon: &[Point], axis: (i64, i64)) -> (i128, i128) {
         found = (found.0.min(along), found.1.max(along));
     }
     found
+}
+
+/// Whether the insides of the boxes `first` and `second` may overlap: neither ends before the
+/// other starts.
+fn touches(first: [Fixed; 4], second: [Fixed; 4]) -> bool {
+    let [left, bottom, right, top] = first;
+    let [other_left, other_bottom, other_right, other_top] = second;
+    right > other_left && other_right > left && top > other_bottom && other_top > bottom
 }

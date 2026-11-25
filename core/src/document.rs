@@ -1,6 +1,5 @@
 //! Documents: open, inspect, change and save.
 
-use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use core::fmt::{self, Debug, Formatter};
 use std::path::PathBuf;
@@ -433,32 +432,44 @@ impl Document {
     ) -> Result<(), PdfError> {
         /// The operation.
         const APPLY: &str = "Document::apply_redactions";
-        let objects = self.store.objects(APPLY);
         let count = self.page_count()?;
-        let indices = options
-            .pages
-            .clone()
-            .unwrap_or_else(|| (0..count).collect());
-        if indices.iter().any(|index| *index >= count) {
+        let pages = options.pages.as_deref();
+        if pages.is_some_and(|listed| listed.iter().any(|index| *index >= count)) {
             return Err(PdfError::new(ErrorCode::InvalidArgument, APPLY));
         }
-        let mut marked = Vec::new();
-        let mut seen = BTreeSet::new();
-        for index in indices {
-            let id = page::find(&self.store, &self.overlay, index)?.object();
-            if seen.insert((id.number, id.generation)) && marks(objects, &self.overlay, id)? {
-                marked.push(id);
-            }
-        }
-        if marked.is_empty() {
+        if pages.is_some_and(<[u32]>::is_empty) {
             return Ok(());
         }
         #[cfg(feature = "rendering")]
-        return render::redact::page::apply(&self.store, &self.overlay, progress, &marked);
+        return render::redact::page::apply(&self.store, &self.overlay, progress, (pages, count));
         #[cfg(not(feature = "rendering"))]
         {
             let _: Option<&dyn Progress> = progress;
-            Err(PdfError::new(ErrorCode::CapabilityMissing, APPLY))
+            let objects = self.store.objects(APPLY);
+            let overlay = &*self.overlay;
+            let mut all = if pages.is_none() {
+                Some(part::Leaves::new(objects, overlay)?)
+            } else {
+                None
+            };
+            let mut listed = pages.map(<[u32]>::iter);
+            loop {
+                let next = match (listed.as_mut(), all.as_mut()) {
+                    (Some(indices), _) => indices
+                        .next()
+                        .map(|&index| page::find(&self.store, &self.overlay, index))
+                        .transpose()?
+                        .map(|found| found.object()),
+                    (None, Some(leaves)) => leaves.next(objects, overlay)?,
+                    (None, None) => None,
+                };
+                let Some(id) = next else {
+                    return Ok(());
+                };
+                if marks(objects, overlay, id)? {
+                    return Err(PdfError::new(ErrorCode::CapabilityMissing, APPLY));
+                }
+            }
         }
     }
 
@@ -2010,6 +2021,7 @@ fn place(
 }
 
 /// Whether page `id` has a redaction mark among its annotations (ISO 32000-2:2020, 12.5.6.23).
+#[cfg(not(feature = "rendering"))]
 fn marks(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<bool, PdfError> {
     let page = overlay.resolve(objects, id)?;
     let Object::Array(listed) = overlay.entry(objects, &page, b"Annots")? else {

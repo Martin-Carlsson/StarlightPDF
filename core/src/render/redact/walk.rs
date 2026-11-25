@@ -18,7 +18,7 @@ use crate::render::interpret::{self, Run, content, inline, name_operand, numbers
 use crate::render::job;
 use crate::render::output::deflate::Deflate;
 use crate::render::redact::cut::{self, Outline};
-use crate::render::redact::marks::{self, Mark};
+use crate::render::redact::marks::{self, Marks};
 use crate::render::redact::stage::Stage;
 use crate::render::redact::structure::{self, Level};
 use crate::render::redact::{glyph, image};
@@ -45,7 +45,7 @@ const UNFILTERED: [&[u8]; 7] = [
 /// What a walk needs beside the run.
 pub(super) struct Context<'cx> {
     /// The marks.
-    pub marks: &'cx [Mark],
+    pub marks: &'cx Marks,
     /// The `XObject` names content that is measured draws, which no copy leaves out.
     pub measured: BTreeSet<(&'static [u8], Vec<u8>)>,
     /// The `StructParents` key of the stream walked.
@@ -122,6 +122,8 @@ struct Frame {
     clip: Option<[Fixed; 4]>,
     /// `W` or `W*` came: the path clips.
     clipping: bool,
+    /// In the text object, a show that clips had glyphs, and one still has.
+    clips: (bool, bool),
     /// What it found.
     found: Found,
     /// It runs within marked content that structure keeps.
@@ -178,12 +180,20 @@ impl Frame {
     }
 
     /// Whether what paints `shape`, none being anywhere, meets a mark; measuring, it is counted.
-    fn reach(&mut self, marks: &[Mark], shape: Option<&[Point]>) -> bool {
+    fn reach(
+        &mut self,
+        job: &job::Job<'_>,
+        marks: &Marks,
+        shape: Option<&[Point]>,
+    ) -> Result<bool, PdfError> {
         if self.mode == Mode::Measure {
             self.found.ink.add(shape);
-            return false;
+            return Ok(false);
         }
-        shape.map_or(!marks.is_empty(), |found| marks::meets(marks, found))
+        shape.map_or_else(
+            || Ok(!marks.list().is_empty()),
+            |found| marks.meets(job, found),
+        )
     }
 }
 
@@ -396,8 +406,8 @@ fn form(
     Ok(Copied::Made(made))
 }
 
-/// `gs` of the `ExtGState` resource `key`: its font and line width, and its soft mask's group
-/// walked as a form, in a copy where a mark meets it (8.4.5, 11.6.5.2).
+/// `gs` of the `ExtGState` resource `key`: its parameters, and its soft mask's group walked as a
+/// form, in a copy where a mark meets it (8.4.5, 11.6.5.2).
 fn graphics(
     run: &mut Run<'_, '_>,
     cx: &mut Context<'_>,
@@ -409,17 +419,13 @@ fn graphics(
         job.warn("7.8.3", "a graphics state dictionary is missing")?;
         return Ok(None);
     };
-    let width = data::entry(job, found.value(), b"LW")?;
-    if let Some(value) = Fixed::from_object(width.value()) {
-        run.state.style.width = value;
-    }
-    let font = data::entry(job, found.value(), b"Font")?;
-    let pair = data::items(font.value()).unwrap_or_default();
-    if let (2, Some(first), Some(second)) = (pair.len(), pair.first(), pair.get(1)) {
-        let (chosen, size) = (data::resolve(job, first)?, data::resolve(job, second)?);
-        let points = Fixed::from_object(size.value()).ok_or_else(|| job.objects.malformed())?;
-        run.state.text.font = None;
-        text::set_font(run, (&chosen, None), points)?;
+    // Each as the renderer sets it, but the soft mask, which is walked.
+    let entries = data::pairs(found.value()).ok_or_else(|| job.objects.malformed())?;
+    for pair in entries.iter().filter(|pair| pair.0 != b"SMask") {
+        job.spend(1)?;
+        let done = state::parameter(run, found.id(), &pair.0, &pair.1);
+        let _set: Option<()> =
+            job.tolerate(done, "8.4.5", "a graphics state parameter is malformed")?;
     }
     let mask = data::entry(job, found.value(), b"SMask")?;
     let group = data::entry(job, mask.value(), b"G")?;
@@ -562,7 +568,7 @@ fn painted(
     if (name == b"n" && frame.mode == Mode::Measure) || singular {
         return Ok(None);
     }
-    if !frame.reach(cx.marks, Some(&shape)) {
+    if !frame.reach(run.job, cx.marks, Some(&shape))? {
         return Ok(None);
     }
     if name != b"n" {
@@ -719,15 +725,25 @@ fn shown(
     } else {
         operands.last().cloned().into_iter().collect()
     };
-    let marks = if frame.mode == Mode::Rewrite {
-        cx.marks
-    } else {
-        &[]
-    };
+    let marks = (frame.mode == Mode::Rewrite).then_some(cx.marks);
+    let clipping = run.state.text.mode >= 4
+        && run
+            .state
+            .text
+            .font
+            .as_ref()
+            .is_some_and(|font| font.procedures().is_none());
     let result = glyph::show(run, cx, &mut block, &items, marks);
     frame.text = Some(block);
-    let (array, ink) = result?;
+    let (array, ink, kept) = result?;
     frame.found.ink.merge(ink);
+    if clipping
+        && items
+            .iter()
+            .any(|item| data::text(item).is_some_and(|bytes| !bytes.is_empty()))
+    {
+        frame.clips = (true, frame.clips.1 || kept);
+    }
     let Some(rewritten) = array else {
         return Ok(None);
     };
@@ -785,8 +801,20 @@ fn step(
             }
         }
         b"BDC" | b"BMC" | b"DP" | b"EMC" | b"MP" => marked(run, cx, frame, name, given)?,
-        b"BT" => frame.text = Some(text::begin(run, (None, 0))?),
-        b"ET" => frame.text = None,
+        b"BT" => {
+            frame.text = Some(text::begin(run, (None, 0))?);
+            frame.clips = (false, false);
+        }
+        b"ET" => {
+            frame.text = None;
+            // The glyphs that clipped are gone: their clip keeps nothing (9.3.6).
+            if mem::take(&mut frame.clips) == (true, false) && frame.mode == Mode::Rewrite {
+                let mut text = String::from("ET");
+                cut::nowhere(&mut text, &run.state.matrix);
+                text.push_str(" W n");
+                return Ok(Some(text));
+            }
+        }
         b"T*" | b"Td" | b"TD" | b"Tm" => match frame.text.as_mut() {
             Some(block) => text::operator(run, block, name, given)?,
             None => job.warn("9.4.1", "a text operator outside a text object")?,
@@ -794,11 +822,11 @@ fn step(
         b"'" | b"\"" | b"Tj" | b"TJ" => return shown(run, cx, frame, name, given),
         b"BI" => {
             let shape = corners(&run.state.matrix, unit());
-            if !frame.reach(cx.marks, Some(&shape)) {
+            if !frame.reach(job, cx.marks, Some(&shape))? {
                 return inline::pass(run, operations).map(|()| None);
             }
             touched(run, frame)?;
-            return image::inline(run, (cx.marks, &mut *cx.stage), operations)?.map_or_else(
+            return image::inline(run, (cx.marks.list(), &mut *cx.stage), operations)?.map_or_else(
                 || Ok(Some(String::new())),
                 |made| drawn(run, frame, made).map(Some),
             );
@@ -807,7 +835,9 @@ fn step(
         b"sh" => {
             let shape = frame.clip.map(marks::rectangle);
             // Under a singular matrix it paints nothing (8.7.4.2).
-            if run.state.matrix.inverse().is_some() && frame.reach(cx.marks, shape.as_deref()) {
+            if run.state.matrix.inverse().is_some()
+                && frame.reach(job, cx.marks, shape.as_deref())?
+            {
                 touched(run, frame)?;
                 let key = name_operand(job, given, 0)?;
                 return cut::shading(run, (cx.marks, shape.as_deref()), key).map(Some);
@@ -838,6 +868,7 @@ pub(super) fn stream(
     let mut frame = Box::new(Frame {
         clip: None,
         clipping: false,
+        clips: (false, false),
         found: Found::default(),
         inside,
         marked: Vec::new(),
@@ -927,10 +958,8 @@ fn unit() -> [Fixed; 4] {
 fn widened(state: &State, area: [Fixed; 4]) -> [Fixed; 4] {
     let style = &state.style;
     let [aa, bb, cc, dd, _, _] = state.matrix.terms;
-    let scale = aa
-        .plus(cc)
-        .max(bb.plus(dd))
-        .max(Fixed::default().minus(aa).minus(cc));
+    let size = |term: Fixed| term.max(Fixed::default().minus(term));
+    let scale = size(aa).plus(size(cc)).max(size(bb).plus(size(dd)));
     let reach = style
         .width
         .times(style.miter.max(Fixed::from_i64(2)))
@@ -959,10 +988,10 @@ fn xobject(
     let kind = data::entry(job, found.value(), b"Subtype")?;
     let shape = corners(&run.state.matrix, unit());
     let copy = if matches!(*kind.value(), Object::Name(ref name) if name == b"Image")
-        && frame.reach(cx.marks, Some(&shape))
+        && frame.reach(job, cx.marks, Some(&shape))?
     {
         touched(run, frame)?;
-        let made = image::painted(run, (cx.marks, &mut *cx.stage), &found)?;
+        let made = image::painted(run, (cx.marks.list(), &mut *cx.stage), &found)?;
         let element = structure::key(job, found.value(), b"StructParent")?;
         frame.found.elements.extend(element);
         if let Some(reached) = found.id() {

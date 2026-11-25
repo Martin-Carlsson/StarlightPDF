@@ -11,8 +11,9 @@ use crate::render::fixed::Fixed;
 use crate::render::geometry::{Matrix, Point};
 use crate::render::interpret::Run;
 use crate::render::job;
-use crate::render::redact::marks::{self, Mark};
+use crate::render::redact::marks::{self, Marks};
 use crate::render::redact::walk::{self, Context, Ink, Mode};
+use crate::render::stroke::Join;
 use crate::render::text::font::{Code, THOUSAND};
 use crate::render::text::type3::Procedures;
 use crate::render::text::{self, Block, Font};
@@ -71,15 +72,20 @@ fn boxed(
             None => advance,
         }
     };
-    // Stroked, it reaches half the line width further (9.3.6).
+    // Stroked, it reaches half the line width further, times the miter limit at a miter join
+    // (8.4.3.5, 9.3.6).
     if matches!(run.state.text.mode, 1 | 2 | 5 | 6) {
-        let half = Fixed::from_bits(run.state.style.width.bits().saturating_abs() >> 1_u32);
+        let style = &run.state.style;
+        let mut reach = Fixed::from_bits(style.width.bits().saturating_abs() >> 1_u32);
+        if matches!(style.join, Join::Miter) {
+            reach = reach.times(style.miter.max(Fixed::from_i64(1)));
+        }
         let [left, bottom, right, top] = user.extent(area);
         let grown = [
-            left.minus(half),
-            bottom.minus(half),
-            right.plus(half),
-            top.plus(half),
+            left.minus(reach),
+            bottom.minus(reach),
+            right.plus(reach),
+            top.plus(reach),
         ];
         return Ok(Some(walk::corners(&run.state.matrix, grown)));
     }
@@ -140,14 +146,14 @@ fn procedure(
 
 /// Shows `items`, strings and moves as `TJ` takes them, from `block`'s text matrix: the array
 /// that shows the same but the glyphs whose boxes meet `marks`, moving past them instead, when
-/// any do, and where all the glyphs paint (9.4.3).
+/// any do, where all the glyphs paint, and whether it still shows any (9.4.3).
 pub(super) fn show(
     run: &mut Run<'_, '_>,
     cx: &mut Context<'_>,
     block: &mut Block,
     items: &[Object],
-    marks: &[Mark],
-) -> Result<(Option<String>, Ink), PdfError> {
+    marks: Option<&Marks>,
+) -> Result<(Option<String>, Ink, bool), PdfError> {
     let job = run.job;
     let mut ink = Ink::default();
     let Some(shown) = run.state.text.font.clone() else {
@@ -158,11 +164,11 @@ pub(super) fn show(
         {
             return Err(job.unsupported());
         }
-        return Ok((None, ink));
+        return Ok((None, ink, false));
     };
     let (vertical, divisor) = (shown.is_vertical(), shown.divisor());
     let mut pieces = Vec::new();
-    let mut removed = false;
+    let (mut removed, mut remains) = (false, false);
     for item in items {
         if let Some(number) = Fixed::from_object(item) {
             job.spend(1)?;
@@ -189,13 +195,18 @@ pub(super) fn show(
             let Some(code) = shown.next(job, rest)? else {
                 job.warn("9.7.6.3", "a string ends within a code")?;
                 kept.extend_from_slice(rest);
+                remains = true;
                 break;
             };
             let shape = boxed(run, cx, block, &shown, &code)?;
             ink.add(shape.as_deref());
-            let meets = shape
-                .as_deref()
-                .map_or(!marks.is_empty(), |found| marks::meets(marks, found));
+            let meets = match marks {
+                Some(listed) => shape.as_deref().map_or_else(
+                    || Ok(!listed.list().is_empty()),
+                    |found| listed.meets(job, found),
+                )?,
+                None => false,
+            };
             let settings = &run.state.text;
             let mut spacing = settings.character;
             if code.spaced {
@@ -221,6 +232,7 @@ pub(super) fn show(
                 pieces.push(Piece::Move(back));
             } else {
                 kept.extend_from_slice(rest.get(..code.length).unwrap_or_default());
+                remains = true;
             }
             let moved = [code.advance, code.rise, divisor, spacing];
             text::advance(block, &run.state.text, vertical, moved);
@@ -231,9 +243,9 @@ pub(super) fn show(
         }
     }
     if !removed {
-        return Ok((None, ink));
+        return Ok((None, ink, remains));
     }
-    Ok((Some(written(pieces)), ink))
+    Ok((Some(written(pieces)), ink, remains))
 }
 
 /// `pieces` as a `TJ` array, moves next to each other added up.

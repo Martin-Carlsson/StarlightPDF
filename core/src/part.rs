@@ -76,6 +76,13 @@ struct Level {
     room: usize,
 }
 
+/// A document's pages in page tree order, its kids read a batch at a time (ISO 32000-2:2020,
+/// 7.7.3.2).
+pub(crate) struct Leaves {
+    /// The kids left, the root's first.
+    stack: Vec<Level>,
+}
+
 /// Named destinations, sorted by key (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
 #[derive(Debug)]
 struct Named {
@@ -237,6 +244,43 @@ impl Level {
     fn peek(&mut self, objects: Objects<'_>) -> Result<Option<ObjectId>, PdfError> {
         self.fill(objects)?;
         Ok(self.batch.front().copied())
+    }
+}
+
+impl Leaves {
+    /// The pages of the document of `objects` and `overlay`.
+    pub(crate) fn new(objects: Objects<'_>, overlay: &Overlay) -> Result<Self, PdfError> {
+        let trailer = Object::Dictionary(overlay.trailer(objects)?);
+        let catalog = overlay.entry(objects, &trailer, b"Root")?;
+        let Some(Object::Reference(top)) = catalog.get(b"Pages") else {
+            return Err(objects.malformed());
+        };
+        Ok(Self {
+            stack: vec![Level::new(objects, overlay, top)?],
+        })
+    }
+
+    /// The next page.
+    pub(crate) fn next(
+        &mut self,
+        objects: Objects<'_>,
+        overlay: &Overlay,
+    ) -> Result<Option<ObjectId>, PdfError> {
+        let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
+        while let Some(level) = self.stack.last_mut() {
+            let Some(id) = level.next(objects)? else {
+                drop(self.stack.pop());
+                continue;
+            };
+            if !kind(objects, overlay, id)?.0 {
+                return Ok(Some(id));
+            }
+            if self.stack.len() >= depth {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+            }
+            self.stack.push(Level::new(objects, overlay, id)?);
+        }
+        Ok(None)
     }
 }
 

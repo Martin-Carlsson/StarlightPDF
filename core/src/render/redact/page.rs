@@ -9,7 +9,9 @@ use core::cell::{Cell, RefCell};
 use crate::PdfError;
 use crate::objects::ObjectId;
 use crate::overlay::{Data, Object, Overlay, Reading};
+use crate::page;
 use crate::page::display;
+use crate::part::Leaves;
 use crate::progress::Progress;
 use crate::render::data::{self, Scope};
 use crate::render::fixed::Fixed;
@@ -19,10 +21,11 @@ use crate::render::interpret::state::State;
 use crate::render::interpret::{Caches, Run};
 use crate::render::job::{Job, Pace, WORK_STEP, work_limit};
 use crate::render::plane::Planes;
-use crate::render::redact::marks::{self, Mark};
+use crate::render::redact::marks::{self, Mark, Marks};
+use crate::render::redact::shared::Released;
 use crate::render::redact::stage::Stage;
+use crate::render::redact::structure;
 use crate::render::redact::walk::{self, Context, Found, Mode};
-use crate::render::redact::{shared, structure};
 use crate::render::surface::Surface;
 use crate::rendering::RenderUsage;
 use crate::store::{Bounds, Objects, Store};
@@ -43,16 +46,17 @@ struct Kept {
     widgets: Vec<(ObjectId, Object)>,
 }
 
-/// Redacts `pages`, each of which has a mark, and removes the marks; all or nothing.
+/// Redacts the pages of `pages`, of `count`, none being all, and removes their marks; all or
+/// nothing.
 ///
 /// # Errors
 ///
 /// As [`crate::document::Document::apply_redactions`].
 pub(crate) fn apply(
-    store: &Store,
+    store: &Arc<Store>,
     overlay: &Arc<Overlay>,
     progress: Option<&dyn Progress>,
-    pages: &[ObjectId],
+    (pages, count): (Option<&[u32]>, u32),
 ) -> Result<(), PdfError> {
     let unbounded = store.objects(OPERATION);
     let bounds = Bounds::default();
@@ -63,23 +67,86 @@ pub(crate) fn apply(
     let pace = Pace {
         checkpoint: Cell::new(work.saturating_sub(WORK_STEP)),
         done: Cell::new(0),
-        height: Cell::new(u64::try_from(pages.len()).unwrap_or(u64::MAX)),
+        height: Cell::new(pages.map_or_else(
+            || u64::from(count),
+            |listed| u64::try_from(listed.len()).unwrap_or(u64::MAX),
+        )),
         overlay: Reading::new(overlay),
         progress,
         work: &bounds.work,
     };
     let objects = unbounded.within(&bounds).paced(&pace);
     pace.report()?;
-    let mut stage = Stage::default();
-    for (done, id) in pages.iter().enumerate() {
+    let (mut stage, mut released) = (Stage::default(), Released::default());
+    let mut listed = pages.map(<[u32]>::iter);
+    let mut all = if listed.is_none() {
+        Some(Leaves::new(objects, overlay)?)
+    } else {
+        None
+    };
+    let mut changed = false;
+    loop {
         bounds.work.set(work);
         pace.checkpoint.set(work.saturating_sub(WORK_STEP));
-        redact(objects, (overlay, &pace), &mut stage, *id)?;
-        pace.done
-            .set(u64::try_from(done).unwrap_or(u64::MAX).saturating_add(1));
+        let next = match (listed.as_mut(), all.as_mut()) {
+            (Some(indices), _) => indices
+                .next()
+                .map(|&index| page::find(store, overlay, index).map(|found| found.object()))
+                .transpose()?,
+            (None, Some(leaves)) => leaves.next(objects, overlay)?,
+            (None, None) => None,
+        };
+        let Some(id) = next else {
+            break;
+        };
+        let job = job(objects, (overlay, &pace));
+        changed |= redact(&job, (&mut stage, &mut released), id)?;
+        pace.done.set(pace.done.get().saturating_add(1));
         pace.report()?;
     }
+    if !changed {
+        return Ok(());
+    }
+    bounds.work.set(work);
+    pace.checkpoint.set(work.saturating_sub(WORK_STEP));
+    let job = job(objects, (overlay, &pace));
+    let mut caches = Caches::default();
+    let mut surface = Surface::new(&job, Area::default(), None)?;
+    let mut run = Run {
+        active: Vec::new(),
+        caches: &mut caches,
+        depth: 0,
+        hidden: 0,
+        job: &job,
+        locked_color: false,
+        scope: Rc::new(Scope::new(data::made(&job, Object::Null, None)?)),
+        state: State::new(Matrix::identity(), Area::default()),
+        surface: &mut surface,
+    };
+    released.release(&mut run, &mut stage)?;
     stage.commit(&pace.overlay, OPERATION)
+}
+
+/// A job of `objects` and `overlay` that paints nothing, paced by `pace`.
+fn job<'job>(
+    objects: Objects<'job>,
+    (overlay, pace): (&Arc<Overlay>, &'job Pace<'job>),
+) -> Job<'job> {
+    Job {
+        area: Area::default(),
+        damaged: Cell::new(false),
+        device: Matrix::identity(),
+        known: RefCell::default(),
+        lent: RefCell::default(),
+        objects,
+        overlay: Reading::new(overlay),
+        pace,
+        page: Area::default(),
+        planes: Planes::new(true),
+        refused: Cell::new(false),
+        usage: RenderUsage::Display,
+        work: pace.work,
+    }
 }
 
 /// The annotations `listed` of a page less the marks, those whose `Rect` meets one and their
@@ -87,7 +154,7 @@ pub(crate) fn apply(
 /// 12.5.6.14).
 fn annotations(
     (job, stage): (&Job<'_>, &mut Stage),
-    marks: &[Mark],
+    marks: &Marks,
     listed: Vec<Object>,
 ) -> Result<Kept, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
@@ -100,7 +167,10 @@ fn annotations(
         let named = |name: &[u8]| matches!(kind, Object::Name(ref found) if found == name);
         let rect = rectangle(objects, overlay, &value)?;
         let meets = named(b"Redact")
-            || rect.is_some_and(|found| marks::meets(marks, &marks::rectangle(found)));
+            || rect
+                .map(|found| marks.meets(job, &marks::rectangle(found)))
+                .transpose()?
+                .unwrap_or(false);
         if meets {
             if let Object::Integer(key) = overlay.entry(objects, &value, b"StructParent")? {
                 parents.push((key, id));
@@ -270,11 +340,11 @@ fn rectangle(
 }
 
 /// Walks the content of the page `id`, `dictionary`, for what `marks` meet: what it found, the
-/// content rewritten when changed, and its streams; sets the resources a copy adds, and releases
-/// those it no longer uses.
+/// content rewritten when changed, and its streams; sets the resources a copy adds, and adds
+/// those it no longer uses to `released`.
 fn content(
     job: &Job<'_>,
-    (marks, stage): (&[Mark], &mut Stage),
+    (marks, stage, released): (&Marks, &mut Stage, &mut Released),
     (id, dictionary): (ObjectId, &mut Object),
 ) -> Result<Walked, PdfError> {
     let (objects, reading) = (job.objects, &*job.overlay);
@@ -321,7 +391,7 @@ fn content(
     };
     if !found.added.is_empty() || !found.removed.is_empty() {
         let made = walk::resources_with(job, run.scope.resources.value(), &found, &cx.measured)?;
-        shared::release(&mut run, cx.stage, (id, dictionary), &found.removed)?;
+        released.add(job, cx.stage, (id, dictionary), &found.removed)?;
         dictionary.set(b"Resources", Some(made));
     }
     Ok((found, rewritten, items))
@@ -368,30 +438,14 @@ fn filled(
     Ok(())
 }
 
-/// Redacts the page `id`, staging what changes.
+/// Redacts the page `id` where it has a mark, staging what changes; whether it had one.
 fn redact(
-    objects: Objects<'_>,
-    (overlay, pace): (&Arc<Overlay>, &Pace<'_>),
-    stage: &mut Stage,
+    job: &Job<'_>,
+    (stage, released): (&mut Stage, &mut Released),
     id: ObjectId,
-) -> Result<(), PdfError> {
-    let job = Job {
-        area: Area::default(),
-        damaged: Cell::new(false),
-        device: Matrix::identity(),
-        known: RefCell::default(),
-        lent: RefCell::default(),
-        objects,
-        overlay: Reading::new(overlay),
-        pace,
-        page: Area::default(),
-        planes: Planes::new(true),
-        refused: Cell::new(false),
-        usage: RenderUsage::Display,
-        work: pace.work,
-    };
-    let reading: &Overlay = &job.overlay;
-    let mut dictionary = stage.get(&job, id)?;
+) -> Result<bool, PdfError> {
+    let (objects, reading) = (job.objects, &*job.overlay);
+    let mut dictionary = stage.get(job, id)?;
     if !matches!(dictionary, Object::Dictionary(_)) {
         return Err(objects.malformed());
     }
@@ -407,20 +461,24 @@ fn redact(
         | Object::Stream(..)
         | Object::String(_) => Vec::new(),
     };
-    let mut marks = Vec::new();
+    let mut read: Vec<Mark> = Vec::new();
     for item in &listed {
         let value = reading.direct(objects, item.clone())?;
-        marks.extend(marks::read(objects, reading, &value)?);
+        read.extend(marks::read(objects, reading, &value)?);
     }
-    let walked = content(&job, (&marks, stage), (id, &mut dictionary))?;
-    let mut kept = annotations((&job, &mut *stage), &marks, listed)?;
+    if read.is_empty() {
+        return Ok(false);
+    }
+    let marks = Marks::new(read);
+    let walked = content(job, (&marks, stage, released), (id, &mut dictionary))?;
+    let mut kept = annotations((job, &mut *stage), &marks, listed)?;
     // A form a mark touched is one content item, as an annotation is (14.7.5.3).
     kept.parents
         .extend(walked.0.elements.iter().map(|&key| (key, None)));
-    structure::clear(&job, stage, &walked.0.struck, &kept.parents)?;
-    structure::moved(&job, stage, &walked.0.moved)?;
+    structure::clear(job, stage, &walked.0.struck, &kept.parents)?;
+    structure::moved(job, stage, &walked.0.moved)?;
     for widget in kept.widgets {
-        detach(&job, stage, widget)?;
+        detach(job, stage, widget)?;
     }
     dictionary.set(
         b"Annots",
@@ -429,10 +487,11 @@ fn redact(
     dictionary.set(b"Thumb", None);
     let (found, rewritten, items) = walked;
     filled(
-        (&job, stage),
+        (job, stage),
         &mut dictionary,
         (&found, rewritten, items),
-        &marks,
+        marks.list(),
     )?;
-    stage.set(&job, id, dictionary)
+    stage.set(job, id, dictionary)?;
+    Ok(true)
 }

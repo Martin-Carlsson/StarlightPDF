@@ -68,29 +68,38 @@ impl Stage {
         id: ObjectId,
         object: Object,
     ) -> Result<(), PdfError> {
-        let held = match object {
-            Object::Stream(_, Data::Bytes(ref bytes)) => {
-                u64::try_from(bytes.len()).unwrap_or(u64::MAX)
-            }
-            Object::Array(_)
-            | Object::Boolean(_)
-            | Object::Dictionary(_)
-            | Object::Integer(_)
-            | Object::Name(_)
-            | Object::Null
-            | Object::Real(_)
-            | Object::Reference(_)
-            | Object::Stream(..)
-            | Object::String(_) => 0,
-        };
-        self.bytes = self
+        // One staged again counts as it is now.
+        let before = self
+            .objects
+            .get(&id.number)
+            .map_or(0, |entry| held(&entry.1));
+        let bytes = self
             .bytes
-            .saturating_add(held)
-            .saturating_add(data::size(&object));
-        if self.bytes > job.objects.decoded_limit() {
+            .saturating_sub(before)
+            .saturating_add(held(&object));
+        if bytes > job.objects.decoded_limit() {
             return Err(job.limit());
         }
+        self.bytes = bytes;
         drop(self.objects.insert(id.number, (id.generation, object)));
         Ok(())
     }
+}
+
+/// About the bytes `object` holds.
+fn held(object: &Object) -> u64 {
+    let data = match *object {
+        Object::Stream(_, Data::Bytes(ref bytes)) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        Object::Array(_)
+        | Object::Boolean(_)
+        | Object::Dictionary(_)
+        | Object::Integer(_)
+        | Object::Name(_)
+        | Object::Null
+        | Object::Real(_)
+        | Object::Reference(_)
+        | Object::Stream(..)
+        | Object::String(_) => 0,
+    };
+    data.saturating_add(data::size(object))
 }

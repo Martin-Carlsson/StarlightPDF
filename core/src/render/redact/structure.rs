@@ -1,6 +1,8 @@
 //! What structure says of content a mark touches: its words for it removed
 //! (ISO 32000-2:2020, 14.6, 14.7, 14.9.3 to 14.9.5).
 
+use alloc::collections::{BTreeMap, BTreeSet};
+
 use crate::PdfError;
 use crate::objects::ObjectId;
 use crate::overlay::Object;
@@ -55,22 +57,30 @@ pub(super) fn clear(
     if struck.is_empty() && annotations.is_empty() {
         return Ok(());
     }
-    let (objects, overlay) = (job.objects, &*job.overlay);
-    let tree = parent_tree(job)?;
+    let keys = struck
+        .iter()
+        .map(|entry| entry.0)
+        .chain(annotations.iter().map(|entry| entry.0));
+    let found = numbers(job, &parent_tree(job)?, &keys.collect())?;
     let mut elements = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut add = |element: ObjectId, annotation: Option<ObjectId>| {
+        let key = (element.number, element.generation);
+        if seen.insert((key, annotation.map(|id| (id.number, id.generation)))) {
+            elements.push((element, annotation));
+        }
+    };
     for &(key, id) in struck {
-        let Object::Array(items) = overlay.direct(objects, number(job, &tree, key)?)? else {
-            continue;
-        };
-        if let Some(&Object::Reference(element)) =
-            usize::try_from(id).ok().and_then(|at| items.get(at))
+        if let Some(&(_, Object::Array(ref items))) = found.get(&key)
+            && let Some(&Object::Reference(element)) =
+                usize::try_from(id).ok().and_then(|at| items.get(at))
         {
-            elements.push((element, None));
+            add(element, None);
         }
     }
     for &(key, annotation) in annotations {
-        if let Object::Reference(element) = number(job, &tree, key)? {
-            elements.push((element, annotation));
+        if let Some(&(Object::Reference(element), _)) = found.get(&key) {
+            add(element, annotation);
         }
     }
     for (element, annotation) in elements {
@@ -130,23 +140,17 @@ pub(super) fn moved(
     if moved.is_empty() {
         return Ok(());
     }
-    let (objects, overlay) = (job.objects, &*job.overlay);
-    let tree = parent_tree(job)?;
+    let wanted = moved.iter().flat_map(|entry| entry.2.iter().copied());
+    let found = numbers(job, &parent_tree(job)?, &wanted.collect())?;
     for &(from, to, ref keys) in moved {
-        for &key in keys {
-            let found = number(job, &tree, key)?;
-            let elements: Vec<Object> = match overlay.direct(objects, found.clone())? {
-                Object::Array(items) => items,
-                Object::Boolean(_)
-                | Object::Dictionary(_)
-                | Object::Integer(_)
-                | Object::Name(_)
-                | Object::Null
-                | Object::Real(_)
-                | Object::Reference(_)
-                | Object::Stream(..)
-                | Object::String(_) => vec![found],
-            };
+        for key in keys {
+            let elements = found.get(key).map_or_else(Vec::new, |entry| {
+                if let Object::Array(ref items) = entry.1 {
+                    items.clone()
+                } else {
+                    vec![entry.0.clone()]
+                }
+            });
             for item in elements {
                 let Object::Reference(element) = item else {
                     continue;
@@ -295,26 +299,44 @@ pub(super) fn level(
     Ok(level)
 }
 
-/// The value of `key` in the number tree `tree`, as stored; null where absent (7.9.7).
-fn number(job: &Job<'_>, tree: &Object, key: i64) -> Result<Object, PdfError> {
+/// The values of `keys` in the number tree `tree`, as stored and followed, the first where one is
+/// held twice: each node read once, and none whose limits hold none of them (7.9.7).
+fn numbers(
+    job: &Job<'_>,
+    tree: &Object,
+    keys: &BTreeSet<i64>,
+) -> Result<BTreeMap<i64, (Object, Object)>, PdfError> {
     let (objects, overlay) = (job.objects, &*job.overlay);
-    let mut node = tree.clone();
-    for _ in 0..=objects.depth_limit() {
+    let mut found = BTreeMap::new();
+    if keys.is_empty() {
+        return Ok(found);
+    }
+    let mut pending = vec![(tree.clone(), 0_u32)];
+    while let Some((node, depth)) = pending.pop() {
         job.spend(NODE_WORK)?;
+        if depth > objects.depth_limit() {
+            return Err(job.limit());
+        }
         if let Object::Array(pairs) = overlay.entry(objects, &node, b"Nums")? {
             let mut items = pairs.into_iter();
-            while let (Some(found), Some(value)) = (items.next(), items.next()) {
-                if matches!(overlay.direct(objects, found)?, Object::Integer(at) if at == key) {
-                    return Ok(value);
+            while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                job.spend(1)?;
+                if let Object::Integer(at) = overlay.direct(objects, key)?
+                    && keys.contains(&at)
+                    && !found.contains_key(&at)
+                {
+                    let followed = overlay.direct(objects, value.clone())?;
+                    let _new: Option<(Object, Object)> = found.insert(at, (value, followed));
                 }
             }
-            return Ok(Object::Null);
+            continue;
         }
         let Object::Array(kids) = overlay.entry(objects, &node, b"Kids")? else {
-            return Ok(Object::Null);
+            continue;
         };
-        let mut next = None;
+        let mut taken = Vec::new();
         for kid in kids {
+            job.spend(1)?;
             let child = overlay.direct(objects, kid)?;
             let Object::Array(limits) = overlay.entry(objects, &child, b"Limits")? else {
                 continue;
@@ -324,19 +346,15 @@ fn number(job: &Job<'_>, tree: &Object, key: i64) -> Result<Object, PdfError> {
                 bounds.push(overlay.direct(objects, limit)?);
             }
             if let [Object::Integer(low), Object::Integer(high)] = *bounds.as_slice()
-                && low <= key
-                && key <= high
+                && low <= high
+                && keys.range(low..=high).next().is_some()
             {
-                next = Some(child);
-                break;
+                taken.push((child, depth.saturating_add(1)));
             }
         }
-        let Some(child) = next else {
-            return Ok(Object::Null);
-        };
-        node = child;
+        pending.extend(taken.into_iter().rev());
     }
-    Err(job.limit())
+    Ok(found)
 }
 
 /// The parent tree key `key` of `owner`, a page or a form: `StructParents` or `StructParent`
