@@ -76,6 +76,16 @@ struct Level {
     room: usize,
 }
 
+/// A document's pages in page tree order, its kids read a batch at a time (ISO 32000-2:2020,
+/// 7.7.3.2).
+pub(crate) struct Leaves {
+    /// The nodes and pages it may still reach, one per object: more come only through a node
+    /// reached twice.
+    left: u32,
+    /// The nodes descended through, the root's first, and their kids left.
+    stack: Vec<(ObjectId, Level)>,
+}
+
 /// Named destinations, sorted by key (ISO 32000-2:2020, 7.9.6, 12.3.2.4).
 #[derive(Debug)]
 struct Named {
@@ -237,6 +247,52 @@ impl Level {
     fn peek(&mut self, objects: Objects<'_>) -> Result<Option<ObjectId>, PdfError> {
         self.fill(objects)?;
         Ok(self.batch.front().copied())
+    }
+}
+
+impl Leaves {
+    /// The pages of the document of `objects` and `overlay`.
+    pub(crate) fn new(objects: Objects<'_>, overlay: &Overlay) -> Result<Self, PdfError> {
+        let trailer = Object::Dictionary(overlay.trailer(objects)?);
+        let catalog = overlay.entry(objects, &trailer, b"Root")?;
+        let Some(Object::Reference(top)) = catalog.get(b"Pages") else {
+            return Err(objects.malformed());
+        };
+        Ok(Self {
+            left: overlay.next().max(objects.size()),
+            stack: vec![(top, Level::new(objects, overlay, top)?)],
+        })
+    }
+
+    /// The next page; more nodes and pages than the document has objects, or a node within
+    /// itself, is malformed.
+    pub(crate) fn next(
+        &mut self,
+        objects: Objects<'_>,
+        overlay: &Overlay,
+    ) -> Result<Option<ObjectId>, PdfError> {
+        let depth = usize::try_from(objects.depth_limit()).unwrap_or(usize::MAX);
+        while let Some(&mut (_, ref mut level)) = self.stack.last_mut() {
+            let Some(id) = level.next(objects)? else {
+                drop(self.stack.pop());
+                continue;
+            };
+            self.left = self
+                .left
+                .checked_sub(1)
+                .ok_or_else(|| objects.malformed())?;
+            if !kind(objects, overlay, id)?.0 {
+                return Ok(Some(id));
+            }
+            if self.stack.len() >= depth {
+                return Err(PdfError::new(ErrorCode::LimitExceeded, objects.operation()));
+            }
+            if self.stack.iter().any(|entry| entry.0 == id) {
+                return Err(objects.malformed());
+            }
+            self.stack.push((id, Level::new(objects, overlay, id)?));
+        }
+        Ok(None)
     }
 }
 

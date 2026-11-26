@@ -51,6 +51,8 @@ pub(crate) struct Name {
 
 /// One stream's operations.
 pub(crate) struct Operations<'data> {
+    /// Where the last operation starts.
+    begun: u64,
     /// The bytes of the operands held.
     held: usize,
     /// The tokens.
@@ -91,6 +93,9 @@ impl Pull for Ending<'_, '_, '_> {
             self.job
                 .tolerate(self.data.pull(buf), "7.8.2", "a content stream is damaged")?;
         self.ended = read.is_none();
+        if self.ended {
+            self.job.damaged.set(true);
+        }
         Ok(read.unwrap_or(0))
     }
 }
@@ -109,6 +114,9 @@ impl Pull for Joined<'_, '_> {
                 if let Some(count @ 1..) = read {
                     return Ok(count);
                 }
+                if read.is_none() {
+                    job.damaged.set(true);
+                }
                 self.current = None;
                 if let Some(slot) = buf.first_mut() {
                     *slot = b'\n';
@@ -122,6 +130,9 @@ impl Pull for Joined<'_, '_> {
             self.next = self.next.saturating_add(1);
             job.spend(1)?;
             let opened = job.tolerate(begun(job, item), "7.8.2", damaged)?;
+            if opened.is_none() {
+                job.damaged.set(true);
+            }
             self.current = opened.flatten();
         }
     }
@@ -147,6 +158,11 @@ impl Name {
 }
 
 impl<'data> Operations<'data> {
+    /// Where the last operation starts: its first operand, or else its operator.
+    pub(crate) const fn begun(&self) -> u64 {
+        self.begun
+    }
+
     /// The bytes the operator's operands hold.
     pub(crate) const fn held(&self) -> usize {
         self.held
@@ -200,6 +216,7 @@ impl<'data> Operations<'data> {
         reader.set_keep_limit(job::OPERANDS_HELD);
         reader.set_dropping();
         Self {
+            begun: 0,
             held: 0,
             reader,
             weights: Vec::new(),
@@ -219,6 +236,8 @@ impl<'data> Operations<'data> {
         // Past the most operands, each replaces the oldest, here.
         let mut oldest = 0_usize;
         let mut warned = false;
+        self.reader.skip_space()?;
+        self.begun = self.reader.position();
         while let Some(token) = self.reader.next_token()? {
             match token {
                 Token::Keyword(

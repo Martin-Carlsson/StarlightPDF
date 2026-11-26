@@ -84,6 +84,10 @@ _Avoid_: low-level API
 The public API for pages and operations such as rotate and merge.
 _Avoid_: high-level API
 
+**Redaction mark**:
+A `Redact` annotation: an area whose content `apply_redactions` removes for good.
+_Avoid_: redaction annotation, redaction box
+
 **Resource policy**:
 The limits passed at open: cache, decoded data, nesting depth, object count, warning count, concurrency and temporary storage. Documents opened with the same policy share its budget.
 _Avoid_: configuration

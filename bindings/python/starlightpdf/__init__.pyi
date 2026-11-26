@@ -3,6 +3,9 @@ from collections.abc import Callable
 from typing import Never, Self, final
 
 __all__ = [
+    "Annotation",
+    "AnnotationInfo",
+    "Annotations",
     "Deviation",
     "Deviations",
     "Document",
@@ -78,7 +81,49 @@ class Rect:
     def height(self) -> float: ...
 
 @final
+class AnnotationInfo:
+    @property
+    def color(self) -> str: ...
+    @property
+    def height(self) -> float: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def quads(self) -> list[float]: ...
+    @property
+    def width(self) -> float: ...
+    @property
+    def x(self) -> float: ...
+    @property
+    def y(self) -> float: ...
+
+@final
+class Annotation:
+    def delete(self) -> None: ...
+    @property
+    def info(self) -> AnnotationInfo: ...
+
+@final
+class Annotations:
+    def __iter__(self) -> Self: ...
+    def __next__(self) -> Annotation: ...
+
+@final
 class Page:
+    def add_annotation(
+        self,
+        data: Source | None,
+        *,
+        kind: str = "Note",
+        x: float = 0.0,
+        y: float = 0.0,
+        width: float = 0.0,
+        height: float = 0.0,
+        quads: list[float] = ...,
+        color: str = "",
+    ) -> Annotation: ...
+    @property
+    def annotations(self) -> Annotations: ...
     def boundary(self, *, kind: str = "Crop") -> Rect: ...
     def draw_image(
         self,
@@ -216,6 +261,12 @@ class Document:
         index: int | None = None,
     ) -> Page: ...
     def page(self, *, index: int) -> Page: ...
+    def apply_redactions(
+        self,
+        progress: Callable[[int, int], bool] | None = None,
+        *,
+        pages: list[int] | None = None,
+    ) -> None: ...
     def save(
         self,
         sink: Sink,

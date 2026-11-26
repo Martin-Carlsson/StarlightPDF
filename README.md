@@ -110,7 +110,7 @@ Design decisions are recorded in [`.architecture-decisions/`](.architecture-deci
 - 💤 **Add:** text, images and shapes on existing pages
 - 💤 **Stamps:** watermarks, headers, footers, page numbers, Bates numbering
 - 💤 **Change:** find and replace text, replace or remove images, edit vector objects
-- 💤 **Redaction:** permanently remove content, not just cover it
+- 👨‍💻 **Redaction:** permanently remove content, not just cover it
 - 💤 **Flatten:** merge annotations, form fields, layers or transparency into the page
 - 💤 **Metadata:** write or strip document info and XMP
 

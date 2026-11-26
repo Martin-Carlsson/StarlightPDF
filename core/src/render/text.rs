@@ -1,8 +1,8 @@
 //! Text: state, positioning, modes and clipping (ISO 32000-2:2020, 9).
 
 mod cmap;
-mod font;
-mod type3;
+pub(crate) mod font;
+pub(crate) mod type3;
 
 pub(crate) use font::Font;
 
@@ -73,9 +73,9 @@ type Place = (Option<(u32, u16)>, u64);
 #[derive(Default)]
 pub(crate) struct Fonts {
     /// The glyph procedures being run: depth and stream.
-    glyphs: Vec<(u8, ObjectId)>,
+    pub glyphs: Vec<(u8, ObjectId)>,
     /// The fonts, their programs and their outlines.
-    loaded: font::Cache,
+    pub loaded: font::Cache,
 }
 
 /// What a rendering mode has a glyph do (9.3.6).
@@ -113,6 +113,11 @@ pub(crate) struct Settings {
 }
 
 impl Block {
+    /// The text matrix.
+    pub(crate) const fn matrix(&self) -> Matrix {
+        self.matrix
+    }
+
     /// Moves to the start of a line `across` and `down` from this one's (9.4.2).
     fn next_line(&mut self, across: Fixed, down: Fixed) {
         self.place(translated(across, down).then(&self.line));
@@ -166,7 +171,7 @@ impl Marking {
 }
 
 /// Moves past `width` and up `rise`, in `divisor`s of the size, and `spacing` (9.4.4).
-fn advance(text: &mut Block, settings: &Settings, vertical: bool, moved: [Fixed; 4]) {
+pub(crate) fn advance(text: &mut Block, settings: &Settings, vertical: bool, moved: [Fixed; 4]) {
     let [width, rise, divisor, spacing] = moved;
     let scaled = |value: Fixed| value.times(settings.size).over(divisor).unwrap_or_default();
     let span = scaled(width).plus(spacing);
@@ -451,7 +456,7 @@ fn return_line(run: &Run<'_, '_>, text: &mut Block) {
 
 /// The map to the space of the text matrix of a glyph whose position vector is `origin`
 /// (9.4.4, 9.7.4.3).
-fn scaled(settings: &Settings, origin: [Fixed; 2]) -> Matrix {
+pub(crate) fn scaled(settings: &Settings, origin: [Fixed; 2]) -> Matrix {
     let none = Fixed::default();
     let across = settings.size.times(settings.scale);
     let [right, up] = origin;

@@ -3,7 +3,6 @@
 use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 
-use crate::PdfError;
 use crate::font_program::encoding::{self, Base};
 use crate::font_program::{Fault, Outline, Program, Table};
 use crate::objects::ObjectId;
@@ -18,6 +17,7 @@ use crate::render::lent::{Clear, Yielding};
 use crate::render::path::Path;
 use crate::render::text::cmap::{Cmap, RANGE, Ranges};
 use crate::render::text::type3::Procedures;
+use crate::{ErrorCode, PdfError};
 
 /// The most items of `Differences` that mean something: each code once, with a number before it.
 const DIFFERENCES: usize = 512;
@@ -44,11 +44,11 @@ const OUTLINES: u64 = 0x8_0000;
 const TABLE_SIZE: u64 = 0x1100;
 
 /// The thousand of glyph space (9.2.4).
-pub(super) const THOUSAND: Fixed = Fixed::from_i64(1000);
+pub(crate) const THOUSAND: Fixed = Fixed::from_i64(1000);
 
 /// What a render keeps of fonts.
 #[derive(Default)]
-pub(super) struct Cache {
+pub(crate) struct Cache {
     /// Outlines by program and glyph.
     outlines: BTreeMap<(u32, u32), Rc<Traced>>,
     /// Their bytes.
@@ -61,7 +61,7 @@ pub(super) struct Cache {
 
 /// A code and what the font says of it.
 #[derive(Clone, Copy)]
-pub(super) struct Code {
+pub(crate) struct Code {
     /// The advance, in the font's units.
     pub advance: Fixed,
     /// Its bytes.
@@ -133,6 +133,8 @@ struct Tables {
     blanks: Vec<bool>,
     /// Its part as a Type 0 font.
     composite: Option<Composite>,
+    /// `FontDescriptor` as given, read only for `Font::extent` (9.8).
+    descriptor: Option<Object>,
     /// A program is embedded.
     embedded: bool,
     /// That program's stream.
@@ -151,7 +153,7 @@ struct Tables {
 
 /// An outline, in font units.
 #[derive(Default)]
-pub(super) struct Traced {
+pub(crate) struct Traced {
     /// Left, bottom, right and top of its points.
     bounds: Option<[i32; 4]>,
     /// The points.
@@ -455,12 +457,28 @@ impl Encoding {
 
 impl Font {
     /// The unit of advances, in text space: thousandths, or one for Type 3.
-    pub(super) fn divisor(&self) -> Fixed {
+    pub(crate) fn divisor(&self) -> Fixed {
         if self.tables.procedures.is_some() {
             Fixed::from_i64(1)
         } else {
             THOUSAND
         }
+    }
+
+    /// Descent and ascent, in text space units of size 1: the descriptor's, else its `FontBBox`'s
+    /// bottom and top, in thousandths; drawing does not read them (9.8.1).
+    pub(crate) fn extent(&self, job: &Job<'_>) -> Result<[Fixed; 2], PdfError> {
+        let given = self.tables.descriptor.as_ref().unwrap_or(&Object::Null);
+        let descriptor = data::resolve(job, given)?;
+        let number = |key: &[u8]| -> Result<Option<Fixed>, PdfError> {
+            let found = data::entry(job, descriptor.value(), key)?;
+            Ok(Fixed::from_object(found.value()).and_then(|value| value.over(THOUSAND)))
+        };
+        if let (Some(descent), Some(ascent)) = (number(b"Descent")?, number(b"Ascent")?) {
+            return Ok([descent, ascent]);
+        }
+        let [_, bottom, _, top] = bounds(job, descriptor.value())?.unwrap_or_default();
+        Ok([bottom, top].map(|value| value.over(THOUSAND).unwrap_or_default()))
     }
 
     /// Whether the glyph of `code` marks nothing by its name.
@@ -470,7 +488,7 @@ impl Font {
     }
 
     /// Whether it needs no program or has one embedded.
-    pub(super) fn is_embedded(&self) -> bool {
+    pub(crate) fn is_embedded(&self) -> bool {
         self.tables.embedded || self.tables.procedures.is_some()
     }
 
@@ -480,20 +498,20 @@ impl Font {
     }
 
     /// Whether its codes can be read.
-    pub(super) fn is_readable(&self) -> bool {
+    pub(crate) fn is_readable(&self) -> bool {
         let composite = self.tables.composite.as_ref();
         composite.is_none_or(|found| found.cmap.is_some())
     }
 
     /// Whether it writes downwards.
-    pub(super) fn is_vertical(&self) -> bool {
+    pub(crate) fn is_vertical(&self) -> bool {
         let composite = self.tables.composite.as_ref();
         let cmap = composite.and_then(|found| found.cmap.as_ref());
         cmap.is_some_and(Cmap::is_vertical)
     }
 
     /// What the code that starts `bytes` is; `None` when it is cut short.
-    pub(super) fn next(&self, job: &Job<'_>, bytes: &[u8]) -> Result<Option<Code>, PdfError> {
+    pub(crate) fn next(&self, job: &Job<'_>, bytes: &[u8]) -> Result<Option<Code>, PdfError> {
         if let Some(composite) = self.tables.composite.as_ref() {
             return composite.code(job, bytes);
         }
@@ -518,7 +536,7 @@ impl Font {
     }
 
     /// The outline of the glyph `code` selects and its map to text space; none marks nothing.
-    pub(super) fn outline(
+    pub(crate) fn outline(
         &self,
         job: &Job<'_>,
         cache: &mut Cache,
@@ -552,7 +570,7 @@ impl Font {
     }
 
     /// Its procedures, as a Type 3 font.
-    pub(super) fn procedures(&self) -> Option<&Procedures> {
+    pub(crate) fn procedures(&self) -> Option<&Procedures> {
         self.tables.procedures.as_ref()
     }
 }
@@ -617,6 +635,7 @@ impl Tables {
         TABLE_SIZE
             .saturating_add(composite)
             .saturating_add(procedures)
+            .saturating_add(self.descriptor.as_ref().map_or(0, data::size))
     }
 }
 
@@ -633,6 +652,11 @@ impl Traced {
         let verbs = self.verbs.capacity().saturating_mul(size_of::<Verb>());
         let total = points.saturating_add(verbs).saturating_add(128);
         u64::try_from(total).unwrap_or(u64::MAX)
+    }
+
+    /// Left, bottom, right and top of its points, in font units.
+    pub(crate) fn corners(&self) -> Option<[Fixed; 4]> {
+        self.bounds.map(|corners| corners.map(unit))
     }
 
     /// Draws it into `path` under `matrix`.
@@ -692,6 +716,15 @@ impl Outline for Traced {
     fn start(&mut self, at: [i32; 2]) {
         self.verbs.push(Verb::Move);
         self.reach(at);
+    }
+}
+
+/// The `FontBBox` of `owner`; none where absent or malformed, which drawing does not need, so
+/// it is not warned of (9.6.4, 9.8.1).
+pub(super) fn bounds(job: &Job<'_>, owner: &Object) -> Result<Option<[Fixed; 4]>, PdfError> {
+    match data::numbers(job, owner, b"FontBBox") {
+        Err(error) if error.code() == ErrorCode::Malformed => Ok(None),
+        found => found,
     }
 }
 
@@ -830,6 +863,7 @@ fn made(
         None
     };
     let described = composed.as_ref().map_or(owner, |cid_font| cid_font.value());
+    tables.descriptor = described.get(b"FontDescriptor");
     let listed = file(job, described)?;
     tables.embedded = listed.is_some();
     let program = if let Some(found) = listed.as_ref() {

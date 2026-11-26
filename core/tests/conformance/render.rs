@@ -47,7 +47,7 @@ const USAGES: [(RenderUsage, &str); 2] = [
 ];
 
 /// A pixel a case names.
-struct Expected<'case> {
+pub(crate) struct Expected<'case> {
     /// The colour, a byte a channel.
     colour: Vec<u8>,
     /// Pixels from the left.
@@ -199,12 +199,12 @@ pub(crate) fn call(
 }
 
 /// Whether `expected` is an error code's name rather than pixels.
-fn is_code(expected: &str) -> bool {
+pub(crate) fn is_code(expected: &str) -> bool {
     !expected.is_empty() && expected.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
 /// `pixel`'s token where `image` has its colour, else the colour it has.
-fn matched(image: &Image, pixel: &Expected<'_>) -> String {
+pub(crate) fn matched(image: &Image, pixel: &Expected<'_>) -> String {
     let place = format!("{},{}", pixel.column, pixel.row);
     let Some(found) = image.pixel(pixel.column, pixel.row) else {
         return format!("{place}=none");
@@ -222,7 +222,7 @@ fn matched(image: &Image, pixel: &Expected<'_>) -> String {
 }
 
 /// The pixels of `WxH x,y=colour[~T]...`; `None` unless it is of that form with at least one.
-fn pixels(expected: &str) -> Option<Vec<Expected<'_>>> {
+pub(crate) fn pixels(expected: &str) -> Option<Vec<Expected<'_>>> {
     let (size, tokens) = expected.split_once(' ')?;
     let (width, height) = size.split_once('x')?;
     let _: (u32, u32) = (width.parse().ok()?, height.parse().ok()?);

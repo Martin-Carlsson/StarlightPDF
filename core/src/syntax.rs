@@ -903,7 +903,7 @@ where
     }
 
     /// Skips white-space and comments (ISO 32000-2:2020, 7.2.3 and 7.2.4).
-    fn skip_space(&mut self) -> Result<(), PdfError> {
+    pub(crate) fn skip_space(&mut self) -> Result<(), PdfError> {
         let mut comment = false;
         loop {
             let rest = self.ahead()?;

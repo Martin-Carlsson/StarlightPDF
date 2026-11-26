@@ -293,7 +293,7 @@ pub(crate) fn operator(
 }
 
 /// Sets the parameter `key` of the dictionary `source` to `listed` (8.4.5).
-fn parameter(
+pub(crate) fn parameter(
     run: &mut Run<'_, '_>,
     source: Option<ObjectId>,
     key: &[u8],

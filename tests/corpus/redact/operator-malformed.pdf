@@ -1,0 +1,32 @@
+%PDF-2.0
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R] >>
+endobj
+4 0 obj
+<< /Length 60 >>
+stream
+0 0 1 rg 10 10 20 20 re f BT 50 60 Td (OPERATORSECRET) TJ ET
+endstream
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Redact /Rect [40 40 100 100] >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000235 00000 n 
+0000000345 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+418
+%%EOF

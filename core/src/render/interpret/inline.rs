@@ -23,6 +23,11 @@ const PLAUSIBLE: usize = 64;
 /// The bytes looked ahead.
 const WINDOW: usize = 256;
 
+/// What reading an inline image gives its dictionary, its data as stored and whether its colour
+/// space is known.
+type Take<'take> =
+    dyn FnMut(&mut Run<'_, '_>, &Object, &mut dyn Pull, bool) -> Result<(), PdfError> + 'take;
+
 /// An inline image's data as stored, pulled from the content.
 struct Data<'reader, 'data> {
     /// Where it ends.
@@ -149,6 +154,56 @@ pub(crate) fn draw(
     run: &mut Run<'_, '_>,
     operations: &mut content::Operations<'_>,
 ) -> Result<(), PdfError> {
+    read(run, operations, &mut |drawn, dictionary, data, known| {
+        if known && drawn.hidden == 0 {
+            image::draw_inline(drawn, dictionary, data)
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// Passes over the image after `BI`, drawing nothing, and leaves the content after its `EI`.
+pub(crate) fn pass(
+    run: &mut Run<'_, '_>,
+    operations: &mut content::Operations<'_>,
+) -> Result<(), PdfError> {
+    read(run, operations, &mut |_run, _dictionary, _data, _known| {
+        Ok(())
+    })
+}
+
+/// Takes the image after `BI`: its dictionary, without a colour space that cannot be read, and
+/// its data as stored; leaves the content after its `EI`.
+pub(crate) fn taken(
+    run: &mut Run<'_, '_>,
+    operations: &mut content::Operations<'_>,
+) -> Result<(Object, Vec<u8>), PdfError> {
+    let mut found = None;
+    read(run, operations, &mut |reading, dictionary, data, _known| {
+        let job = reading.job;
+        let (mut held, mut buffer) = (Vec::new(), [0; WINDOW]);
+        loop {
+            let count = data.pull(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            job.reserve(u64::try_from(held.len().saturating_add(count)).unwrap_or(u64::MAX))?;
+            held.extend_from_slice(buffer.get(..count).unwrap_or_default());
+        }
+        found = Some((dictionary.clone(), held));
+        Ok(())
+    })?;
+    found.ok_or_else(|| run.job.objects.malformed())
+}
+
+/// Reads the image after `BI`, giving `with` its dictionary, its data as stored and whether its
+/// colour space is known, and leaves the content after its `EI`.
+fn read(
+    run: &mut Run<'_, '_>,
+    operations: &mut content::Operations<'_>,
+    with: &mut Take<'_>,
+) -> Result<(), PdfError> {
     let job = run.job;
     // Setting up an image allocates as no operator does.
     job.spend(INLINE_WORK)?;
@@ -206,11 +261,7 @@ pub(crate) fn draw(
         reader,
         spend: &spend,
     };
-    let drawn = if known && run.hidden == 0 {
-        image::draw_inline(run, &dictionary, &mut data)
-    } else {
-        Ok(())
-    };
+    let drawn = with(run, &dictionary, &mut data, known);
     // Whatever became of the image, content starts after it.
     if let Err(error) = drawn.as_ref()
         && error.code() != ErrorCode::Malformed

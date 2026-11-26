@@ -268,7 +268,7 @@ impl Layout {
     }
 
     /// The texels that `bytes` of a row hold whole.
-    fn present(&self, bytes: usize) -> u32 {
+    pub(super) fn present(&self, bytes: usize) -> u32 {
         if bytes >= self.stride {
             return self.columns;
         }
@@ -480,7 +480,7 @@ fn between(range: [Fixed; 2], sample: u16, most: u16) -> Fixed {
 }
 
 /// YCC samples of 8 bits as RGB (ITU-T T.871).
-fn full_colour(raw: &mut [u16]) {
+pub(super) fn full_colour(raw: &mut [u16]) {
     let Some(pixel) = raw.first_chunk_mut::<3>() else {
         return;
     };

@@ -17,6 +17,7 @@ mod math;
 mod output;
 mod path;
 mod plane;
+pub(crate) mod redact;
 mod shading;
 mod stroke;
 mod surface;
@@ -334,6 +335,7 @@ pub(crate) fn page(
     };
     let mut job = Job {
         area: image,
+        damaged: Cell::new(false),
         device: sized.device,
         known: RefCell::default(),
         lent: RefCell::default(),

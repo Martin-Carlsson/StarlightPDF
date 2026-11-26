@@ -1,5 +1,5 @@
 // Runs the conformance suite (tests/conformance/*.tsv) through the package, in Node.js or a browser.
-import { decode, pixel } from "./decode.mjs";
+import { decode, inflate, pixel } from "./decode.mjs";
 
 /**
  * @import { Api, Boundary, Document, DrawImageOptions, InfoDictionary, ObjectId, Page, RenderOptions, ResourcePolicy, SaveOptions, SaveReport, Sink, Source, SplitOptions } from "./api.mts"
@@ -475,7 +475,7 @@ async function perform(api, environment, file, name, args) {
     given = parse(options, new Set([...OPEN, ...family.takes, "saved", "part", ...SAVE, ...SPLIT]), family.needs);
     combine(given);
   }
-  const made = file ? await environment.file(path) : await api.Source.fromBytes(await environment.bytes(path));
+  const made = await sourceOf(api, environment, file, path);
   if (typeof made === "string") {
     return made;
   }
@@ -571,7 +571,7 @@ async function rendered(api, environment, file, args, expected) {
     ...(given.has("resolution") ? { resolution: integer(given.get("resolution")) } : {}),
     ...(given.has("usage") ? { usage: given.get("usage") ?? "" } : {}),
   };
-  const made = file ? await environment.file(path) : await api.Source.fromBytes(await environment.bytes(path));
+  const made = await sourceOf(api, environment, file, path);
   if (typeof made === "string") {
     return made;
   }
@@ -961,6 +961,718 @@ async function drawn(api, environment, args) {
   return imageRead(api, await reopen(api, await twice(api, document, new Map()), given), index, read);
 }
 
+/** The keys `annotate` takes besides those of open. */
+const ANNOTATE = ["color", "delete", "height", "index", "kind", "quads", "saved", "width", "x", "y"];
+/** The keys `redact` takes besides those of open. */
+const REDACT = ["bytes", "cancel", "do", "except", "index", "marks", "mode", "pages", "read"];
+/** Each `read=` of `redact`, and whether it takes `index=`. */
+const REDACT_READS = new Map([
+  ["annotations", true],
+  ["image_raw", false],
+  ["image_samples", false],
+  ["mask_samples", false],
+  ["ok", false],
+  ["painted", true],
+  ["pixels", true],
+  ["points", true],
+  ["render", true],
+  ["text", false],
+  ["thumb", true],
+]);
+/** The reads of the `do=`-th image. */
+const IMAGE_SAMPLES = new Set(["image_raw", "image_samples", "mask_samples"]);
+/** Deepest nesting of forms whose points are counted. */
+const DEPTH = 16;
+/** The numbers each path operator takes (ISO 32000-2:2020, 8.5.2.1). */
+const COORDINATES = new Map([
+  ["c", 6],
+  ["l", 2],
+  ["m", 2],
+  ["v", 4],
+  ["y", 4],
+]);
+/** An inline image's data, from ID to EI (ISO 32000-2:2020, 8.9.7). */
+const INLINE = /(?:(?<=[\0\t\n\f\r ])|^)ID[\0\t\n\f\r ][^]*?(?<=[\0\t\n\f\r ])EI(?=[\0\t\n\f\r ]|$)/gu;
+/** A number (ISO 32000-2:2020, 7.3.3). */
+const NUMBER = /^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)$/u;
+/** Whole bytes in hexadecimal. */
+const HEX = /^(?:[0-9A-Fa-f]{2})+$/u;
+/** A whole string token: literal, or hexadecimal (ISO 32000-2:2020, 7.3.4). */
+const STRING = /^(?:\([^]*\)|<[0-9A-Fa-f\0\t\n\f\r ]*>)$/u;
+
+/**
+ * @typedef {{ high: number, left: number, low: number, right: number }} Area An axis-aligned area between two x and two y.
+ * @typedef {{ api: Api, document: Document, marks: Area[] }} Scene A document and its marks in default user space.
+ * @typedef {{ before: import("./decode.mjs").Image | undefined, document: Document, marks: Area[], saved: Uint8Array }} Applied
+ */
+
+/** Whether `x`, `y` is inside `area`, not on its edge. @type {(area: Area, x: number, y: number) => boolean} */
+function holds(area, x, y) {
+  return area.left < x && x < area.right && area.low < y && y < area.high;
+}
+
+/** Whether the unit square from `column`, `row` overlaps `area`. @type {(area: Area, column: number, row: number) => boolean} */
+function overlaps(area, column, row) {
+  return column + 1 > area.left && column < area.right && row + 1 > area.low && row < area.high;
+}
+
+/** The numbers of `x,y,w,h`. @type {(text: string) => number[]} */
+function places(text) {
+  const values = text.split(",").map(real);
+  if (values.length !== 4) {
+    throw new Error(`bad area '${text}'`);
+  }
+  return values;
+}
+
+/** The area `x,y,w,h`. @type {(place: number[]) => Area} */
+function area(place) {
+  const [x = 0, y = 0, width = 0, height = 0] = place;
+  return { high: y + height, left: x, low: y, right: x + width };
+}
+
+/** The page, area and colour, `#rrggbb` or empty, of `page@x,y,w,h[@rrggbb]`. @type {(text: string) => { colour: string, page: number, place: number[] }} */
+function mark(text) {
+  const [page = "", place = "", ...colour] = text.split("@");
+  if (colour.length > 1 || (colour[0] !== undefined && !/^[0-9a-f]{6}$/u.test(colour[0]))) {
+    throw new Error(`bad mark '${text}'`);
+  }
+  return { colour: colour[0] === undefined ? "" : `#${colour[0]}`, page: integer(page), place: places(place) };
+}
+
+/** `values` rounded and comma-separated. @type {(values: readonly number[]) => string} */
+function joined(values) {
+  return values.map(rounded).join(",");
+}
+
+/** Page `index`'s annotations as a case gives them, and its marks' areas (ISO 32000-2:2020, 12.5.6.23). @type {(document: Document, index: number) => Promise<[string, Area[]]>} */
+async function listing(document, index) {
+  const items = [];
+  /** @type {Area[]} */
+  const marks = [];
+  for await (const annotation of await (await document.page({ index })).annotations()) {
+    const info = await annotation.info();
+    const place = [info.x, info.y, info.width, info.height];
+    const quads = [...info.quads];
+    let item = `${info.kind} ${joined(place)}`;
+    if (quads.length > 0) {
+      item += ` q=${joined(quads)}`;
+    }
+    if (info.color !== "") {
+      item += ` c=${info.color.replace(/^#/u, "")}`;
+    }
+    items.push(item);
+    if (info.kind !== "Redact") {
+      continue;
+    }
+    if (quads.length === 0) {
+      marks.push(area(place));
+    }
+    for (let start = 0; start < quads.length; start += 8) {
+      const quad = quads.slice(start, start + 8);
+      const xs = quad.filter((_value, at) => at % 2 === 0);
+      const ys = quad.filter((_value, at) => at % 2 === 1);
+      marks.push({ high: Math.max(...ys), left: Math.min(...xs), low: Math.min(...ys), right: Math.max(...xs) });
+    }
+  }
+  return [items.join(";") || "none", marks];
+}
+
+/** Every page's annotations and marks. @type {(document: Document) => Promise<[string, Area[][]]>} */
+async function survey(document) {
+  const shown = [];
+  const marks = [];
+  for (let index = 0; index < (await document.pageCount()); index += 1) {
+    const [listed, areas] = await listing(document, index);
+    shown.push(listed);
+    marks.push(areas);
+  }
+  return [shown.join("|"), marks];
+}
+
+/** The source of the file at `path`, or the outcome when there is none. @type {(api: Api, environment: Environment, file: boolean, path: string) => Promise<Source | string>} */
+async function sourceOf(api, environment, file, path) {
+  return file ? environment.file(path) : api.Source.fromBytes(await environment.bytes(path));
+}
+
+/** Adds and deletes as `args` say, saving if `saved`; page `index=`'s annotations. @type {(api: Api, environment: Environment, file: boolean, args: string[]) => Promise<string>} */
+async function annotate(api, environment, file, args) {
+  const [path, ...options] = args;
+  if (path === undefined) {
+    throw new Error("takes a path");
+  }
+  const given = parse(options, new Set([...OPEN, ...ANNOTATE]), ["index"]);
+  const adding = ["x", "y", "width", "height", "quads", "color"].some((key) => given.has(key));
+  if ((adding && !given.has("kind")) || (given.get("kind") ?? "Redact") !== "Redact") {
+    throw new Error("a mark needs kind=Redact");
+  }
+  const made = await sourceOf(api, environment, file, path);
+  if (typeof made === "string") {
+    return made;
+  }
+  let document = await open(api, made, given);
+  const index = integer(given.get("index"));
+  const shown = await document.page({ index });
+  if (given.has("kind")) {
+    /** @type {(key: string) => number} */
+    const value = (key) => (given.has(key) ? real(given.get(key)) : 0);
+    const quads = given.get("quads");
+    await shown.addAnnotation(null, {
+      color: given.get("color") ?? "",
+      height: value("height"),
+      kind: "Redact",
+      quads: quads === undefined ? [] : quads.split(",").map(real),
+      width: value("width"),
+      x: value("x"),
+      y: value("y"),
+    });
+  }
+  if (given.has("delete")) {
+    const listed = [];
+    for await (const annotation of await shown.annotations()) {
+      listed.push(annotation);
+    }
+    for (const nth of (given.get("delete") ?? "").split(",").map(integer)) {
+      const annotation = listed[nth];
+      if (annotation === undefined) {
+        throw new Error(`no annotation ${nth}`);
+      }
+      await annotation.delete();
+    }
+  }
+  if (given.has("saved")) {
+    document = await reopen(api, await twice(api, document, new Map()), given);
+  }
+  return (await listing(document, index))[0];
+}
+
+/** `raw` decoded through the filters `names`: none or FlateDecode (RFC 1950). @type {(names: string, raw: Uint8Array) => Uint8Array} */
+function unfiltered(names, raw) {
+  if (names === "none") {
+    return raw;
+  }
+  if (names === "FlateDecode") {
+    return inflate([raw]);
+  }
+  throw new Error(`a stream filtered by ${names}`);
+}
+
+/** The data of the stream `id`, inflated by the runner. @type {(api: Api, document: Document, id: ObjectId) => Promise<Uint8Array>} */
+async function decoded(api, document, id) {
+  const dictionary = await objectAt(document, id);
+  if (entry(dictionary, "DecodeParms") !== undefined) {
+    throw new Error("a stream with DecodeParms");
+  }
+  return unfiltered(filters(entry(dictionary, "Filter")), await streamBytes(api, document, id, false));
+}
+
+/** The index of `needle` in `haystack` from `from` on, or -1. @type {(haystack: Uint8Array, needle: Uint8Array, from: number) => number} */
+function find(haystack, needle, from) {
+  for (let at = from; at + needle.length <= haystack.length; at += 1) {
+    if (needle.every((byte, offset) => haystack[at + offset] === byte)) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+/** The bytes of `text`, a character each. @type {(text: string) => Uint8Array} */
+function latin1(text) {
+  return Uint8Array.from(text, (character) => character.charCodeAt(0) & 0xff);
+}
+
+/** The data of each stream of the file `saved`, decoded by the runner (ISO 32000-2:2020, 7.3.8). @type {(saved: Uint8Array) => Uint8Array[]} */
+function streams(saved) {
+  const decoder = new TextDecoder("latin1");
+  const found = [];
+  let from = 0;
+  for (let at = find(saved, latin1("stream"), from); at >= 0; at = find(saved, latin1("stream"), from)) {
+    const after = at + "stream".length;
+    from = after;
+    const head = decoder.decode(saved.subarray(0, at)).replace(/[\t\n\f\r ]+$/u, "");
+    if (!head.endsWith(">>")) {
+      continue;
+    }
+    const eol = saved[after] === 13 && saved[after + 1] === 10 ? 2 : saved[after] === 10 ? 1 : 0;
+    if (eol === 0) {
+      continue;
+    }
+    const end = find(saved, latin1("endstream"), after + eol);
+    if (end < 0) {
+      throw new Error("a stream without endstream");
+    }
+    from = end + "endstream".length;
+    let data = saved.subarray(after + eol, end);
+    const opened = head.lastIndexOf("obj");
+    const dictionary = parseObject(tokens(head.slice(opened < 0 ? 0 : opened + "obj".length)), 0)[0];
+    // A direct Length ends the data, which may itself end in an end-of-line byte (7.3.8.1).
+    const length = entry(dictionary, "Length");
+    if (length !== undefined && "other" in length && /^\d+$/u.test(length.other)) {
+      data = data.subarray(0, Number(length.other));
+    } else {
+      const tail = data.length >= 2 && data[data.length - 2] === 13 && data[data.length - 1] === 10 ? 2 : 0;
+      data = data.subarray(
+        0,
+        data.length - (tail || (data[data.length - 1] === 10 || data[data.length - 1] === 13 ? 1 : 0)),
+      );
+    }
+    found.push(unfiltered(filters(entry(dictionary, "Filter")), data));
+  }
+  return found;
+}
+
+/** `present` when `needle` or its hex is in `saved`, a stream of it decoded or what it shows, else `absent`. @type {(saved: Uint8Array, needle: Uint8Array) => string} */
+function foundText(saved, needle) {
+  const lower = hex(needle);
+  const forms = [needle, latin1(lower), latin1(lower.toUpperCase())];
+  const placesFound = [saved, ...streams(saved).flatMap((stream) => [shownText(stream), stream])];
+  return placesFound.some((place) => forms.some((form) => find(place, form, 0) >= 0)) ? "present" : "absent";
+}
+
+/** The tokens of `content`, inline images' data left out (ISO 32000-2:2020, 8.9.7). @type {(content: Uint8Array) => string[]} */
+function contentTokens(content) {
+  return tokens(new TextDecoder("latin1").decode(content).replace(INLINE, "ID EI"));
+}
+
+/** The strings the operands of Tj, TJ, ' and " in `content` hold, joined in order (ISO 32000-2:2020, 9.4.3). @type {(content: Uint8Array) => Uint8Array} */
+function shownText(content) {
+  const joined = [];
+  /** @type {string[]} */
+  const strings = [];
+  for (const word of contentTokens(content)) {
+    if (isOperator(word)) {
+      if (["Tj", "TJ", "'", '"'].includes(word)) {
+        joined.push(...strings.flatMap((found) => [...stringBytes(found)]));
+      }
+      strings.length = 0;
+    } else if (STRING.test(word)) {
+      strings.push(word);
+    }
+  }
+  return Uint8Array.from(joined);
+}
+
+/** The number `token` (ISO 32000-2:2020, 7.3.3). @type {(token: string) => number} */
+function pdfNumber(token) {
+  if (!NUMBER.test(token)) {
+    throw new Error(`not a number: ${token}`);
+  }
+  return Number(token);
+}
+
+/** Whether `word` is an operator (ISO 32000-2:2020, 7.8.2). @type {(word: string) => boolean} */
+function isOperator(word) {
+  return /^[A-Za-z'"]/u.test(word);
+}
+
+/** The page object of kid `index` of the root page tree node. @type {(document: Document, index: number) => Promise<Obj>} */
+async function kid(document, index) {
+  const root = await objectAt(document, await document.catalog());
+  const kids = await resolve(document, entry(await resolve(document, entry(root, "Pages")), "Kids"));
+  return resolve(document, "array" in kids ? kids.array[index] : undefined);
+}
+
+/** The contents `value` names, decoded, each followed by a newline. @type {(api: Api, document: Document, value: Obj | undefined) => Promise<Uint8Array>} */
+async function contents(api, document, value) {
+  const items = value !== undefined && "array" in value ? value.array : [value];
+  /** @type {number[]} */
+  const parts = [];
+  for (const item of items) {
+    if (item !== undefined && "ref" in item) {
+      // Byte by byte: spread, a long stream overflows a worker's stack.
+      for (const byte of await decoded(api, document, item.ref)) {
+        parts.push(byte);
+      }
+      parts.push(10);
+    }
+  }
+  return Uint8Array.from(parts);
+}
+
+/** The value `key` names in `category` of `resources`, if any. @type {(document: Document, resources: Obj | undefined, category: string, key: string) => Promise<Obj | undefined>} */
+async function named(document, resources, category, key) {
+  if (resources === undefined) {
+    return undefined;
+  }
+  const items = entry(await resolve(document, resources), category);
+  return items === undefined ? undefined : entry(await resolve(document, items), key);
+}
+
+/** The last `count` of `operands` as numbers. @type {(operands: string[], count: number) => number[]} */
+function numbers(operands, count) {
+  if (operands.length < count) {
+    throw new Error(`an operator takes ${count} numbers`);
+  }
+  return operands.slice(operands.length - count).map(real);
+}
+
+/** The product of `first` and `second` (ISO 32000-2:2020, 8.3.4). @type {(first: number[], second: number[]) => number[]} */
+function product(first, second) {
+  const [ma = 0, mb = 0, mc = 0, md = 0, me = 0, mf = 0] = first;
+  const [ca = 0, cb = 0, cc = 0, cd = 0, ce = 0, cf = 0] = second;
+  return [
+    ma * ca + mb * cc,
+    ma * cb + mb * cd,
+    mc * ca + md * cc,
+    mc * cb + md * cd,
+    me * ca + mf * cc + ce,
+    me * cb + mf * cd + cf,
+  ];
+}
+
+/** The coordinates of the path operator `word`, a corner each of `re`. @type {(word: string, operands: string[]) => number[]} */
+function pathPoints(word, operands) {
+  const taken = COORDINATES.get(word);
+  if (taken !== undefined) {
+    return numbers(operands, taken);
+  }
+  if (word === "re") {
+    const [x = 0, y = 0, width = 0, height = 0] = numbers(operands, 4);
+    return [x, y, x + width, y, x, y + height, x + width, y + height];
+  }
+  return [];
+}
+
+/** How many points of `coordinates`, mapped by `ctm`, lie inside `marks`. @type {(marks: Area[], ctm: number[], coordinates: number[]) => number} */
+function count(marks, ctm, coordinates) {
+  const [ma = 0, mb = 0, mc = 0, md = 0, me = 0, mf = 0] = ctm;
+  let inside = 0;
+  for (let at = 0; at + 1 < coordinates.length; at += 2) {
+    const [x = 0, y = 0] = coordinates.slice(at, at + 2);
+    if (marks.some((found) => holds(found, ma * x + mc * y + me, mb * x + md * y + mf))) {
+      inside += 1;
+    }
+  }
+  return inside;
+}
+
+/** The points of `content` inside the marks, through cm and forms (ISO 32000-2:2020, 8.4.4, 8.10.1). @type {(scene: Scene, content: Uint8Array, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
+async function walk(scene, content, resources, ctm, depth) {
+  /** @type {number[][]} */
+  const states = [];
+  let current = ctm;
+  /** @type {string[]} */
+  const operands = [];
+  let inside = 0;
+  for (const word of contentTokens(content)) {
+    if (word === "q") {
+      states.push(current);
+    } else if (word === "Q") {
+      current = states.pop() ?? current;
+    } else if (word === "cm") {
+      current = product(numbers(operands, 6), current);
+    } else if (word === "Do") {
+      inside += await form(scene, (operands.at(-1) ?? "").replace(/^\//u, ""), resources, current, depth);
+    } else {
+      inside += count(scene.marks, current, pathPoints(word, operands));
+    }
+    if (isOperator(word)) {
+      operands.length = 0;
+    } else {
+      operands.push(word);
+    }
+  }
+  return inside;
+}
+
+/** The points inside the marks of the form `label` names, if it is one (ISO 32000-2:2020, 8.10.1). @type {(scene: Scene, label: string, resources: Obj | undefined, ctm: number[], depth: number) => Promise<number>} */
+async function form(scene, label, resources, ctm, depth) {
+  const found = await named(scene.document, resources, "XObject", label);
+  if (found === undefined || !("ref" in found)) {
+    throw new Error(`no XObject /${label}`);
+  }
+  const dictionary = await objectAt(scene.document, found.ref);
+  const subtype = entry(dictionary, "Subtype");
+  if (subtype === undefined || !("name" in subtype) || subtype.name !== "Form") {
+    return 0;
+  }
+  if (depth >= DEPTH) {
+    throw new Error("forms nest too deep");
+  }
+  const given = entry(dictionary, "Matrix");
+  const matrix =
+    given !== undefined && "array" in given ? given.array.map((item) => pdfNumber(text(item))) : [1, 0, 0, 1, 0, 0];
+  if (matrix.length !== 6) {
+    throw new Error("a Matrix not of 6 numbers");
+  }
+  const content = await decoded(scene.api, scene.document, found.ref);
+  return walk(scene, content, entry(dictionary, "Resources") ?? resources, product(matrix, ctm), depth + 1);
+}
+
+/** The path points of page `index` strictly inside `marks` (ISO 32000-2:2020, 8.5.2.1). @type {(api: Api, document: Document, index: number, marks: Area[]) => Promise<string>} */
+async function points(api, document, index, marks) {
+  const shown = await document.page({ index });
+  if ((await shown.rotation()) !== 0) {
+    throw new Error("points needs an unrotated page");
+  }
+  const crop = await shown.boundary({ kind: "Crop" });
+  const top = crop.y + crop.height;
+  const scene = {
+    api,
+    document,
+    marks: marks.map((found) => ({
+      high: top - found.low,
+      left: crop.x + found.left,
+      low: top - found.high,
+      right: crop.x + found.right,
+    })),
+  };
+  const pageObject = await kid(document, index);
+  const content = await contents(api, document, entry(pageObject, "Contents"));
+  return String(await walk(scene, content, entry(pageObject, "Resources"), [1, 0, 0, 1, 0, 0], 0));
+}
+
+/** Each image a Do of page `index` paints, and its inline images (ISO 32000-2:2020, 8.8, 8.9.7). @type {(api: Api, document: Document, index: number) => Promise<[[ObjectId, Obj][], number]>} */
+async function paintedImages(api, document, index) {
+  const pageObject = await kid(document, index);
+  const resources = entry(pageObject, "Resources");
+  /** @type {string[]} */
+  const operands = [];
+  /** @type {[ObjectId, Obj][]} */
+  const images = [];
+  let inline = 0;
+  for (const word of contentTokens(await contents(api, document, entry(pageObject, "Contents")))) {
+    if (word === "BI") {
+      inline += 1;
+    }
+    if (word === "Do") {
+      const found = await named(document, resources, "XObject", (operands.at(-1) ?? "").replace(/^\//u, ""));
+      if (found !== undefined && "ref" in found) {
+        const image = await objectAt(document, found.ref);
+        const subtype = entry(image, "Subtype");
+        if (subtype !== undefined && "name" in subtype && subtype.name === "Image") {
+          images.push([found.ref, image]);
+        }
+      }
+    }
+    if (isOperator(word)) {
+      operands.length = 0;
+    } else {
+      operands.push(word);
+    }
+  }
+  return [images, inline];
+}
+
+/** A stencil mask's samples, 1 for masked whatever its Decode (ISO 32000-2:2020, 8.9.6.2). @type {(dictionary: Obj, samples: Uint8Array) => Uint8Array} */
+function stencil(dictionary, samples) {
+  const ends = entry(dictionary, "Decode");
+  if (
+    ends === undefined ||
+    !("array" in ends) ||
+    ends.array.map((item) => decimal(real(text(item)))).join(" ") !== "1 0"
+  ) {
+    return samples;
+  }
+  const width = integer(text(entry(dictionary, "Width")));
+  const stride = Math.max(Math.ceil(width / 8), 1);
+  const flipped = Uint8Array.from(samples);
+  for (let start = 0; start < flipped.length; start += stride) {
+    for (let column = 0; column < width; column += 1) {
+      const at = start + (column >> 3);
+      if (column >> 3 < stride && at < flipped.length) {
+        flipped[at] = (flipped[at] ?? 0) ^ (0x80 >> (column & 7));
+      }
+    }
+  }
+  return flipped;
+}
+
+/** The samples of an image's soft (ISO 32000-2:2020, 11.6.5.3), explicit (8.9.6.3) or stencil mask, or its key (8.9.6.4). @type {(api: Api, document: Document, image: Obj, id: ObjectId) => Promise<string>} */
+async function maskSamples(api, document, image, id) {
+  const soft = entry(image, "SMask");
+  if (soft !== undefined && "ref" in soft) {
+    return hex(await decoded(api, document, soft.ref));
+  }
+  const explicit = entry(image, "Mask");
+  if (explicit !== undefined && "ref" in explicit) {
+    return hex(stencil(await objectAt(document, explicit.ref), await decoded(api, document, explicit.ref)));
+  }
+  if (explicit !== undefined && "array" in explicit) {
+    return `key ${explicit.array.map((item) => decimal(real(text(item)))).join(" ")}`;
+  }
+  const flag = entry(image, "ImageMask");
+  if (flag !== undefined && "other" in flag && flag.other === "true") {
+    return hex(stencil(image, await decoded(api, document, id)));
+  }
+  return "none";
+}
+
+/** What `read=` gives of the `do=`-th image page 0 paints. @type {(api: Api, document: Document, given: Map<string, string>) => Promise<string>} */
+async function imageAfter(api, document, given) {
+  const [images] = await paintedImages(api, document, 0);
+  const at = integer(given.get("do"));
+  const [id, image] = images[at] ?? [];
+  if (id === undefined || image === undefined) {
+    throw new Error(`no image ${at}`);
+  }
+  if (given.get("read") === "image_raw") {
+    return sha256(await streamBytes(api, document, id, false));
+  }
+  if (given.get("read") === "image_samples") {
+    return hex(await decoded(api, document, id));
+  }
+  return maskSamples(api, document, image, id);
+}
+
+/** Page `index` rendered at the defaults and read back. @type {(api: Api, document: Document, index: number) => Promise<import("./decode.mjs").Image>} */
+async function renderedImage(api, document, index) {
+  const sink = await api.Sink.inMemory();
+  await (await document.page({ index })).render(sink);
+  return decode(await sink.takeBytes());
+}
+
+/** `same` when the renders before and after agree outside `excluded`, else how many pixels differ. @type {(api: Api, applied: Applied, index: number, excluded: Area[]) => Promise<string>} */
+async function same(api, applied, index, excluded) {
+  const [earlier, later] = [applied.before, await renderedImage(api, applied.document, index)];
+  if (earlier === undefined || earlier.width !== later.width || earlier.height !== later.height) {
+    throw new Error("no render before, or one of another size");
+  }
+  let differ = 0;
+  for (let row = 0; row < later.height; row += 1) {
+    for (let column = 0; column < later.width; column += 1) {
+      if (excluded.some((found) => overlaps(found, column, row))) {
+        continue;
+      }
+      const [one, two] = [pixel(earlier, column, row) ?? [], pixel(later, column, row) ?? []];
+      if (one.length !== two.length || one.some((value, at) => value !== two[at])) {
+        differ += 1;
+      }
+    }
+  }
+  return differ === 0 ? "same" : `${differ} differ`;
+}
+
+/** The bytes `document` saves to. @type {(api: Api, document: Document) => Promise<Uint8Array>} */
+async function snapshot(api, document) {
+  const sink = await api.Sink.inMemory();
+  await save(document, sink, new Map());
+  return sink.takeBytes();
+}
+
+/** A redact case's keys, checked, and the progress calls `cancel=N` lets through. @type {(options: string[], expected: string) => [Map<string, string>, number]} */
+function redactGiven(options, expected) {
+  const counts = options.filter((arg) => arg.startsWith("cancel=")).map((arg) => arg.slice("cancel=".length));
+  if (!counts.every((found) => /^[0-9]+$/u.test(found))) {
+    throw new Error(`bad cancel '${counts.join(" ")}'`);
+  }
+  const named = options.map((arg) => (arg.startsWith("cancel=") ? "cancel" : arg));
+  const given = parse(named, new Set([...OPEN, ...REDACT]), ["read"]);
+  const read = given.get("read") ?? "";
+  const indexed = REDACT_READS.get(read);
+  const code = /^[A-Za-z]+$/u.test(expected);
+  if (
+    indexed === undefined ||
+    (given.has("index") && !indexed) ||
+    given.has("bytes") !== (read === "text") ||
+    !HEX.test(given.get("bytes") ?? "00") ||
+    given.has("do") !== IMAGE_SAMPLES.has(read) ||
+    (given.has("except") && read !== "pixels") ||
+    (read === "render" && !code && !PIXELS.test(expected))
+  ) {
+    throw new Error(`keys that do not go together, or a bad expected value '${expected}'`);
+  }
+  return [given, counts.length === 0 ? 0 : integer(counts[0])];
+}
+
+/** What `read=` gives of the document redacted. @type {(api: Api, applied: Applied, given: Map<string, string>, expected: string) => Promise<string>} */
+async function redactRead(api, applied, given, expected) {
+  const { document } = applied;
+  const index = given.has("index") ? integer(given.get("index")) : 0;
+  switch (given.get("read")) {
+    case "ok":
+      return "ok";
+    case "text":
+      return foundText(applied.saved, stringBytes(`<${given.get("bytes") ?? ""}>`));
+    case "annotations":
+      return (await listing(document, index))[0];
+    case "thumb":
+      return entry(await kid(document, index), "Thumb") === undefined ? "none" : "kept";
+    case "painted": {
+      const [images, inline] = await paintedImages(api, document, index);
+      return `images=${images.length} inline=${inline}`;
+    }
+    case "points":
+      return points(api, document, index, applied.marks);
+    case "pixels": {
+      const excluded = (given.get("except") ?? "")
+        .split(";")
+        .filter((item) => item !== "")
+        .map((item) => area(places(item)));
+      return same(api, applied, index, [...applied.marks, ...excluded]);
+    }
+    case "render": {
+      const image = await renderedImage(api, document, index);
+      return [
+        `${image.width}x${image.height}`,
+        ...expected
+          .split(" ")
+          .slice(1)
+          .map((token) => matched(image, token)),
+      ].join(" ");
+    }
+    default:
+      return imageAfter(api, document, given);
+  }
+}
+
+/** Adds the marks, applies them, saves, reopens and reads; a failed apply gives its code. @type {(api: Api, environment: Environment, file: boolean, args: string[], expected: string) => Promise<string>} */
+async function redact(api, environment, file, args, expected) {
+  const [path, ...options] = args;
+  if (path === undefined) {
+    throw new Error("takes a path");
+  }
+  const [given, allowed] = redactGiven(options, expected);
+  const marks = given.has("marks") ? (given.get("marks") ?? "").split(";").map(mark) : [];
+  const made = await sourceOf(api, environment, file, path);
+  if (typeof made === "string") {
+    return made;
+  }
+  const document = await open(api, made, given);
+  for (const { colour, page: index, place } of marks) {
+    const [x = 0, y = 0, width = 0, height = 0] = place;
+    await (await document.page({ index })).addAnnotation(null, { color: colour, height, kind: "Redact", width, x, y });
+  }
+  const [listed, areas] = await survey(document);
+  const index = given.has("index") ? integer(given.get("index")) : 0;
+  const before = await snapshot(api, document);
+  const shown = given.get("read") === "pixels" ? await renderedImage(api, document, index) : undefined;
+  const pages = given.get("pages");
+  let calls = 0;
+  /** @type {(done: number, total: number) => boolean} */
+  const stop = (done, total) => {
+    calls += 1;
+    return calls <= allowed && (total === 0 || done <= total);
+  };
+  try {
+    await document.applyRedactions(
+      given.has("cancel") ? stop : null,
+      pages === undefined
+        ? {}
+        : {
+            pages: pages
+              .split(",")
+              .filter((item) => item !== "")
+              .map(integer),
+          },
+    );
+  } catch (error) {
+    if (!(error instanceof api.PdfError)) {
+      throw error;
+    }
+    const after = await snapshot(api, document);
+    const kept =
+      after.length === before.length &&
+      after.every((byte, at) => byte === before[at]) &&
+      (await survey(document))[0] === listed;
+    return kept ? error.code : `${error.code} changed`;
+  }
+  const saved = await twice(api, document, new Map(given.has("mode") ? [["mode", given.get("mode") ?? ""]] : []));
+  /** @type {Applied} */
+  const applied = { before: shown, document: await reopen(api, saved, given), marks: areas[index] ?? [], saved };
+  return redactRead(api, applied, given, expected);
+}
+
 /**
  * Why `operation` on `args` does not give `expected`, or undefined.
  * @param {Api} api
@@ -972,7 +1684,8 @@ async function drawn(api, environment, args) {
  */
 async function check(api, environment, operation, args, expected) {
   const [, name, kind] = /^(.+)_(bytes|file)$/u.exec(operation) ?? [];
-  const known = name !== undefined && (FAMILIES.has(name) || name === "render" || name === "save" || name === "split");
+  const known =
+    name !== undefined && (FAMILIES.has(name) || ["annotate", "redact", "render", "save", "split"].includes(name));
   if (!known && !["draw_image", "header_version", "insert_blank_page"].includes(operation)) {
     return `unknown operation '${operation}'`;
   }
@@ -980,6 +1693,10 @@ async function check(api, environment, operation, args, expected) {
   try {
     if (known && name === "render") {
       actual = await rendered(api, environment, kind === "file", args, expected);
+    } else if (known && name === "redact") {
+      actual = await redact(api, environment, kind === "file", args, expected);
+    } else if (known && name === "annotate") {
+      actual = await annotate(api, environment, kind === "file", args);
     } else if (known) {
       actual = await perform(api, environment, kind === "file", name, args);
     } else if (operation === "insert_blank_page") {

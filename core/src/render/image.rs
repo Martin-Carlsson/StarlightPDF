@@ -181,6 +181,44 @@ struct Source<'data> {
     stream: Option<(Resolved, Object)>,
 }
 
+/// An image's samples as unfiltered data holds them, read row by row (7.4, 8.9.5).
+pub(crate) struct Unpacked<'data> {
+    /// The channel of JPX data that is no colour (7.4.9).
+    pub alpha: Option<usize>,
+    /// Bits per sample.
+    pub bits: u32,
+    /// Columns.
+    pub columns: u32,
+    /// Samples per pixel.
+    pub components: usize,
+    /// Its colour space is the device space of its colours, not as its dictionary names it.
+    pub device: bool,
+    /// Rows.
+    pub height: u32,
+    /// JPX data, whose `Decode` counts only for a mask (7.4.9).
+    pub jpx: bool,
+    /// The `Matte` of the soft mask that channel is; empty: none (11.6.5.3).
+    pub matte: Vec<i64>,
+    /// That channel is opacity, by `SMaskInData`.
+    pub opacity: bool,
+    /// The ICC profile of JPX data, its colour space in place of the device one.
+    pub profile: Option<Vec<u8>>,
+    /// Its rows.
+    pub rows: Rows<'data>,
+    /// Bytes per row.
+    pub stride: usize,
+}
+
+/// An image's rows, as unfiltered data holds them.
+pub(crate) struct Rows<'data> {
+    /// Where they come from.
+    cursor: Cursor<'data>,
+    /// Bytes per row.
+    stride: usize,
+    /// Its colours are YCC, which become RGB: samples per pixel, and the channel that is no colour.
+    ycc: Option<(usize, Option<usize>)>,
+}
+
 /// An image's place in this band.
 struct View {
     /// Alpha is shape.
@@ -263,12 +301,23 @@ impl Header {
         view: &View,
         (encoded, again): (&mut dyn Pull, &Reopen<'_>),
     ) -> Result<Decoded, PdfError> {
+        let held = self.held(job, self.toward(view), (encoded, again))?;
+        self.made(job, held)
+    }
+
+    /// Decodes `encoded`, which `again` opens anew, whole, JPX data toward `toward`.
+    fn held(
+        &self,
+        job: &Job<'_>,
+        toward: [u32; 2],
+        (encoded, again): (&mut dyn Pull, &Reopen<'_>),
+    ) -> Result<codec::Held, PdfError> {
         let (size, most) = (self.size(), codec::readable(job));
-        let held = match self.coding {
+        Ok(match self.coding {
             Coding::Jpx => {
                 // The decoder counts it.
                 let mut read = data::all(job, encoded, again, (most, codec::jpx::ROOM))?;
-                codec::jpx::decode(job, &mut read, self.toward(view), self.indices)?
+                codec::jpx::decode(job, &mut read, toward, self.indices)?
             }
             Coding::Fax => {
                 let read = data::shared(job, encoded, again, most)?;
@@ -286,8 +335,7 @@ impl Header {
                 codec::jbig2::decode(job, &read, globals.as_deref().map(AsRef::as_ref))?
             }
             Coding::Dct | Coding::Plain => return Err(job.objects.malformed()),
-        };
-        self.made(job, held)
+        })
     }
 
     /// The image `held` decodes to.
@@ -606,6 +654,97 @@ impl<'data> Source<'data> {
         let open = || data::coded(job, &stored).map(|found| found.data);
         let count = stages(job, stored.value(), SCAN_ROWS)?;
         Cursor::jpeg(job, &open, &parameters, Some(count))
+    }
+}
+
+impl Unpacked<'_> {
+    /// Takes how the colours of JPX data `made`, which `header` reads, are named, its channel
+    /// beside them, and whether YCC becomes RGB (7.4.9, 8.9.5), as `coloured` reads them.
+    fn coloured(
+        &mut self,
+        job: &Job<'_>,
+        owner: &Object,
+        (header, made): (&Header, &Decoded),
+        profile: Option<Vec<u8>>,
+    ) -> Result<(), PdfError> {
+        let count = self.components;
+        let inside = if matches!(*data::entry(job, owner, b"SMask")?.value(), Object::Null) {
+            let kind = data::entry(job, owner, b"SMaskInData")?;
+            Fixed::from_object(kind.value()).map_or(0, Fixed::floor)
+        } else {
+            0
+        };
+        let given = header.space.as_ref();
+        let mut alpha = made.alpha;
+        if alpha.is_none() {
+            let known = given.map(|space| space.components()).or(made.colours);
+            let extra = known.map_or_else(
+                || count == 2 || count == 5 || (inside > 0 && count == 4),
+                |wanted| wanted < count,
+            );
+            alpha = extra.then(|| count.saturating_sub(1));
+        }
+        let colours = count.saturating_sub(usize::from(alpha.is_some()));
+        let fitting = given.filter(|space| space.components() == colours);
+        let implied = made
+            .space
+            .as_ref()
+            .is_some_and(|space| space.components() == colours);
+        self.profile = profile.filter(|_bytes| fitting.is_none() && implied);
+        self.device = fitting.is_none() && self.profile.is_none();
+        self.alpha = alpha;
+        self.opacity = alpha.is_some() && inside > 0;
+        if self.opacity && (inside == 2 || made.premultiplied) {
+            let most = u32::from(samples::largest(self.bits));
+            self.matte = (0..colours)
+                .map(|component| {
+                    fitting.map_or(0, |space| {
+                        let [low, _] = space.default_decode(component, most);
+                        low.floor()
+                    })
+                })
+                .collect();
+        }
+        if fitting.is_none() && colours == 3 && made.ycc && self.bits == 8 {
+            self.rows.ycc = Some((count, alpha));
+        }
+        Ok(())
+    }
+}
+
+impl Rows<'_> {
+    /// Reads row `index` into `out`, of its bytes per row, 0 past its data; rows come in order.
+    /// The pixels its data holds whole.
+    pub(crate) fn row(
+        &mut self,
+        job: &Job<'_>,
+        index: u32,
+        out: &mut Vec<u8>,
+    ) -> Result<u32, PdfError> {
+        self.cursor.seek(job, index)?;
+        let got = self.cursor.row();
+        let present = self.cursor.layout().present(got.len());
+        out.clear();
+        out.extend_from_slice(got.get(..self.stride).unwrap_or(got));
+        out.resize(self.stride, 0);
+        let Some((count, alpha)) = self.ycc else {
+            return Ok(present);
+        };
+        let skipped = alpha.unwrap_or(usize::MAX);
+        let at = |place: usize| place.saturating_add(usize::from(place >= skipped));
+        for pixel in out.chunks_exact_mut(count.max(1)) {
+            let mut raw = [0_u16; 3];
+            for (place, slot) in raw.iter_mut().enumerate() {
+                *slot = u16::from(pixel.get(at(place)).copied().unwrap_or(0));
+            }
+            samples::full_colour(&mut raw);
+            for (place, value) in raw.into_iter().enumerate() {
+                if let Some(slot) = pixel.get_mut(at(place)) {
+                    *slot = u8::try_from(value).unwrap_or(u8::MAX);
+                }
+            }
+        }
+        Ok(present)
     }
 }
 
@@ -1249,4 +1388,78 @@ fn subsidiary<'doc>(
     };
     let samples = shared(job, owner, &header, source.layout)?;
     Ok(Some(Part { samples, source }))
+}
+
+/// The samples of the image `image`, a soft mask when `soft`, as unfiltered data holds them, held
+/// whole only where its decoder gives them so; YCC that JPX data implies becomes RGB.
+pub(crate) fn unpacked<'doc>(
+    run: &mut Run<'_, 'doc>,
+    image: &Resolved,
+    soft: bool,
+) -> Result<Unpacked<'doc>, PdfError> {
+    let job = run.job;
+    let owner = image.value();
+    let role = if flagged(job, owner, b"ImageMask")? {
+        Role::Cutout
+    } else if soft {
+        Role::Soft
+    } else {
+        Role::Colour
+    };
+    let opened = data::coded(job, image)?;
+    let header = Header::read(run, owner, opened.image, role)?;
+    let open = || data::coded(job, image).map(|found| found.data);
+    let mut first = opened.data;
+    let (mut profile, mut decoded) = (None, None);
+    let cursor = match header.coding {
+        Coding::Plain => {
+            let layout = header.declared.ok_or_else(|| job.objects.malformed())?;
+            Cursor::plain(layout, first, None)
+        }
+        Coding::Dct => {
+            // Its own, as the rows outlive `open`'s borrow.
+            let again = || data::coded(job, image).map(|found| found.data);
+            Cursor::jpeg(job, &again, &header.parameters, None)?
+        }
+        Coding::Fax | Coding::Jbig2 | Coding::Jpx => {
+            let held = header.held(job, header.size(), (&mut *first, &open))?;
+            if let Some(codec::Implied::Profile(ref bytes)) = held.implied {
+                profile = Some(bytes.clone());
+            }
+            let made = Rc::new(header.made(job, held)?);
+            job.lend(&made, cursor::held_size(Some(&made)))?;
+            let rows = Cursor::decoded(&made);
+            decoded = Some(made);
+            rows
+        }
+    };
+    let layout = cursor.layout();
+    let size = [layout.columns, layout.height];
+    let read = Layout::new(job, size, layout.components, layout.bits)?;
+    let jpx = header.coding == Coding::Jpx;
+    let mut found = Unpacked {
+        alpha: None,
+        bits: read.bits,
+        columns: read.columns,
+        components: read.components,
+        device: role == Role::Colour && header.space.is_none(),
+        height: read.height,
+        jpx,
+        matte: Vec::new(),
+        opacity: false,
+        profile: None,
+        rows: Rows {
+            cursor,
+            stride: read.stride,
+            ycc: None,
+        },
+        stride: read.stride,
+    };
+    if let Some(made) = decoded
+        .as_deref()
+        .filter(|_made| jpx && role == Role::Colour)
+    {
+        found.coloured(job, owner, (&header, made), profile)?;
+    }
+    Ok(found)
 }

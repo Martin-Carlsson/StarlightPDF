@@ -114,7 +114,7 @@ impl Caches<'_> {
 
 /// How many operands the operator `name` takes, the colour setters at least; `None` when it is no
 /// operator (Annex A).
-const fn arity(name: &[u8]) -> Option<usize> {
+pub(crate) const fn arity(name: &[u8]) -> Option<usize> {
     Some(match name {
         b"b" | b"B" | b"b*" | b"B*" | b"BI" | b"BT" | b"BX" | b"EMC" | b"ET" | b"EX" | b"f"
         | b"F" | b"f*" | b"h" | b"n" | b"q" | b"Q" | b"s" | b"S" | b"T*" | b"W" | b"W*" => 0,

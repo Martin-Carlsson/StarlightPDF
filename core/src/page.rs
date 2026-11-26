@@ -12,7 +12,7 @@ mod image;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 
-use crate::annotations::{AddAnnotationOptions, Annotation, Annotations};
+use crate::annotations::{self, AddAnnotationOptions, Annotation, Annotations};
 use crate::drawing::{
     DrawBarcodeOptions, DrawChartOptions, DrawImageOptions, DrawPathOptions, DrawTextOptions,
 };
@@ -96,24 +96,19 @@ pub struct Page {
 }
 
 impl Page {
-    /// Adds an annotation; `data` is the file, media, 3D model or rubber stamp image.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Adds an annotation; `data` is the file, media, 3D model or rubber stamp image. Only a
+    /// redaction mark is implemented: over `quads`, else the rectangle, `data` `None`
+    /// (ISO 32000-2:2020, 12.5.6.23).
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
+    /// [`ErrorCode::NotImplemented`] for other kinds, [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::NotSeekable`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`].
     pub fn add_annotation(
         &self,
         data: Option<&Source>,
         options: &AddAnnotationOptions,
     ) -> Result<Annotation, PdfError> {
-        let _: Option<&Source> = data;
-        let _: &AddAnnotationOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Page::add_annotation",
-        ))
+        annotations::add(self.id, (&self.store, &self.overlay), data, options)
     }
 
     /// Adds a form field with a widget on this page.
@@ -130,16 +125,11 @@ impl Page {
 
     /// The annotations, links included.
     ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
-    ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::DocumentClosed`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`].
     pub fn annotations(&self) -> Result<Annotations, PdfError> {
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Page::annotations",
-        ))
+        annotations::list(self.id, (&self.store, &self.overlay))
     }
 
     /// Words, lines, paragraphs or columns, with headings.
@@ -363,6 +353,11 @@ impl Page {
             overlay: Arc::clone(overlay),
             store: Arc::clone(store),
         }
+    }
+
+    /// The page object.
+    pub(crate) const fn object(&self) -> ObjectId {
+        self.id
     }
 
     /// The rectangle `key` of the page, `inherit`ed or its own, normalized; through the overlay

@@ -7,6 +7,7 @@ use core::error::Error;
 use std::fs;
 
 use starlightpdf::document::{Document, OpenOptions};
+use starlightpdf::edit::ApplyRedactionsOptions;
 use starlightpdf::input::{BytesSourceOptions, Source};
 use starlightpdf::objects::StreamDataOptions;
 use starlightpdf::output::{MemorySinkOptions, Sink};
@@ -110,4 +111,35 @@ fn strict_deviation_carries_its_offset() {
         matches!(&pair, Ok([found, expected]) if found == expected),
         "code and offset: {pair:?}"
     );
+}
+
+/// Applying, under `strict`, a mark with neither `Rect` nor `QuadPoints`: the code, or why it could
+/// not be read.
+fn strict_mark_without_rect() -> Result<Option<ErrorCode>, Box<dyn Error>> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tests/corpus/redact/mark-no-rect.pdf"
+    );
+    let mut source = BytesSourceOptions::default();
+    source.bytes = Arc::new(fs::read(path)?);
+    let mut options = OpenOptions::default();
+    options.strict = true;
+    let document = Document::open(&Source::from_bytes(&source)?, None, &options)?;
+    Ok(document
+        .apply_redactions(None, &ApplyRedactionsOptions::default())
+        .err()
+        .map(|error| error.code()))
+}
+
+/// Under `strict`, a mark without its required `Rect` is malformed, not passed over; the
+/// annotation listing cannot show it, so the conformance suite cannot (ISO 32000-2:2020, 12.5.2).
+#[test]
+fn strict_mark_without_rect_is_malformed() {
+    let expected = if cfg!(feature = "rendering") {
+        ErrorCode::Malformed
+    } else {
+        ErrorCode::CapabilityMissing
+    };
+    let found = strict_mark_without_rect().map_err(|error| error.to_string());
+    assert_eq!(found, Ok(Some(expected)), "code");
 }

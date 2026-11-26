@@ -42,6 +42,8 @@ use crate::overlay::{Dictionary, Object, Overlay, Reading};
 use crate::page::{self, Page};
 use crate::part::{self, Pages, Part};
 use crate::progress::Progress;
+#[cfg(feature = "rendering")]
+use crate::render;
 use crate::rendering::{ColorSpace, PrintOptions};
 use crate::security::{Cipher, Encryption, Permission, SanitizeOptions};
 use crate::signatures::{
@@ -415,24 +417,60 @@ impl Document {
         ))
     }
 
-    /// Removes the content under redaction marks, then the marks.
-    ///
-    /// Not implemented: fails with [`ErrorCode::NotImplemented`].
+    /// Removes the content under the redaction marks of the pages `options` name, and their
+    /// thumbnails; fills each mark's area with its interior colour, then removes the marks
+    /// (ISO 32000-2:2020, 12.5.6.23). All or nothing: a failure leaves the document unchanged.
+    /// Once applied, only a rewrite saves.
     ///
     /// # Errors
     ///
-    /// [`ErrorCode::NotImplemented`], [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`], [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`].
+    /// [`ErrorCode::BudgetExceeded`], [`ErrorCode::Cancelled`], [`ErrorCode::CapabilityMissing`] without rendering built in, [`ErrorCode::DocumentClosed`], [`ErrorCode::InvalidArgument`] for a page past the last, [`ErrorCode::Io`], [`ErrorCode::LimitExceeded`], [`ErrorCode::Malformed`], [`ErrorCode::StaleHandle`], [`ErrorCode::Unsupported`] for what cannot be removed, such as text in a font the file does not embed.
     pub fn apply_redactions(
         &self,
         progress: Option<&dyn Progress>,
         options: &ApplyRedactionsOptions,
     ) -> Result<(), PdfError> {
-        let _: Option<&dyn Progress> = progress;
-        let _: &ApplyRedactionsOptions = options;
-        Err(PdfError::new(
-            ErrorCode::NotImplemented,
-            "Document::apply_redactions",
-        ))
+        /// The operation.
+        const APPLY: &str = "Document::apply_redactions";
+        let count = self.page_count()?;
+        let pages = options.pages.as_deref();
+        if pages.is_some_and(|listed| listed.iter().any(|index| *index >= count)) {
+            return Err(PdfError::new(ErrorCode::InvalidArgument, APPLY));
+        }
+        if pages.is_some_and(<[u32]>::is_empty) {
+            return Ok(());
+        }
+        #[cfg(feature = "rendering")]
+        return render::redact::page::apply(&self.store, &self.overlay, progress, (pages, count));
+        #[cfg(not(feature = "rendering"))]
+        {
+            let _: Option<&dyn Progress> = progress;
+            let objects = self.store.objects(APPLY);
+            let overlay = &*self.overlay;
+            let mut all = if pages.is_none() {
+                Some(part::Leaves::new(objects, overlay)?)
+            } else {
+                None
+            };
+            let mut listed = pages.map(<[u32]>::iter);
+            loop {
+                let next = match (listed.as_mut(), all.as_mut()) {
+                    (Some(indices), _) => indices
+                        .next()
+                        .map(|&index| page::find(&self.store, &self.overlay, index))
+                        .transpose()?
+                        .map(|found| found.object()),
+                    (None, Some(leaves)) => leaves.next(objects, overlay)?,
+                    (None, None) => None,
+                };
+                let Some(id) = next else {
+                    return Ok(());
+                };
+                if marks(objects, overlay, id)? {
+                    return Err(PdfError::new(ErrorCode::CapabilityMissing, APPLY));
+                }
+            }
+        }
     }
 
     /// The articles.
@@ -1313,7 +1351,10 @@ impl Document {
             && options
                 .cipher
                 .map_or(!encrypted, |cipher| cipher == Cipher::Unencrypted);
-        let result = if defaults {
+        let result = if options.mode != SaveMode::Rewrite && self.overlay.redacted() {
+            // The source's bytes still hold what was redacted (7.5.6).
+            Err(PdfError::new(ErrorCode::IncrementalRefused, SAVE))
+        } else if defaults {
             self.version().and_then(|version| {
                 writer::rewrite(
                     &Rewrite {
@@ -1977,6 +2018,23 @@ fn place(
         }
         return Ok((path, length));
     }
+}
+
+/// Whether page `id` has a redaction mark among its annotations (ISO 32000-2:2020, 12.5.6.23).
+#[cfg(not(feature = "rendering"))]
+fn marks(objects: Objects<'_>, overlay: &Overlay, id: ObjectId) -> Result<bool, PdfError> {
+    let page = overlay.resolve(objects, id)?;
+    let Object::Array(listed) = overlay.entry(objects, &page, b"Annots")? else {
+        return Ok(false);
+    };
+    for item in listed {
+        let annotation = overlay.direct(objects, item)?;
+        if matches!(overlay.entry(objects, &annotation, b"Subtype")?, Object::Name(kind) if kind == b"Redact")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The page tree nodes from the last of `path` down along last kids to the one a page appended

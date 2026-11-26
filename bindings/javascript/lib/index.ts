@@ -48,11 +48,16 @@ const pending = new Set<(why: string) => void>();
 /** `name`'s failure as the core's `Io` because the package failed `why`. */
 function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): PdfError {
   const operations: Record<Name, string> = {
+    addAnnotation: "Page.addAnnotation",
+    annotationInfo: "Annotation.info",
+    annotations: "Page.annotations",
     appendSink: "Sink.fromAppend",
+    applyRedactions: "Document.applyRedactions",
     boundary: "Page.boundary",
     capabilities: "capabilities",
     catalog: "Document.catalog",
     create: "Document.create",
+    deleteAnnotation: "Annotation.delete",
     drawImage: "Page.drawImage",
     droppedWarnings: "Document.droppedWarnings",
     encryption: "Document.encryption",
@@ -61,6 +66,7 @@ function unloaded<K extends Name>(name: K, arg: Signatures[K][0], why: string): 
     infoDictionary: "Document.infoDictionary",
     insertBlankPage: "Document.insertBlankPage",
     libraryVersion: "libraryVersion",
+    nextAnnotation: "Annotations.next",
     nextPart: "Documents.next",
     nextWarning: "Deviations.next",
     object: "Document.object",
@@ -340,6 +346,30 @@ export interface Rect {
 /** A page boundary (ISO 32000-2:2020, 14.11.2). */
 export type Boundary = "Art" | "Bleed" | "Crop" | "Media" | "Trim";
 
+/** An annotation's kind (ISO 32000-2:2020, 12.5.6.1). */
+export type AnnotationKind =
+  | "Ellipse"
+  | "FileAttachment"
+  | "FreeText"
+  | "Highlight"
+  | "Ink"
+  | "Line"
+  | "Link"
+  | "Media"
+  | "Model3d"
+  | "Note"
+  | "Other"
+  | "Polygon"
+  | "Polyline"
+  | "Popup"
+  | "Rectangle"
+  | "Redact"
+  | "RubberStamp"
+  | "Squiggly"
+  | "Strikeout"
+  | "Underline"
+  | "Widget";
+
 /** How a document is protected. */
 export interface Encryption {
   /** Certificate-based rather than password-based. */
@@ -470,6 +500,55 @@ export interface Deviation {
   readonly page: number | null;
 }
 
+/** An annotation's kind, place in points from the top-left of the displayed page, colour and quadrilaterals. */
+export interface AnnotationInfo {
+  /** A redaction mark's interior colour, else the colour; empty for none. */
+  readonly color: string;
+  readonly height: number;
+  readonly kind: AnnotationKind;
+  /** Eight numbers per quadrilateral. */
+  readonly quads: readonly number[];
+  readonly width: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Options for `Page.addAnnotation`; points from the top-left of the displayed page. */
+export interface AddAnnotationOptions {
+  /** For `Redact`, its interior colour: `#rgb`, `#rrggbb` or `device-cmyk()`; unset or empty none. */
+  readonly color?: string;
+  readonly height?: number;
+  /** Only `Redact` is implemented. Unset: `Note`. */
+  readonly kind?: AnnotationKind;
+  /** Eight numbers per quadrilateral; unset or empty: the rectangle. */
+  readonly quads?: readonly number[];
+  readonly width?: number;
+  readonly x?: number;
+  readonly y?: number;
+}
+
+/** An annotation holding `handle`; set by `Annotation`, whose constructor is private. */
+let newAnnotation: (handle: number) => Annotation;
+
+/** An annotation on a page; fails `StaleHandle` once its page no longer lists it. */
+export class Annotation {
+  static {
+    newAnnotation = (handle) => hold(new Annotation(), handle);
+  }
+
+  private constructor() {}
+
+  /** Removes the annotation and its popup from the page. */
+  async delete(): Promise<void> {
+    return call("deleteAnnotation", handles.get(this) ?? 0);
+  }
+
+  /** Its kind, place, colour and quadrilaterals. */
+  async info(): Promise<AnnotationInfo> {
+    return call("annotationInfo", handles.get(this) ?? 0);
+  }
+}
+
 /** A page holding `handle`; set by `Page`, whose constructor is private. */
 let newPage: (handle: number) => Page;
 
@@ -480,6 +559,28 @@ export class Page {
   }
 
   private constructor() {}
+
+  /** Adds an annotation with `data`, which must be `null` for `Redact`, the only kind implemented. */
+  async addAnnotation(data: Source | null, options: AddAnnotationOptions): Promise<Annotation> {
+    const arg = { data: data === null ? null : (handles.get(data) ?? 0), options, page: handles.get(this) ?? 0 };
+    return newAnnotation(await call("addAnnotation", arg));
+  }
+
+  /** The annotations, links included, as the page lists them now. */
+  async annotations(): Promise<AsyncIterable<Annotation>> {
+    const cursor = hold({}, await call("annotations", handles.get(this) ?? 0));
+    return {
+      async *[Symbol.asyncIterator](): AsyncGenerator<Annotation> {
+        for (;;) {
+          const annotation = await call("nextAnnotation", handles.get(cursor) ?? 0);
+          if (annotation === null) {
+            return;
+          }
+          yield newAnnotation(annotation);
+        }
+      },
+    };
+  }
 
   /** A boundary: inherited, defaulted, clipped to the media box and normalized. */
   async boundary(options: { readonly kind?: Boundary } = {}): Promise<Rect> {
@@ -523,6 +624,23 @@ export class Page {
 /** An open PDF. */
 export class Document {
   private constructor() {}
+
+  /**
+   * Removes the content under redaction marks, then the marks, on `pages`, unset all, empty none; calls `progress` on
+   * this thread and rethrows what it throws. On a page's main thread, `progress` needs cross-origin isolation.
+   */
+  async applyRedactions(
+    progress: Progress | null = null,
+    options: { readonly pages?: readonly number[] } = {},
+  ): Promise<void> {
+    const thrown: unknown[] = [];
+    const [made, transfer] =
+      progress === null ? [null, []] : await passed(progress, thrown, "Document.applyRedactions");
+    return rethrown(
+      thrown,
+      call("applyRedactions", { document: handles.get(this) ?? 0, options, progress: made }, transfer),
+    );
+  }
 
   /** A new document with no pages, with `policy`, or the default one, of PDF `version` `[major, minor]`, unset 2.0. */
   static async create(

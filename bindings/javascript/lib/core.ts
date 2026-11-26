@@ -1,5 +1,7 @@
 // The core in this thread, its objects held by handle.
 import type {
+  AddAnnotationOptions,
+  AnnotationInfo,
   Boundary,
   Deviation,
   DrawImageOptions,
@@ -16,6 +18,8 @@ import type {
   SplitOptions,
 } from "./index.js";
 import init, {
+  Annotation,
+  Annotations,
   Deviations,
   Document,
   Documents,
@@ -32,11 +36,19 @@ import { add, appends, type Callback, inputs, updates } from "./table.js";
 
 /** Each operation's argument and result. */
 export interface Signatures {
+  addAnnotation: [{ data: number | null; options: AddAnnotationOptions; page: number }, number];
+  annotationInfo: [number, AnnotationInfo];
+  annotations: [number, number];
   appendSink: [Callback<[Uint8Array]>, number];
+  applyRedactions: [
+    { document: number; options: { readonly pages?: readonly number[] }; progress: Callback<[number, number]> | null },
+    undefined,
+  ];
   boundary: [{ kind: Boundary; page: number }, Rect];
   capabilities: [undefined, string[]];
   catalog: [number, ObjectId];
   create: [{ options: { readonly version?: readonly [number, number] }; policy: number | null }, number];
+  deleteAnnotation: [number, undefined];
   drawImage: [{ image: number; mask: number | null; options: DrawImageOptions; page: number }, undefined];
   droppedWarnings: [number, number];
   encryption: [number, Encryption];
@@ -45,6 +57,7 @@ export interface Signatures {
   infoDictionary: [number, InfoDictionary];
   insertBlankPage: [{ document: number; options: InsertBlankPageOptions }, number];
   libraryVersion: [undefined, string];
+  nextAnnotation: [number, number | null];
   nextPart: [number, number | null];
   nextWarning: [number, Deviation | null];
   object: [{ document: number; id: ObjectId }, string];
@@ -87,7 +100,19 @@ const policies = new Map<number, ResourcePolicy>();
 const sinks = new Map<number, Sink>();
 const cursors = new Map<number, Deviations>();
 const parts = new Map<number, Documents>();
-const held: Map<number, { free(): void }>[] = [sources, documents, pages, policies, sinks, cursors, parts];
+const annotations = new Map<number, Annotation>();
+const listings = new Map<number, Annotations>();
+const held: Map<number, { free(): void }>[] = [
+  sources,
+  documents,
+  pages,
+  policies,
+  sinks,
+  cursors,
+  parts,
+  annotations,
+  listings,
+];
 let last = 0;
 
 /** Holds `made` in `kind`; its handle. */
@@ -107,8 +132,23 @@ function get<T>(kind: Map<number, T>, handle: number): T {
 }
 
 const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } = {
+  addAnnotation({ data, options, page }) {
+    const shared = data === null ? undefined : get(sources, data).share();
+    return hold(annotations, get(pages, page).addAnnotation(shared, options));
+  },
+  annotationInfo(annotation) {
+    return get(annotations, annotation).info();
+  },
+  annotations(page) {
+    return hold(listings, get(pages, page).annotations());
+  },
   appendSink(callback) {
     return hold(sinks, Sink.fromAppend(add(appends, callback)));
+  },
+  applyRedactions({ document, options, progress }) {
+    const redacted = get(documents, document);
+    // Added last, as the core forgets it whatever then fails.
+    redacted.applyRedactions(progress === null ? undefined : add(updates, progress), options);
   },
   boundary({ kind, page }) {
     return get(pages, page).boundary(kind);
@@ -122,6 +162,9 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   create({ options, policy }) {
     const shared = policy === null ? undefined : get(policies, policy).share();
     return hold(documents, Document.create(shared, options));
+  },
+  deleteAnnotation(annotation) {
+    get(annotations, annotation).delete();
   },
   drawImage({ image, mask, options, page }) {
     const shared = mask === null ? undefined : get(sources, mask).share();
@@ -151,6 +194,10 @@ const operations: { [K in Name]: (arg: Signatures[K][0]) => Signatures[K][1] } =
   },
   libraryVersion() {
     return libraryVersion();
+  },
+  nextAnnotation(cursor) {
+    const annotation = get(listings, cursor).next();
+    return annotation === undefined ? null : hold(annotations, annotation);
   },
   nextPart(cursor) {
     const part = get(parts, cursor).next();

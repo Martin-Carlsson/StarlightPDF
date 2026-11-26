@@ -1,0 +1,68 @@
+%PDF-2.0
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R /MarkInfo << /Marked true >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F 5 0 R >> >> /Contents 4 0 R /StructParents 0 /Annots [13 0 R] >>
+endobj
+4 0 obj
+<< /Length 139 >>
+stream
+0 0 0 rg /P << /MCID 0 >> BDC BT /F 10 Tf 20 150 Td (UNDERTEXT) Tj ET EMC /P << /MCID 1 >> BDC BT /F 10 Tf 20 40 Td (OUTSIDETEXT) Tj ET EMC
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /FirstChar 32 /LastChar 122 /Widths [1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000] /Encoding << /Differences [32 /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g /g] >> /CharProcs << /g 6 0 R >> /Resources << >> >>
+endobj
+6 0 obj
+<< /Length 44 >>
+stream
+1000 0 0 0 1000 1000 d1 100 100 800 800 re f
+endstream
+endobj
+7 0 obj
+<< /Type /StructTreeRoot /K 8 0 R /ParentTree 12 0 R /ParentTreeNextKey 2 >>
+endobj
+8 0 obj
+<< /Type /StructElem /S /Document /P 7 0 R /K [9 0 R 10 0 R 11 0 R] /Alt (DOCALTGONE) >>
+endobj
+9 0 obj
+<< /Type /StructElem /S /P /P 8 0 R /Pg 3 0 R /K 0 /ActualText (STRUCTGONE) /Alt (STRUCTALTGONE) >>
+endobj
+10 0 obj
+<< /Type /StructElem /S /P /P 8 0 R /Pg 3 0 R /K 1 /ActualText (STRUCTKEPT) >>
+endobj
+11 0 obj
+<< /Type /StructElem /S /Link /P 8 0 R /Pg 3 0 R /K << /Type /OBJR /Obj 13 0 R >> /Alt (LINKALTGONE) >>
+endobj
+12 0 obj
+<< /Nums [0 [9 0 R 10 0 R] 1 11 0 R] >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Link /Rect [18 145 120 165] /Border [0 0 0] /StructParent 1 /P 3 0 R >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000015 00000 n 
+0000000115 00000 n 
+0000000172 00000 n 
+0000000331 00000 n 
+0000000521 00000 n 
+0000001473 00000 n 
+0000001567 00000 n 
+0000001659 00000 n 
+0000001763 00000 n 
+0000001878 00000 n 
+0000001973 00000 n 
+0000002093 00000 n 
+0000002149 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R /ID [<000102030405060708090a0b0c0d0e0f> <000102030405060708090a0b0c0d0e0f>] >>
+startxref
+2263
+%%EOF

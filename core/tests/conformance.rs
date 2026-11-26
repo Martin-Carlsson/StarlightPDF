@@ -4,6 +4,8 @@ extern crate alloc;
 
 #[path = "conformance/decode.rs"]
 mod decode;
+#[path = "conformance/redact.rs"]
+mod redact;
 #[path = "conformance/render.rs"]
 mod render;
 
@@ -367,6 +369,19 @@ fn call(operation: &str, args: &[&str], expected: &str) -> Result<String, String
             .split_first()
             .ok_or_else(|| format!("{operation} takes a path"))?;
         return render::call(operation, file, relative, rest, expected);
+    }
+    if matches!(family, "annotate" | "redact") && operation != family {
+        let (&relative, rest) = args
+            .split_first()
+            .ok_or_else(|| format!("{operation} takes a path"))?;
+        return redact::call(
+            operation,
+            family == "redact",
+            file,
+            relative,
+            rest,
+            expected,
+        );
     }
     let (takes, needs) = keys(family).ok_or_else(unknown)?;
     let (&relative, rest) = args
@@ -1345,8 +1360,12 @@ fn string_bytes(token: &str) -> Result<Vec<u8>, Failure> {
     let mut characters = inner.chars().peekable();
     while let Some(character) = characters.next() {
         if character != '\\' {
-            let mut buffer = [0; 4];
-            bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            if let Ok(byte) = u8::try_from(character) {
+                bytes.push(byte);
+            } else {
+                let mut buffer = [0; 4];
+                bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+            }
             continue;
         }
         let Some(escaped) = characters.next() else {
